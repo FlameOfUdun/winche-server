@@ -106,7 +106,7 @@ builder.Services.AddSingleton<IArchive, NoOpArchive>();
         o.ConnectionString = authConn;   // no seed: tests use /setup
         o.Accounts = accounts;
         o.AddAuthenticationTab();
-        // Firebase-like setup (Sample:ProjectSetup): create the project, start products one by one.
+        // Guided setup (Sample:ProjectSetup): create the project, start products one by one.
         if (string.Equals(builder.Configuration["Sample:ProjectSetup"], "true", StringComparison.OrdinalIgnoreCase)) o.UseProjectSetup();
         // Tests turn this on to check it; the rest change settings without enrolling an authenticator.
         o.RequireTwoFactorForSettings = string.Equals(builder.Configuration["Sample:RequireTwoFactor"], "true", StringComparison.OrdinalIgnoreCase);
