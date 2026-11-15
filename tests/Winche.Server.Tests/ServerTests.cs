@@ -159,6 +159,12 @@ public class ServerTests(PostgresFixture pg)
         // The apps' APIs (a bearer token, never a cookie) and the console's page and files: compressed.
         Assert.Equal("br", await Encoding("/documents/v1/" + Convert.ToBase64String("notes/n1"u8.ToArray())));
         Assert.Equal("br", await Encoding("/_console/"));
+        using (var query = new HttpRequestMessage(HttpMethod.Post, "/documents/v1:runQuery") { Content = JsonContent.Create(new { query = new { collection = "notes" } }) })
+        {
+            query.Headers.AcceptEncoding.ParseAdd("br");
+            using var answer = await http.SendAsync(query);
+            Assert.Equal("br", answer.Content.Headers.ContentEncoding.FirstOrDefault());   // the colon verbs too
+        }
         // The console's API and sign-in (cookies): never, so an answer's size can't give away what it holds.
         Assert.Null(await Encoding("/_console/api/auth/state"));
         Assert.Null(await Encoding("/_console/api/project"));

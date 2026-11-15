@@ -224,8 +224,12 @@ internal static class ProjectApp
     /// <summary>The JSON reader's message in plain words, without .NET type names.</summary>
     /// <summary>Whether answers on <paramref name="path"/> may be compressed (see the pipeline).</summary>
     internal static bool Compressible(PathString path, string consolePath) =>
-        path.StartsWithSegments("/documents/v1") || path.StartsWithSegments("/files/v1") || path.StartsWithSegments("/functions/v1")
-        || (path.StartsWithSegments(consolePath, out var rest) && !rest.StartsWithSegments("/api") && rest != "/cli-login");
+        Api(path, "/documents/v1") || Api(path, "/files/v1") || Api(path, "/functions/v1")
+        || (path.StartsWithSegments(consolePath, out var rest) && !rest.StartsWithSegments("/api"));
+
+    /// <summary>An API's routes: <c>/documents/v1</c>, <c>/documents/v1/…</c> and its verbs, <c>/documents/v1:runQuery</c>.</summary>
+    private static bool Api(PathString path, string prefix) =>
+        path.StartsWithSegments(prefix) || (path.Value?.StartsWith(prefix + ":", StringComparison.OrdinalIgnoreCase) ?? false);
 
     internal static string Plain(string message)
     {
