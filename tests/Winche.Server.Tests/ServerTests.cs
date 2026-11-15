@@ -140,6 +140,32 @@ public class ServerTests(PostgresFixture pg)
     }
 
     [Fact]
+    public async Task Apps_apis_and_the_consoles_files_are_compressed_the_consoles_api_never()
+    {
+        var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files);
+        var http = server.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions { HandleCookies = true });
+        await Json(await http.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await http.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await http.PostAsJsonAsync("/_console/api/project", new { name = "Clinic", id = "clinic", products = new[] { "database" } }));
+
+        async Task<string?> Encoding(string path)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, path);
+            request.Headers.AcceptEncoding.ParseAdd("br, gzip");
+            using var response = await http.SendAsync(request);
+            return response.Content.Headers.ContentEncoding.FirstOrDefault();
+        }
+        // The apps' APIs (a bearer token, never a cookie) and the console's page and files: compressed.
+        Assert.Equal("br", await Encoding("/documents/v1/" + Convert.ToBase64String("notes/n1"u8.ToArray())));
+        Assert.Equal("br", await Encoding("/_console/"));
+        // The console's API and sign-in (cookies): never, so an answer's size can't give away what it holds.
+        Assert.Null(await Encoding("/_console/api/auth/state"));
+        Assert.Null(await Encoding("/_console/api/project"));
+        Assert.Null(await Encoding("/auth/v1/config"));
+    }
+
+    [Fact]
     public async Task Each_project_has_its_own_browser_origins_besides_its_registered_web_apps()
     {
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;

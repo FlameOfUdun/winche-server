@@ -108,7 +108,7 @@ internal static class ProjectApp
             o.LogRequests();
             o.UseSettings();
             o.UseHooks(h => h.PublishChanges());
-        }).AddWincheDatabaseWsApi(ws => ws.UseSettings());
+        }).AddWincheDatabaseWsApi(ws => { ws.UseSettings(); ws.Compression = true; });
 
         // Files: on disk under the project's folder, served through signed links; the console can move them to a bucket.
         builder.Services.AddWincheStorage(o =>
@@ -161,6 +161,16 @@ internal static class ProjectApp
         });
 
         builder.Services.AddCors();
+        // Compressed answers (Brotli, else gzip) for the apps' APIs and the console's files: see UseCompression below.
+        builder.Services.AddResponseCompression(o =>
+        {
+            o.EnableForHttps = true;
+            o.Providers.Add<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProvider>();
+            o.Providers.Add<Microsoft.AspNetCore.ResponseCompression.GzipCompressionProvider>();
+            o.MimeTypes = Microsoft.AspNetCore.ResponseCompression.ResponseCompressionDefaults.MimeTypes.Concat(["application/javascript", "image/svg+xml"]);
+        });
+        builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProviderOptions>(o => o.Level = System.IO.Compression.CompressionLevel.Fastest);
+        builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.GzipCompressionProviderOptions>(o => o.Level = System.IO.Compression.CompressionLevel.Fastest);
         // A request whose body can't be read (bad JSON, a missing or unknown field, nested too deep) throws, so the
         // middleware below answers it in the Winche error shape with the reason, rather than an empty 400.
         builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(o => o.ThrowOnBadRequest = true);
@@ -185,6 +195,10 @@ internal static class ProjectApp
             p.SetIsOriginAllowed(origin => registeredApps.Current.AllowsOrigin(origin));
             p.AllowAnyHeader().AllowAnyMethod();
         });
+        // Compression only where another site can't make the browser send the credentials: the apps' APIs (a bearer token
+        // in a header) and the console's static files. Never the console's own API or sign-in (cookies), where a
+        // compressed answer's size could give away what it holds (BREACH).
+        app.UseWhen(http => Compressible(http.Request.Path, server.ConsolePath), branch => branch.UseResponseCompression());
         app.UseWebSockets();
         app.UseWincheWsQueryToken();
         app.UseAuthentication();
@@ -208,6 +222,11 @@ internal static class ProjectApp
     }
 
     /// <summary>The JSON reader's message in plain words, without .NET type names.</summary>
+    /// <summary>Whether answers on <paramref name="path"/> may be compressed (see the pipeline).</summary>
+    internal static bool Compressible(PathString path, string consolePath) =>
+        path.StartsWithSegments("/documents/v1") || path.StartsWithSegments("/files/v1") || path.StartsWithSegments("/functions/v1")
+        || (path.StartsWithSegments(consolePath, out var rest) && !rest.StartsWithSegments("/api") && rest != "/cli-login");
+
     internal static string Plain(string message)
     {
         // "JSON deserialization for type 'X' was missing required properties including: 'fields'."
