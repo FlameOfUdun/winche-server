@@ -1,0 +1,106 @@
+
+namespace Winche.Server;
+
+/// <summary>
+/// What the server needs to start — the only settings outside the console (section <c>Winche</c>, so environment
+/// variables <c>Winche__ConnectionString</c> etc.). Everything else is set up in the console.
+/// </summary>
+public sealed class ServerOptions
+{
+    /// <summary>
+    /// The server's PostgreSQL database: the default project's documents, files' records, users and settings, the
+    /// console accounts every project shares, and the list of other projects (each gets a database of its own, so
+    /// this user needs CREATEDB to create projects).
+    /// </summary>
+    public string ConnectionString { get; set; } = "";
+
+    /// <summary>
+    /// A long random secret (at least 32 characters): encrypts secrets saved in the console, and the keys that sign
+    /// tokens and file links are derived from it. Keep it safe and the same on every server; losing it loses those.
+    /// </summary>
+    public string MasterKey { get; set; } = "";
+
+    /// <summary>
+    /// While changing the master key: the old one(s), newest first (<c>Winche__PreviousMasterKeys__0</c>). What they
+    /// encrypted is still read and moved to the new key; Server settings → Security says when they can go.
+    /// </summary>
+    public string[] PreviousMasterKeys { get; set; } = [];
+
+    /// <summary>The address apps reach the server at, e.g. https://api.example.com (tokens' issuer, file links).</summary>
+    public string PublicUrl { get; set; } = "";
+
+    /// <summary>
+    /// Only to keep an existing first project's files where they are: its folder. Unset (the default), the first
+    /// project is like the others, under <see cref="ProjectsPath"/>.
+    /// </summary>
+    public string? FilesPath { get; set; }
+
+    /// <summary>
+    /// Where projects keep their files on disk, each in its own folder (<c>&lt;ProjectsPath&gt;/&lt;id&gt;/files</c>; default
+    /// /data/projects, the image's volume). Set by the deployment only: the console doesn't show or change it.
+    /// </summary>
+    public string ProjectsPath { get; set; } = "/data/projects";
+
+    /// <summary>The project's id, for apps' winche_options.dart (<c>winche configure</c>, the console's Project settings → General).</summary>
+    public string ProjectId { get; set; } = "winche";
+
+    /// <summary>The project's name for people.</summary>
+    public string? ProjectName { get; set; }
+
+    /// <summary>
+    /// The code first-run setup asks for, so only someone who can see the server claims it. Unset (the usual), the
+    /// server makes one and prints it in its log until someone has set it up. Set it for scripted installs.
+    /// </summary>
+    public string? SetupCode { get; set; }
+
+    /// <summary>Where the console is served (default /_console).</summary>
+    public string ConsolePath { get; set; } = "/_console";
+
+    /// <summary>
+    /// Console admins need two-step sign-in on to change sensitive settings (default true). Turn off only to try the
+    /// server out locally.
+    /// </summary>
+    public bool RequireTwoFactorForSettings { get; set; } = true;
+
+    /// <summary>
+    /// The deno program that runs functions, only when running the server outside its image (the image installs deno
+    /// and has it on the PATH). Not a console setting.
+    /// </summary>
+    public string? DenoPath { get; set; }
+
+
+    /// <summary>
+    /// Console sign-in through an OpenID Connect provider, as it starts (<c>Winche__ConsoleSignIn__Issuer</c>, …);
+    /// changed later in Server settings → Authentication → Sign-in method.
+    /// </summary>
+    public ConsoleSignInOptions? ConsoleSignIn { get; set; }
+
+    public IReadOnlyList<string> Problems()
+    {
+        var problems = new List<string>();
+        if (string.IsNullOrWhiteSpace(ConnectionString)) problems.Add("Winche__ConnectionString: the PostgreSQL connection string.");
+        if (MasterKey.Length < 32) problems.Add("Winche__MasterKey: a random secret of at least 32 characters (e.g. `openssl rand -base64 48`).");
+        if (PreviousMasterKeys.Any(k => k.Length < 32)) problems.Add("Winche__PreviousMasterKeys: each is a master key used before, at least 32 characters.");
+        if (!Uri.TryCreate(PublicUrl, UriKind.Absolute, out var u) || u.Scheme is not ("https" or "http"))
+            problems.Add("Winche__PublicUrl: the address apps reach this server at, e.g. https://api.example.com.");
+        return problems;
+    }
+
+}
+
+public sealed class ConsoleSignInOptions
+{
+    public string? Issuer { get; set; }
+    public string? ClientId { get; set; }
+    /// <summary>Used until one is saved in Server settings.</summary>
+    public string? ClientSecret { get; set; }
+    public string? Scopes { get; set; }
+    public string? ButtonLabel { get; set; }
+    public string? RoleClaim { get; set; }
+    public string[] AdminValues { get; set; } = [];
+    public string[] MemberValues { get; set; } = [];
+    public string[] ViewerValues { get; set; } = [];
+    public bool CreateAccounts { get; set; } = true;
+    public bool PasswordsOnlyForAdmins { get; set; }
+    public bool TrustProviderTwoStep { get; set; } = true;
+}

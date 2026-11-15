@@ -1,0 +1,171 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using Winche.Console.Api;
+using Winche.Console.Identity;
+
+namespace Winche.Console.Project;
+
+/// <summary>Who's asking for the list of projects: which ones they may see.</summary>
+public sealed record WincheProjectsCaller(string? UserId, bool ServerAdmin, bool HasAccountRole)
+{
+    internal const string AccountRoleClaim = "winche:account-role";
+
+    internal static WincheProjectsCaller Of(ClaimsPrincipal user)
+    {
+        var accountRoles = user.FindAll(AccountRoleClaim).Select(c => c.Value).ToList();
+        // Without project members here, the role claims are the account's own.
+        if (!user.HasClaim(c => c.Type == ProjectRoleClaims.DoneClaim)) accountRoles = [.. user.FindAll(ClaimTypes.Role).Select(c => c.Value)];
+        var id = user.FindFirstValue(ClaimTypes.NameIdentifier) is { Length: > 0 } uid ? uid : null;
+        return new(id, accountRoles.Contains(ConsoleRoles.Admin), accountRoles.Count > 0);
+    }
+}
+
+/// <summary>A project on the server, for the console's project switcher.</summary>
+/// <param name="ConsolePath">Its console under the server's root, e.g. <c>/p/wards/_console</c>.</param>
+/// <param name="IsDefault">The server's first project (at its root): it can't be archived or deleted.</param>
+public sealed record WincheProjectInfo(string Id, string Name, string ConsolePath, DateTimeOffset? ImageVersion, bool IsDefault = false)
+{
+    /// <summary>The products started in it (database, storage, authentication, functions); null: the host doesn't say.</summary>
+    public IReadOnlyList<string>? Products { get; init; }
+}
+
+/// <summary>An archived project: stopped, its address refused, its data kept until it's restored or deleted.</summary>
+public sealed record WincheArchivedProject(string Id, string Name, DateTimeOffset ArchivedAt);
+
+/// <summary>
+/// The projects on the server this console runs in, and creating one. A host that runs several projects (Winche
+/// Server) registers it; without it the console knows only its own project.
+/// </summary>
+public interface IWincheProjects
+{
+    /// <summary>This console's project's path under the server's root (empty for the default project at the root).</summary>
+    string CurrentPrefix { get; }
+
+    /// <summary>The projects <paramref name="caller"/> may use.</summary>
+    Task<IReadOnlyList<WincheProjectInfo>> ListAsync(WincheProjectsCaller caller, CancellationToken ct);
+
+    /// <summary>
+    /// Creates a project (named, every product off) and starts it, its data in <paramref name="database"/> (none: a
+    /// database of its own on the server's PostgreSQL).
+    /// </summary>
+    Task<WincheProjectInfo> CreateAsync(string name, string id, DataMoveTarget? database, string? by, CancellationToken ct);
+
+    /// <summary>
+    /// The first project's data, as first-run setup names the project: a database of its own (none: on the server's
+    /// PostgreSQL). Nothing for a project made from the switcher (it got one then).
+    /// </summary>
+    /// <returns>Whether it moved there: the project restarted, and <paramref name="products"/> were set up there.</returns>
+    Task<bool> PlaceFirstAsync(string id, DataMoveTarget? database, IReadOnlyList<string> products, string? by, CancellationToken ct) => Task.FromResult(false);
+
+    /// <summary>Whether a new project's data can go to <paramref name="database"/>: reachable, new or empty.</summary>
+    Task<DataMoveCheck> CheckDatabaseAsync(string id, DataMoveTarget? database, CancellationToken ct);
+
+    /// <summary>The archived projects (shown to server admins).</summary>
+    Task<IReadOnlyList<WincheArchivedProject>> ListArchivedAsync(CancellationToken ct);
+
+    /// <summary>Stops a project and refuses its address; its database and files stay. Not the first project.</summary>
+    Task ArchiveAsync(string id, string? by, CancellationToken ct);
+
+    /// <summary>Starts an archived project again.</summary>
+    Task RestoreAsync(string id, CancellationToken ct);
+
+    /// <summary>Deletes an archived project: its database and files, for good.</summary>
+    Task DeleteAsync(string id, CancellationToken ct);
+}
+
+public static class WincheProjectEndpoints
+{
+    /// <param name="Database">Where its data goes; none: a database of its own on the server's PostgreSQL.</param>
+    public sealed record CreateRequest(string? Name, string? Id, DataMoveTarget? Database = null);
+    public sealed record CheckDatabaseRequest(string? Id, DataMoveTarget? Database);
+
+    private static string? Who(ClaimsPrincipal user) => user.FindFirstValue(ClaimTypes.Email) ?? user.FindFirstValue("email") ?? user.Identity?.Name;
+
+    /// <summary>The server's root as seen from this request: the path base without this project's own part.</summary>
+    private static string Root(HttpRequest request, IWincheProjects projects)
+    {
+        var pathBase = request.PathBase.Value ?? "";
+        foreach (var prefix in new[] { projects.CurrentPrefix }.Where(p => p.Length > 0))
+            if (pathBase.EndsWith(prefix, StringComparison.Ordinal)) return pathBase[..^prefix.Length];
+        // The default project, reached at its own /p/<id> too: strip that.
+        var marker = pathBase.LastIndexOf("/p/", StringComparison.Ordinal);
+        return marker >= 0 && pathBase.IndexOf('/', marker + 3) < 0 ? pathBase[..marker] : pathBase;
+    }
+
+    internal static IEndpointRouteBuilder MapConsoleWincheProjectEndpoints(this IEndpointRouteBuilder app, Options.ConsoleOptions options)
+    {
+        app.MapGet("/api/projects", async (HttpContext http, ProjectSetup setup, CancellationToken ct) =>
+        {
+            var projects = http.RequestServices.GetService<IWincheProjects>();
+            var caller = WincheProjectsCaller.Of(http.User);
+            if (projects is null) return Results.Json(new { available = false, canCreate = false, current = setup.Current.Id, projects = Array.Empty<object>() });
+            var root = Root(http.Request, projects);
+            var list = await projects.ListAsync(caller, ct);
+            return Results.Json(new
+            {
+                available = true,
+                canCreate = caller.ServerAdmin,   // projects are the server's: its admins make them
+                current = setup.Current.Id,
+                projects = list.Select(p => new
+                {
+                    id = p.Id, name = p.Name, consoleUrl = root + p.ConsolePath,
+                    imageVersion = p.ImageVersion?.ToUnixTimeMilliseconds().ToString(), isDefault = p.IsDefault, products = p.Products,
+                }),
+                archived = caller.ServerAdmin
+                    ? (await projects.ListArchivedAsync(ct)).Select(a => new { id = a.Id, name = a.Name, archivedAt = a.ArchivedAt }).Cast<object>()
+                    : [],
+            });
+        }).RequireAuthorization(ConsoleRoles.SignedInPolicy);   // the CLI signs in at the root: a project's member lists their projects there
+
+        app.MapPost("/api/projects", async (CreateRequest body, HttpContext http, CancellationToken ct) =>
+        {
+            if (http.RequestServices.GetService<IWincheProjects>() is not { } projects)
+                return ConsoleErrors.Problem("projects", "This console runs one project only.", null);
+            if (!WincheProjectsCaller.Of(http.User).ServerAdmin)
+                return Results.Json(new { error = "Only server admins create projects." }, statusCode: StatusCodes.Status403Forbidden);
+            if (string.IsNullOrWhiteSpace(body.Name)) return ConsoleErrors.Problem("projects", "Name the project.", null);
+            if (!ProjectSetup.IsValidId(body.Id))
+                return ConsoleErrors.Problem("projects", "The project id is 3 to 40 lower-case letters, digits and dashes, starting with a letter.", null);
+            try
+            {
+                var created = await projects.CreateAsync(body.Name.Trim(), body.Id!, body.Database, Who(http.User), ct);
+                return Results.Json(new { id = created.Id, name = created.Name, consoleUrl = Root(http.Request, projects) + created.ConsolePath });
+            }
+            catch (ArgumentException ex)
+            {
+                return ConsoleErrors.Problem("projects", ex.Message, null);
+            }
+        }).RequireAuthorization(ConsoleRoles.AdminPolicy);
+        // Before creating: whether its data can go where the form says.
+        app.MapPost("/api/projects/check-database", async (CheckDatabaseRequest body, HttpContext http, CancellationToken ct) =>
+        {
+            if (http.RequestServices.GetService<IWincheProjects>() is not { } projects)
+                return ConsoleErrors.Problem("projects", "This console runs one project only.", null);
+            if (!WincheProjectsCaller.Of(http.User).ServerAdmin)
+                return Results.Json(new { error = "Only server admins create projects." }, statusCode: StatusCodes.Status403Forbidden);
+            if (!ProjectSetup.IsValidId(body.Id))
+                return ConsoleErrors.Problem("projects", "The project id is 3 to 40 lower-case letters, digits and dashes, starting with a letter.", null);
+            return Results.Json(await projects.CheckDatabaseAsync(body.Id!, body.Database, ct));
+        }).RequireAuthorization(ConsoleRoles.AdminPolicy);
+        // Archiving, restoring and deleting: server admins, never the first project.
+        async Task<IResult> AsServerAdmin(HttpContext http, Func<IWincheProjects, Task<IResult>> work)
+        {
+            if (http.RequestServices.GetService<IWincheProjects>() is not { } projects)
+                return ConsoleErrors.Problem("projects", "This console runs one project only.", null);
+            if (!WincheProjectsCaller.Of(http.User).ServerAdmin)
+                return Results.Json(new { error = "Only server admins archive, restore or delete projects." }, statusCode: StatusCodes.Status403Forbidden);
+            try { return await work(projects); }
+            catch (ArgumentException ex) { return ConsoleErrors.Problem("projects", ex.Message, null); }
+        }
+        app.MapPost("/api/projects/{id}/archive", (string id, HttpContext http, CancellationToken ct) =>
+            AsServerAdmin(http, async p => { await p.ArchiveAsync(id, Who(http.User), ct); return Results.NoContent(); })).RequireAuthorization(ConsoleRoles.AdminPolicy);
+        app.MapPost("/api/projects/{id}/restore", (string id, HttpContext http, CancellationToken ct) =>
+            AsServerAdmin(http, async p => { await p.RestoreAsync(id, ct); return Results.NoContent(); })).RequireAuthorization(ConsoleRoles.AdminPolicy);
+        app.MapDelete("/api/projects/{id}", (string id, HttpContext http, CancellationToken ct) =>
+            AsServerAdmin(http, async p => { await p.DeleteAsync(id, ct); return Results.NoContent(); })).RequireAuthorization(ConsoleRoles.AdminPolicy);
+        return app;
+    }
+}

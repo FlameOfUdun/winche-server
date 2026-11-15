@@ -1,0 +1,221 @@
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Hosting.Server;
+using Npgsql;
+using Winche.Auth.AspNetCore;
+using Winche.Auth.DependencyInjection;
+using Winche.Console;
+using Winche.Core;
+using Winche.Database.AspNetCore.DependencyInjection;
+using Winche.Database.AspNetCore.Rest.DependencyInjection;
+using Winche.Database.AspNetCore.WebSockets.DependencyInjection;
+using Winche.Database.DependencyInjection;
+using Winche.Functions;
+using Winche.Functions.Auth;
+using Winche.Functions.Database;
+using Winche.Functions.Storage;
+using Winche.Storage.AspNetCore.DependencyInjection;
+using Winche.Storage.AspNetCore.Rest.DependencyInjection;
+using Winche.Storage.DependencyInjection;
+using Winche.Storage.FileSystem;
+using Winche.Storage.S3.DependencyInjection;
+using Winche.Webhooks;
+
+namespace Winche.Server;
+
+/// <summary>
+/// One project on this server: its own PostgreSQL database, files folder and public address. The first (default)
+/// project is the server's own database, reached at the root as before and at <c>/p/&lt;id&gt;</c>; the others only
+/// at <c>/p/&lt;id&gt;</c>.
+/// </summary>
+/// <param name="ConnectionString">Its data database: documents, files' records, app users, hook deliveries, logs.</param>
+/// <param name="ConfigConnectionString">Its configuration: its own schema in the server's control database (settings,
+/// secrets, rules, apps, members, tokens, functions).</param>
+public sealed record ServerProject(string Id, string ConnectionString, string FilesPath, string PublicUrl, bool IsDefault, string ConfigConnectionString);
+
+/// <summary>
+/// The whole Winche stack for one project, as its own app (its own services, settings, keys, background work) run
+/// in this process behind the server's router (<see cref="ProjectRouter"/>).
+/// </summary>
+internal static class ProjectApp
+{
+    public static async Task<(WebApplication App, InProcessServer Server)> BuildAsync(ServerOptions server, ServerSettingsProvider settings,
+        ServerProject project, ProjectHosts projects, IConfiguration configuration, IWebHostEnvironment environment, CancellationToken ct)
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            EnvironmentName = environment.EnvironmentName,
+            ContentRootPath = environment.ContentRootPath,
+            ApplicationName = environment.ApplicationName,
+        });
+        builder.Configuration.AddConfiguration(configuration);   // logging levels and the like, as the server has them
+        var inProcess = new InProcessServer();
+        builder.Services.AddSingleton<IServer>(inProcess);
+        builder.Services.AddWincheProductSetupOnDemand();   // each product's tables only once it's started in the console
+
+        var conn = project.ConnectionString;                 // the project's data
+        var config = project.ConfigConnectionString;         // the project's configuration (its schema in the control database)
+        var serverConn = server.ConnectionString;   // what every project shares: data-protection keys, console accounts
+        var publicUrl = project.PublicUrl;
+
+        builder.Services.AddSingleton(server);
+        builder.Services.AddSingleton(project);
+        // The console's project switcher: every project on this server, and creating one.
+        builder.Services.AddSingleton<Winche.Console.Project.IWincheProjects>(new ServerProjectsForConsole(projects, project, server));
+        // One key ring for the whole server, so a console sign-in made under one project is valid under every other.
+        builder.Services.AddDataProtection().SetApplicationName("winche-server")
+            .Services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Microsoft.AspNetCore.DataProtection.KeyManagement.KeyManagementOptions>>(sp =>
+                new Microsoft.Extensions.Options.ConfigureOptions<Microsoft.AspNetCore.DataProtection.KeyManagement.KeyManagementOptions>(o =>
+                {
+                    // Encrypted at rest with a key derived from the master key (Winche.Core); older plain keys are encrypted too.
+                    var keys = sp.GetRequiredService<WincheKeys>();
+                    var encryptor = new MasterKeyXmlEncryptor(keys);
+                    o.XmlEncryptor = encryptor;
+                    o.XmlRepository = new DataProtectionKeys(projects.ControlDb, encryptor, keys);   // one pool for every project
+                }));
+
+        // Settings the console changes, and its encrypted secrets.
+        builder.Services.AddWincheConfig(o => { o.ConnectionString = config; o.MasterKey = server.MasterKey; o.PreviousMasterKeys = server.PreviousMasterKeys; });
+
+        // Users: Winche Auth (email and password and two-step sign-in to start with; everything else in the console).
+        builder.Services.AddWincheAuth(o =>
+        {
+            o.ConnectionString = conn;
+            o.Issuer = publicUrl;
+            o.EmailPassword();
+            o.Mfa();
+            o.UseSettings();
+        });
+        builder.Services.AddAuthentication().AddWincheTokens(t => t.TrustWincheAuth().UseSettings());
+
+        // Who is calling: the verified token's claims, once per request, for every package (rules, logs, functions' ctx.auth).
+        builder.Services.AddWincheCaller(WincheClaims.FromAsync);
+
+        // Webhooks for documents, files and users (anything else is a function with a trigger).
+        builder.Services.AddWincheHooks(o => o.ConnectionString = conn);
+
+        // Functions: TypeScript run by Deno in sandboxed workers, deployed with the CLI.
+        builder.Services.AddWincheFunctions(o =>
+        {
+            o.ConnectionString = config;   // deployments and schedules are configuration
+            o.DenoPath = string.IsNullOrWhiteSpace(server.DenoPath) ? null : server.DenoPath;   // the image has deno on the PATH
+        });
+        builder.Services.AddWincheFunctionsForDatabase().AddWincheFunctionsForStorage().AddWincheFunctionsForAuth();
+
+        // Documents: REST and live (WebSocket) APIs; rules start as "deny everything" until published in the console.
+        builder.Services.AddWincheDatabase(o =>
+        {
+            o.ConnectionString = conn;
+            o.LogRequests();
+            o.UseSettings();
+            o.UseHooks(h => h.PublishChanges());
+        }).AddWincheDatabaseWsApi(ws => ws.UseSettings());
+
+        // Files: on disk under the project's folder, served through signed links; the console can move them to a bucket.
+        builder.Services.AddWincheStorage(o =>
+        {
+            o.ConnectionString = conn;
+            o.LogRequests();
+            o.UseSettings();
+            o.AllowS3Locations();
+            o.UseHooks(h => h.PublishChanges());
+            o.UseFileSystemArchive(fs =>
+            {
+                fs.Root = project.FilesPath;
+                fs.PublicBaseUrl = publicUrl;
+            });
+        });
+
+        // The console, at ConsolePath under the project's path. Accounts are the server's: one sign-in, every project.
+        builder.Services.AddWincheConsole(o =>
+        {
+            o.ConnectionString = config;          // rules versions
+            o.LogsConnectionString = conn;        // the Logs tab's entries are data
+            o.AccountsConnectionString = serverConn;
+            o.Accounts = projects.Accounts;   // the console's accounts: one Winche Auth for the whole server
+            o.SignInCookiePath = "/";
+            o.AddDatabaseTab(b => { b.UseRulesEditor(); b.UseLogs(); b.UseHistory(); });
+            o.AddStorageTab(b => { b.UseRulesEditor(); b.UseLogs(); });
+            o.AddAuthenticationTab();
+            o.AddLogsTab();
+            // Console emails: the server's own SMTP server (Server settings), never this project's.
+            // Console emails (invites, password resets): through the console accounts' email, as Server settings →
+            // Authentication → Settings → Emails to users sets it (its SMTP server and password).
+            // Only a real SMTP server counts: links that are just logged would leave invitees waiting for an email.
+            o.UseEmailSender(_ =>
+            {
+                var auth = projects.Accounts.Services.GetRequiredService<Winche.Auth.WincheAuthOptions>();
+                return new Winche.Console.Email.WincheAuthConsoleEmail(() => auth.EmailSending is { Smtp: not null } e ? e : null,
+                    projects.Accounts.Services, "Server settings → Authentication → Settings → Email");
+            });
+            o.RequireTwoFactorForSettings = settings.Current.RequireTwoFactorForSettings;
+            // The console's cookie outlives use: the accounts' session (renewed every few minutes) decides how long it lasts.
+            o.SessionLifetime = TimeSpan.FromDays(400);
+            o.ServerSettings = new ServerSettingsForConsole(settings, projects);
+            if (project.IsDefault) o.SetupCode = settings.SetupCodeAsync;   // first-run setup asks for it (the server's log has it)
+            o.DataLocation = new ServerDataLocationForConsole(projects, ProjectHosts.KeyOf(project));   // Project settings → Data   // Server settings, for server admins
+            o.ProjectId = project.IsDefault ? server.ProjectId : project.Id;
+            o.ProjectName = server.ProjectName;
+            o.UseProjectSetup(carryOver: project.IsDefault);   // a new project shares accounts with older ones: not "in use"
+            // Who may use a created project is its own list; the first goes by the accounts' roles, as before.
+            if (!project.IsDefault) o.UseProjectMembers();
+        });
+
+        builder.Services.AddCors();
+        // A request whose body can't be read (bad JSON, a missing or unknown field, nested too deep) throws, so the
+        // middleware below answers it in the Winche error shape with the reason, rather than an empty 400.
+        builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(o => o.ThrowOnBadRequest = true);
+
+        var app = builder.Build();
+        app.Use(async (http, next) =>
+        {
+            try { await next(http); }
+            catch (BadHttpRequestException ex) when (!http.Response.HasStarted)
+            {
+                // The JSON reader's own words say what's wrong (the outer message only names the parameter).
+                var why = ex.InnerException is System.Text.Json.JsonException { Message: { Length: > 0 } inner } ? Plain(inner) : ex.Message;
+                await new Winche.WincheError(Winche.WincheErrorCode.InvalidArgument, $"The request body isn't right: {why}", "bad-request")
+                    .ToResult().ExecuteAsync(http);
+            }
+        });
+        // CORS: the project's browser origins and its registered web apps' (Project settings → General), read as
+        // requests come, so changes apply at once. None set, or *: any origin.
+        var registeredApps = app.Services.GetRequiredService<Winche.Console.Apps.RegisteredApps>();
+        app.UseCors(p =>
+        {
+            p.SetIsOriginAllowed(origin => registeredApps.Current.AllowsOrigin(origin));
+            p.AllowAnyHeader().AllowAnyMethod();
+        });
+        app.UseWebSockets();
+        app.UseWincheWsQueryToken();
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.UseWincheCaller();
+        Winche.Console.Project.ProjectEndpoints.UseWincheProjectGate(app);   // a product's API answers once it's started
+
+        // Products are set up when they're started (and again as the project starts): nothing is made for those that aren't.
+        app.MapWincheDatabaseRestApi();
+        app.MapWincheDatabaseWsApi();
+        app.MapWincheStorageRestApi();
+        app.MapWincheStorageFileSystem();
+        app.MapWincheAuth();
+        app.MapWincheFunctions();
+        app.MapWincheConsole(server.ConsolePath);
+        Winche.Console.Apps.AppSetupEndpoints.MapWincheAppSetup(app);   // GET /.well-known/winche: winche configure reads it
+        app.MapGet("/", (HttpContext http) => Results.Redirect($"{http.Request.PathBase}{server.ConsolePath}"));
+
+        await app.StartAsync(ct);
+        return (app, inProcess);
+    }
+
+    /// <summary>The JSON reader's message in plain words, without .NET type names.</summary>
+    internal static string Plain(string message)
+    {
+        // "JSON deserialization for type 'X' was missing required properties including: 'fields'."
+        var missing = System.Text.RegularExpressions.Regex.Match(message, @"missing required properties including: (.+?)\.?$");
+        if (missing.Success) return $"it's missing {missing.Groups[1].Value}.";
+        // "The JSON value could not be converted to System.Int64. Path: $.n | LineNumber: …"
+        var convert = System.Text.RegularExpressions.Regex.Match(message, @"could not be converted to [^.]+(?:\.[^.\s]+)*\. Path: (\$[^ |]*)");
+        if (convert.Success) return $"the value at {convert.Groups[1].Value} isn't of the right kind.";
+        return message;
+    }
+}

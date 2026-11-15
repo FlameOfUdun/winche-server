@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>Winche.Server</RootNamespace>
+    <AssemblyName>Winche.Server</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Winche.Core" Version="1.0.0" />
+    <PackageReference Include="Winche.Core.AspNetCore" Version="1.0.0" />
+    <PackageReference Include="Winche.Database.AspNetCore.Rest" Version="11.1.0" />
+    <PackageReference Include="Winche.Database.AspNetCore.WebSockets" Version="11.1.0" />
+    <PackageReference Include="Winche.Storage.AspNetCore.Rest" Version="9.1.0" />
+    <PackageReference Include="Winche.Storage.FileSystem" Version="9.1.0" />
+    <PackageReference Include="Winche.Storage.S3" Version="9.1.0" />
+    <PackageReference Include="Winche.Auth.AspNetCore" Version="1.0.0" />
+    <PackageReference Include="Winche.Functions.Database" Version="1.0.0" />
+    <PackageReference Include="Winche.Functions.Storage" Version="1.0.0" />
+    <PackageReference Include="Winche.Functions.Auth" Version="1.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The console's API, and its web app's built files (from winche-console: scripts/update-console-web.sh). -->
+    <ProjectReference Include="..\Winche.Console\Winche.Console.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Winche.Server.Tests" />
+  </ItemGroup>
+
+</Project>

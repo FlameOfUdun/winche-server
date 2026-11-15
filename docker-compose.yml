@@ -1,0 +1,38 @@
+# Winche Server with its PostgreSQL. Put the secrets in a .env file beside this one:
+#   WINCHE_MASTER_KEY=<openssl rand -base64 48>
+#   POSTGRES_PASSWORD=<a strong password>
+#   WINCHE_PUBLIC_URL=https://api.example.com   (http://localhost:8080 to try it locally)
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: winche
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: winche
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U winche -d winche"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  winche:
+    build: .
+    image: winche-server:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      Winche__ConnectionString: Host=postgres;Database=winche;Username=winche;Password=${POSTGRES_PASSWORD}
+      Winche__MasterKey: ${WINCHE_MASTER_KEY:?set WINCHE_MASTER_KEY in .env}
+      Winche__PublicUrl: ${WINCHE_PUBLIC_URL:-http://localhost:8080}
+    ports:
+      - "${WINCHE_PORT:-8080}:8080"
+    volumes:
+      - files:/data
+    restart: unless-stopped
+
+volumes:
+  postgres:
+  files:
