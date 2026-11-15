@@ -49,6 +49,8 @@ internal static class ConsoleSession
     public static async Task SignInAsync(HttpContext http, AuthTokens tokens, IEnumerable<Claim>? extra = null, AuthenticationProperties? properties = null,
         ConsoleAccount? account = null)
     {
+        // Which session with the accounts this is (kept when the account turns two-step on from here).
+        if (SessionIdOf(tokens.AccessToken) is { } sid) extra = (extra ?? []).Where(c => c.Type != SessionClaim).Append(new Claim(SessionClaim, sid));
         account ??= ConsoleAccounts.From(tokens.User);
         Forget(account.Id);   // what was known of it is older than this sign-in (a provider may just have changed its role)
         properties ??= new AuthenticationProperties();
@@ -56,6 +58,16 @@ internal static class ConsoleSession
         properties.Items[RefreshItem] = tokens.RefreshToken;
         properties.Items[CheckAtItem] = (DateTimeOffset.UtcNow + CheckEvery).ToString("O");
         await http.SignInAsync(Scheme, Principal(account, extra), properties);
+    }
+
+    /// <summary>The claim naming the sign-in's session with the accounts (browser and CLI alike).</summary>
+    public const string SessionClaim = "winche_sid";
+
+    /// <summary>The session an access token belongs to (its <c>sid</c>), read without checking it: it was just issued here.</summary>
+    internal static string? SessionIdOf(string accessToken)
+    {
+        try { return new Microsoft.IdentityModel.JsonWebTokens.JsonWebToken(accessToken).TryGetPayloadValue<string>("sid", out var sid) ? sid : null; }
+        catch (ArgumentException) { return null; }
     }
 
     /// <summary>Ends this console sign-in, and its session with the accounts.</summary>

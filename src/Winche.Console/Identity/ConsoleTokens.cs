@@ -375,6 +375,7 @@ internal sealed class ConsoleTokenHandler(IOptionsMonitor<AuthenticationSchemeOp
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, user.Id), new(TokenKindClaim, "session"), new(ClaimTypes.Name, user.Email ?? user.Id),
+            new(ConsoleSession.SessionClaim, sid),
         };
         if (!string.IsNullOrEmpty(user.Role)) claims.Add(new Claim(ClaimTypes.Role, user.Role));
         if (user.Email is { } email) claims.Add(new Claim(ClaimTypes.Email, email));

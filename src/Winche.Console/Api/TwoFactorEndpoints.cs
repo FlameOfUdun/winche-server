@@ -34,7 +34,8 @@ public static class TwoFactorEndpoints
             if (await accounts.CurrentAsync(http.User, http.RequestAborted) is not { } user) return Results.Unauthorized();
             try
             {
-                var codes = await accounts.UseAsync(a => a.ConfirmTotpEnrollmentAsync(user.Id, Normalize(body.Code), http.RequestAborted));
+                var codes = await accounts.UseAsync(a => a.ConfirmTotpEnrollmentAsync(user.Id, Normalize(body.Code),
+                    Guid.TryParse(http.User.FindFirst(ConsoleSession.SessionClaim)?.Value, out var keep) ? keep : null, http.RequestAborted));
                 return Results.Json(new { recoveryCodes = codes });
             }
             catch (Winche.Auth.AuthException) { return Results.BadRequest(new { error = "Invalid code." }); }
