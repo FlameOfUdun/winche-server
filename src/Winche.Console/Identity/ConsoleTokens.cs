@@ -365,6 +365,11 @@ internal sealed class ConsoleTokenHandler(IOptionsMonitor<AuthenticationSchemeOp
         var accounts = Context.RequestServices.GetRequiredService<ConsoleAccounts>();
         if (await accounts.FindAsync(uid, Context.RequestAborted) is not { Active: true } user)
             return AuthenticateResult.Fail("The account is no longer in the console.");
+        // Its session must still be live (signed out, everywhere too, or ended by an admin: refused within seconds,
+        // like the browser's sign-in, not when the access token runs out).
+        if (!checkedToken.Claims.TryGetValue("sid", out var sidClaim) || sidClaim is not string sid
+            || !await SessionLiveAsync(accounts, uid, sid, Context.RequestAborted))
+            return AuthenticateResult.Fail("Your sign-in has ended: run winche login.");
         // The account's own role, like the browser's sign-in: in a created project, its membership's role comes from
         // ProjectRoleClaims (none, not a member there, still signs in, for what any account may do: list its projects).
         var claims = new List<Claim>
@@ -375,6 +380,21 @@ internal sealed class ConsoleTokenHandler(IOptionsMonitor<AuthenticationSchemeOp
         if (user.Email is { } email) claims.Add(new Claim(ClaimTypes.Email, email));
         return AuthenticateResult.Success(new AuthenticationTicket(
             new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme, ClaimTypes.Name, ClaimTypes.Role)), Scheme));
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> LiveSessions = new();
+    internal static readonly TimeSpan SessionFreshFor = TimeSpan.FromSeconds(10);
+
+    /// <summary>Whether session <paramref name="sid"/> of <paramref name="uid"/> is live, looked up at most every few seconds.</summary>
+    private static async Task<bool> SessionLiveAsync(ConsoleAccounts accounts, string uid, string sid, CancellationToken ct)
+    {
+        var key = uid + "/" + sid;
+        var now = DateTimeOffset.UtcNow;
+        if (LiveSessions.TryGetValue(key, out var seen) && now - seen < SessionFreshFor) return true;
+        var live = (await accounts.UseAsync(a => a.ListSessionsAsync(uid, ct))).Any(x => x.Id.ToString("N") == sid);
+        if (live) LiveSessions[key] = now; else LiveSessions.TryRemove(key, out _);
+        if (LiveSessions.Count > 10_000) foreach (var old in LiveSessions.Where(e => now - e.Value > SessionFreshFor).Select(e => e.Key).ToList()) LiveSessions.TryRemove(old, out _);
+        return live;
     }
 
     private static int Rank(string role) => role switch { ConsoleRoles.Admin => 2, ConsoleRoles.Member => 1, _ => 0 };

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -87,6 +88,18 @@ public class ConsoleTokenTests(PostgresFixture fx) : IAsyncLifetime
         using var cli2 = Bearer(app, renewed.GetProperty("accessToken").GetString()!);
         await Json(await cli2.GetAsync("/_console/api/rules/database/versions"));
         Assert.Equal(HttpStatusCode.Unauthorized, (await anon.PostAsJsonAsync("/_console/api/cli-login/refresh", new { refreshToken = refresh })).StatusCode);   // used
+
+        // Signed out everywhere (from the browser), the CLI's access token stops working within seconds, not when it runs out.
+        var me = JsonDocument.Parse(await browser.GetStringAsync("/_console/api/auth/state")).RootElement.GetProperty("user").GetProperty("id").GetString();
+        var kept = await Json(await anon.PostAsJsonAsync("/_console/api/cli-login/refresh", new { refreshToken = renewed.GetProperty("refreshToken").GetString() }));
+        using var cli3 = Bearer(app, kept.GetProperty("accessToken").GetString()!);
+        Assert.Equal(HttpStatusCode.OK, (await cli3.GetAsync("/_console/api/rules/database/versions")).StatusCode);
+        var accounts = app.Services.GetRequiredService<Winche.Console.Identity.ConsoleAccounts>();
+        Assert.True(await accounts.UseAsync(a => a.RevokeSessionsAsync(me!)) > 0);
+        await Task.Delay(TimeSpan.FromSeconds(11));   // sessions are looked up again after 10 s
+        Assert.Equal(HttpStatusCode.Unauthorized, (await cli3.GetAsync("/_console/api/rules/database/versions")).StatusCode);
+        renewed = kept;
+        await browser.LoginAsync();
 
         // winche logout ends the session: it can't be renewed.
         var current = renewed.GetProperty("refreshToken").GetString()!;
