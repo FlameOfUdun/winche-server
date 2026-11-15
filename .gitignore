@@ -54,7 +54,7 @@ desktop.ini
 
 # Logs
 *.log
-logs/
+/logs/
 
 # Locally built Winche packages (before they are on nuget.org)
 packages/*.nupkg
