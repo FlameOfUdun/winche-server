@@ -54,7 +54,8 @@ public static class ConsoleTokenEndpoints
             // The signed-in user allows the CLI waiting on 127.0.0.1:{port}; the browser goes back to it with a code.
             app.MapPost("/api/cli-login/approve", async (ApproveRequest body, HttpContext http, ConsoleTokenStore store, CancellationToken ct) =>
             {
-                if (ByToken(http.User)) return Results.Forbid();   // only a person in the browser approves
+                // A person approves: in the browser, or a code from a CLI signed in as them (winche login:approve); never a CI token.
+                if (ByCiToken(http.User) || (ByToken(http.User) && body.UserCode is null)) return Results.Forbid();
                 if (!store.Available) return Problem("The CLI's sign-in needs AddWincheConfig(…) (where its tokens are kept).");
                 if (body.UserCode is { } userCode)
                 {

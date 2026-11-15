@@ -57,8 +57,10 @@ public static class UserEndpoints
             if ((demoting || deactivating) && user.IsAdmin && await accounts.AdminCountAsync(ct) <= 1)
                 return Results.BadRequest(new { error = "Cannot demote or deactivate the last admin." });
 
+            // "none" takes the account's role away (no access to the first project; a created project's membership stays).
+            var clear = body.Role == "none";
             var role = body.Role is not null && ConsoleRoles.All.Contains(body.Role) ? body.Role : null;
-            await accounts.UpdateAsync(id, body.FirstName, body.LastName, role, body.TwoFactorRequired, ct: ct);
+            await accounts.UpdateAsync(id, body.FirstName, body.LastName, role, body.TwoFactorRequired, clearRole: clear, ct: ct);
             if (body.Active is { } active && active != user.Active) await accounts.UseAsync(a => a.SetDisabledAsync(id, !active, ct));
             Identity.ConsoleSession.Forget(id);   // their open sessions see it at their next request
             return Results.Ok();
