@@ -38,6 +38,7 @@ public static class ConsoleFunctionsEndpoints
         name = f.Name, kind = f.Trigger.Kind, events = f.Trigger.Events, path = f.Trigger.Path, cron = f.Trigger.Cron, timeZone = f.Trigger.TimeZone,
         description = f.Trigger.Describe(), timeoutSeconds = functions?.TimeoutFor(f) ?? f.TimeoutSeconds, codeTimeoutSeconds = f.CodeTimeoutSeconds,
         secrets = f.Secrets ?? [],
+        about = f.About, input = f.Input?.DeepClone(), output = f.Output?.DeepClone(), example = f.ExampleInput,
     };
 
     private static object Version(Deployment d, WincheFunctions? functions = null) => new
