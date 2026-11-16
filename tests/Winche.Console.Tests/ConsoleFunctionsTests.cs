@@ -45,9 +45,13 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.True(state.GetProperty("capabilities").GetProperty("functions").GetBoolean());
         var page = await Json(await client.GetAsync("/_console/api/functions"));
         Assert.Equal(JsonValueKind.Null, page.GetProperty("current").ValueKind);
-        if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 })
+        // Deno comes from WINCHE_DENO, else PATH. Set WINCHE_DENO to require it; without Deno, it's said plainly.
+        var problem = page.GetProperty("runtimeProblem");
+        if (Environment.GetEnvironmentVariable("WINCHE_DENO") is { Length: > 0 })
+            Assert.Equal(JsonValueKind.Null, problem.ValueKind);
+        else if (problem.ValueKind == JsonValueKind.String)
         {
-            Assert.Contains("Deno", page.GetProperty("runtimeProblem").GetString());   // said plainly when it's missing
+            Assert.Contains("Deno", problem.GetString());
             return;
         }
 
