@@ -25,19 +25,46 @@ using Winche.Webhooks;
 namespace Winche.Server;
 
 /// <summary>
-/// One project on this server: its own PostgreSQL database, files folder and public address. The first (default)
-/// project is the server's own database, reached at the root as before and at <c>/p/&lt;id&gt;</c>; the others only
-/// at <c>/p/&lt;id&gt;</c>.
+/// One project on this server: its own PostgreSQL database, files folder and public address, at <c>/p/&lt;id&gt;</c>.
 /// </summary>
 /// <param name="ConnectionString">Its data database: documents, files' records, app users, hook deliveries, logs.</param>
 /// <param name="ConfigConnectionString">Its configuration: its own schema in the server's control database (settings,
 /// secrets, rules, apps, members, tokens, functions).</param>
-public sealed record ServerProject(string Id, string ConnectionString, string FilesPath, string PublicUrl, bool IsDefault, string ConfigConnectionString);
+public sealed record ServerProject(string Id, string ConnectionString, string FilesPath, string PublicUrl, string ConfigConnectionString);
 
 /// <summary>
 /// The whole Winche stack for one project, as its own app (its own services, settings, keys, background work) run
 /// in this process behind the server's router (<see cref="ProjectRouter"/>).
 /// </summary>
+/// <summary>
+/// One key ring for the whole server (its console and every project's), so a console sign-in made in one is valid in
+/// every other. Encrypted at rest with a key derived from the master key (Winche.Core); older plain keys are encrypted too.
+/// </summary>
+internal static class ServerKeyRing
+{
+    public static void Add(IServiceCollection services, ProjectHosts projects) =>
+        services.AddDataProtection().SetApplicationName("winche-server")
+            .Services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Microsoft.AspNetCore.DataProtection.KeyManagement.KeyManagementOptions>>(sp =>
+                new Microsoft.Extensions.Options.ConfigureOptions<Microsoft.AspNetCore.DataProtection.KeyManagement.KeyManagementOptions>(o =>
+                {
+                    var keys = sp.GetRequiredService<WincheKeys>();
+                    var encryptor = new MasterKeyXmlEncryptor(keys);
+                    o.XmlEncryptor = encryptor;
+                    o.XmlRepository = new DataProtectionKeys(projects.ControlDb, encryptor, keys);
+                }));
+
+    /// <summary>Console emails (invites, password resets): through the console accounts' email (Server settings → Authentication → Settings → Email).</summary>
+    public static Winche.Console.Email.IConsoleEmailSender ConsoleEmail(ProjectHosts projects)
+    {
+        // Only a real sender counts (an SMTP server, or the server's own email): links that are just logged would leave
+        // invitees waiting for an email.
+        var auth = projects.Accounts.Services.GetRequiredService<Winche.Auth.WincheAuthOptions>();
+        var host = projects.Accounts.Services.GetService<Winche.Auth.Email.IAuthEmailSender>() is Winche.Console.Email.IHostEmailSender;
+        return new Winche.Console.Email.WincheAuthConsoleEmail(() => auth.EmailSending is { } e && (e.Smtp is not null || !e.LogLinksOnly && host) ? e : null,
+            projects.Accounts.Services, "Server settings → Authentication → Settings → Email");
+    }
+}
+
 internal static class ProjectApp
 {
     public static async Task<(WebApplication App, InProcessServer Server)> BuildAsync(ServerOptions server, ServerSettingsProvider settings,
@@ -63,17 +90,7 @@ internal static class ProjectApp
         builder.Services.AddSingleton(project);
         // The console's project switcher: every project on this server, and creating one.
         builder.Services.AddSingleton<Winche.Console.Project.IWincheProjects>(new ServerProjectsForConsole(projects, project, server));
-        // One key ring for the whole server, so a console sign-in made under one project is valid under every other.
-        builder.Services.AddDataProtection().SetApplicationName("winche-server")
-            .Services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Microsoft.AspNetCore.DataProtection.KeyManagement.KeyManagementOptions>>(sp =>
-                new Microsoft.Extensions.Options.ConfigureOptions<Microsoft.AspNetCore.DataProtection.KeyManagement.KeyManagementOptions>(o =>
-                {
-                    // Encrypted at rest with a key derived from the master key (Winche.Core); older plain keys are encrypted too.
-                    var keys = sp.GetRequiredService<WincheKeys>();
-                    var encryptor = new MasterKeyXmlEncryptor(keys);
-                    o.XmlEncryptor = encryptor;
-                    o.XmlRepository = new DataProtectionKeys(projects.ControlDb, encryptor, keys);   // one pool for every project
-                }));
+        ServerKeyRing.Add(builder.Services, projects);
 
         // Settings the console changes, and its encrypted secrets.
         builder.Services.AddWincheConfig(o => { o.ConnectionString = config; o.MasterKey = server.MasterKey; o.PreviousMasterKeys = server.PreviousMasterKeys; });
@@ -90,7 +107,7 @@ internal static class ProjectApp
         // The server's own email, when the deployment has one: sign-in emails go through it unless the project chooses SMTP.
         if (ServerEmail.Of(server) is { } serverEmail)
             builder.Services.AddSingleton<Winche.Auth.Email.IAuthEmailSender>(sp =>
-                serverEmail.For(() => sp.GetRequiredService<Winche.Auth.WincheAuthOptions>().EmailSending?.AppName ?? server.ProjectName));
+                serverEmail.For(() => sp.GetRequiredService<Winche.Auth.WincheAuthOptions>().EmailSending?.AppName ?? project.Id));
         builder.Services.AddAuthentication().AddWincheTokens(t => t.TrustWincheAuth().UseSettings());
 
         // Who is calling: the verified token's claims, once per request, for every package (rules, logs, functions' ctx.auth).
@@ -163,24 +180,15 @@ internal static class ProjectApp
             // Authentication → Settings → Emails to users sets it (its SMTP server and password).
             // Only a real sender counts (an SMTP server, or the server's own email): links that are just logged would
             // leave invitees waiting for an email.
-            o.UseEmailSender(_ =>
-            {
-                var auth = projects.Accounts.Services.GetRequiredService<Winche.Auth.WincheAuthOptions>();
-                var host = projects.Accounts.Services.GetService<Winche.Auth.Email.IAuthEmailSender>() is Winche.Console.Email.IHostEmailSender;
-                return new Winche.Console.Email.WincheAuthConsoleEmail(() => auth.EmailSending is { } e && (e.Smtp is not null || !e.LogLinksOnly && host) ? e : null,
-                    projects.Accounts.Services, "Server settings → Authentication → Settings → Email");
-            });
+            o.UseEmailSender(_ => ServerKeyRing.ConsoleEmail(projects));
             o.RequireTwoFactorForSettings = settings.Current.RequireTwoFactorForSettings;
             // The console's cookie outlives use: the accounts' session (renewed every few minutes) decides how long it lasts.
             o.SessionLifetime = TimeSpan.FromDays(400);
             o.ServerSettings = new ServerSettingsForConsole(settings, projects);
-            if (project.IsDefault) o.SetupCode = settings.SetupCodeAsync;   // first-run setup asks for it (the server's log has it)
             o.DataLocation = new ServerDataLocationForConsole(projects, ProjectHosts.KeyOf(project));   // Project settings → Data   // Server settings, for server admins
-            o.ProjectId = project.IsDefault ? server.ProjectId : project.Id;
-            o.ProjectName = server.ProjectName;
-            o.UseProjectSetup(carryOver: project.IsDefault);   // a new project shares accounts with older ones: not "in use"
-            // Who may use a created project is its own list; the first goes by the accounts' roles, as before.
-            if (!project.IsDefault) o.UseProjectMembers();
+            o.ProjectId = project.Id;
+            o.UseProjectSetup(carryOver: false);   // made by the server: shares accounts with others, never "in use" before
+            o.UseProjectMembers();   // who may use it is its own list; server admins use every project
         });
 
         builder.Services.AddCors();

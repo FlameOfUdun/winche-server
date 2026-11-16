@@ -19,35 +19,33 @@ public sealed record DataTargetCheck(bool Ok, string? Problem, string? Version, 
 
 public sealed partial class ProjectHosts
 {
+    /// <summary>
+    /// A name to move a project's data to: its usual one (<see cref="DatabaseName"/>), or, when it's there already,
+    /// that with a number after it.
+    /// </summary>
+    internal string SuggestedDatabase(string key, string current)
+    {
+        var usual = DatabaseName(key);
+        if (usual != current) return usual;
+        for (var n = 2; ; n++)
+        {
+            var name = $"{usual[..Math.Min(usual.Length, 60)]}_{n}";
+            if (name != current) return name;
+        }
+    }
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly ConcurrentDictionary<string, MoveProgress> _moving = new();
     private readonly ConcurrentDictionary<string, (string Error, DateTimeOffset At)> _moveFailed = new();
 
-    internal static string KeyOf(ServerProject project) => project.IsDefault ? DefaultKey : project.Id;
+    internal static string KeyOf(ServerProject project) => project.Id;
 
     /// <summary>The move under way for <paramref name="host"/>'s project (it's paused), or null.</summary>
     internal MoveProgress? MovingOf(ProjectHost host) => _moving.TryGetValue(KeyOf(host.Project), out var m) ? m : null;
 
-    /// <summary>The first project's data location (null: in the control database) and where it was before a move.</summary>
-    internal async Task<(DataLocation? At, PreviousData? Previous)> DefaultLocationAsync(CancellationToken ct)
-    {
-        await using var cmd = Db.CreateCommand($"SELECT database, db_host, db_port, db_username, db_ssl_mode, pool_max, command_timeout, previous::text FROM {DefaultTable} WHERE id = $1");
-        cmd.Parameters.AddWithValue(DefaultKey);
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        if (!await r.ReadAsync(ct)) return (null, null);
-        var at = new DataLocation(r.GetString(0), r.IsDBNull(1) ? null : r.GetString(1), r.IsDBNull(2) ? null : r.GetInt32(2), r.IsDBNull(3) ? null : r.GetString(3),
-            r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetInt32(5), r.IsDBNull(6) ? null : r.GetInt32(6));
-        return (at, r.IsDBNull(7) ? null : JsonSerializer.Deserialize<PreviousData>(r.GetString(7), Json));
-    }
-
-    /// <summary>A project's data location (the first project in the control database: its name, no host) and previous.</summary>
+    /// <summary>A project's data location, and where it was before a move.</summary>
     internal async Task<(DataLocation At, PreviousData? Previous)> LocationAsync(string key, CancellationToken ct)
     {
-        if (key == DefaultKey)
-        {
-            var (at, previous) = await DefaultLocationAsync(ct);
-            return (at ?? throw new InvalidOperationException("Set up the project first: it gets its database then."), previous);
-        }
         var row = await RowAsync(key, ct);
         return (row.Location, row.Previous is null ? null : JsonSerializer.Deserialize<PreviousData>(row.Previous, Json));
     }
@@ -55,14 +53,7 @@ public sealed partial class ProjectHosts
     private async Task SaveLocationAsync(string key, DataLocation at, PreviousData? previous, CancellationToken ct)
     {
         var prev = previous is null ? (object)DBNull.Value : JsonSerializer.Serialize(previous, Json);
-        await using var cmd = key == DefaultKey
-            ? Db.CreateCommand($"""
-                INSERT INTO {DefaultTable} (id, database, db_host, db_port, db_username, db_ssl_mode, pool_max, command_timeout, previous)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-                ON CONFLICT (id) DO UPDATE SET database = $2, db_host = $3, db_port = $4, db_username = $5, db_ssl_mode = $6,
-                    pool_max = $7, command_timeout = $8, previous = $9::jsonb
-                """)
-            : Db.CreateCommand($"""
+        await using var cmd = Db.CreateCommand($"""
                 UPDATE {Table} SET database = $2, db_host = $3, db_port = $4, db_username = $5, db_ssl_mode = $6, pool_max = $7,
                     command_timeout = $8, previous = $9::jsonb WHERE id = $1
                 """);
@@ -78,15 +69,11 @@ public sealed partial class ProjectHosts
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    private async Task<ServerProject> ProjectForKeyAsync(string key, CancellationToken ct) =>
-        key == DefaultKey ? await DefaultProjectAsync(ct) : await ProjectForAsync(await RowAsync(key, ct), ct);
+    private async Task<ServerProject> ProjectForKeyAsync(string key, CancellationToken ct) => await ProjectForAsync(await RowAsync(key, ct), ct);
 
-    private ProjectHost? HostFor(string key) => key == DefaultKey ? _default : _hosts.TryGetValue(key, out var h) ? h : null;
+    private ProjectHost? HostFor(string key) => _hosts.TryGetValue(key, out var h) ? h : null;
 
-    private void SetHost(string key, ProjectHost host)
-    {
-        if (key == DefaultKey) _default = host; else _hosts[key] = host;
-    }
+    private void SetHost(string key, ProjectHost host) => _hosts[key] = host;
 
     /// <summary>Restarts one project with its location as saved (new app first, the old one stopped a moment later).</summary>
     private async Task RestartAsync(string key, CancellationToken ct)
@@ -323,7 +310,7 @@ public sealed partial class ProjectHosts
         var failed = _moveFailed.TryGetValue(key, out var f) ? new Winche.Console.Project.DataMoveFailure(f.Error, f.At) : null;
         return new(at.Host, at.Host is null ? null : at.Port ?? 5432, at.Database, at.Username, at.SslMode, size, version, at.PoolMax, at.CommandTimeout,
             previous is null ? null : new Winche.Console.Project.DataPrevious(previous.Location.Host, previous.Location.Database, previous.MovedAt),
-            failed, DatabaseName(key == DefaultKey ? DefaultKey : key));
+            failed, SuggestedDatabase(key, at.Database));
     }
 }
 

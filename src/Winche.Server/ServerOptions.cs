@@ -30,22 +30,10 @@ public sealed class ServerOptions
     public string PublicUrl { get; set; } = "";
 
     /// <summary>
-    /// Only to keep an existing first project's files where they are: its folder. Unset (the default), the first
-    /// project is like the others, under <see cref="ProjectsPath"/>.
-    /// </summary>
-    public string? FilesPath { get; set; }
-
-    /// <summary>
     /// Where projects keep their files on disk, each in its own folder (<c>&lt;ProjectsPath&gt;/&lt;id&gt;/files</c>; default
     /// /data/projects, the image's volume). Set by the deployment only: the console doesn't show or change it.
     /// </summary>
     public string ProjectsPath { get; set; } = "/data/projects";
-
-    /// <summary>The project's id, for apps' winche_options.dart (<c>winche configure</c>, the console's Project settings → General).</summary>
-    public string ProjectId { get; set; } = "winche";
-
-    /// <summary>The project's name for people.</summary>
-    public string? ProjectName { get; set; }
 
     /// <summary>
     /// The code first-run setup asks for, so only someone who can see the server claims it. Unset (the usual), the
@@ -131,8 +119,6 @@ public sealed class ConsoleSignInOptions
     public string? ButtonLabel { get; set; }
     public string? RoleClaim { get; set; }
     public string[] AdminValues { get; set; } = [];
-    public string[] MemberValues { get; set; } = [];
-    public string[] ViewerValues { get; set; } = [];
     public bool CreateAccounts { get; set; } = true;
     public bool PasswordsOnlyForAdmins { get; set; }
     public bool TrustProviderTwoStep { get; set; } = true;

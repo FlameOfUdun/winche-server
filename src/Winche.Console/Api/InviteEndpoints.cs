@@ -32,6 +32,7 @@ public static class InviteEndpoints
         {
             if (string.IsNullOrWhiteSpace(body.Email)) return Results.BadRequest(new { error = "Email is required." });
             if (!ConsoleRoles.All.Contains(body.Role)) return Results.BadRequest(new { error = "Invalid role." });
+            if (UserEndpoints.ServerRoleRefused(sp.GetRequiredService<Options.ConsoleOptions>(), body.Role) is { } refused) return refused;
             if (body.ExpiresInHours is < 1 or > 720) return Results.BadRequest(new { error = "Expiry must be 1–720 hours." });
 
             // Without console email the invite is still made: its link is shared by hand.

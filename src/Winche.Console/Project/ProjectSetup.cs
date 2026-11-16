@@ -173,7 +173,7 @@ internal sealed class ProjectStartupService(ProjectSetup setup, ProductSetupRunn
 
 public static class ProjectEndpoints
 {
-    /// <param name="Database">The first project's: where its data goes (none: a database of its own on the server's PostgreSQL).</param>
+    /// <param name="Database">Ignored (a server places a project's data when it creates it).</param>
     public sealed record CreateRequest(string? Name, string? Id, string[]? Products, DataMoveTarget? Database = null);
     public sealed record RenameRequest(string? Name, string? Id);
 
@@ -205,20 +205,8 @@ public static class ProjectEndpoints
             if (!ProjectSetup.IsValidId(body.Id)) return Problem("The project id is 3 to 40 lower-case letters, digits and dashes, starting with a letter.");
             var products = (body.Products ?? []).Where(p => p != WincheProducts.FormerHooks).ToArray();
             if (products.FirstOrDefault(p => !WincheProducts.All.Contains(p)) is { } unknown) return Problem($"'{unknown}' isn't a product.");
-            // On Winche Server: its database first (checked and made), so nothing of it is kept in the server's own.
-            if (http.RequestServices.GetService<IWincheProjects>() is { } projects)
-            {
-                var check = await projects.CheckDatabaseAsync(body.Id!, body.Database, ct);
-                if (!check.Ok) return Problem(check.Problem ?? "That database can't be used.");
-            }
             await setup.CreateAsync(body.Name, body.Id!, products, Who(http.User), ct);
-            var placed = false;
-            if (http.RequestServices.GetService<IWincheProjects>() is { } server)
-            {
-                try { placed = await server.PlaceFirstAsync(body.Id!, body.Database, products, Who(http.User), ct); }
-                catch (ArgumentException ex) { return Problem(ex.Message); }
-            }
-            if (!placed) foreach (var product in products) await runner.SetUpNowAsync(product, ct);
+            foreach (var product in products) await runner.SetUpNowAsync(product, ct);
             return Results.Json(Body(setup.Current, await images.VersionAsync(ct), runner));
         });
 

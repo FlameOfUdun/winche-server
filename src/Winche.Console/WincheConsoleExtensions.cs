@@ -37,9 +37,10 @@ public static class WincheConsoleExtensions
         services.AddSingleton<ConsolePrefix>();
 
         services.TryAddSingleton(TimeProvider.System);
-        if (options.AuthenticationTab)
+        if (options.AuthenticationTab || options.ServerConsole)
         {
-            // Which directory the Users tab manages (Winche Auth, Keycloak): a setting the console can change.
+            // Which directory the Users tab manages (Winche Auth, Keycloak): a setting the console can change. The
+            // server's console has the accounts' Users page (Server settings → Authentication).
             services.AddSingleton<Users.UserDirectories>();
         }
         if (options.DatabaseTab is not null)
@@ -225,13 +226,17 @@ public static class WincheConsoleExtensions
         if (isService?.IsService(typeof(Winche.Webhooks.HookCatalog)) == true) group.MapConsoleHooksEndpoints();
         // Background deliveries (hooks inside the app) of every package that has them.
         group.MapConsoleTokenEndpoints(options);
-        group.MapConsoleOverviewEndpoints(options);
-        Project.ProjectEndpoints.MapConsoleProjectEndpoints(group);
         Project.WincheProjectEndpoints.MapConsoleWincheProjectEndpoints(group, options);
         Project.ServerSettingsEndpoints.MapConsoleServerSettingsEndpoints(group, options);
-        Project.DataLocationEndpoints.MapConsoleDataLocationEndpoints(group, options);
-        Project.ProjectImageEndpoints.MapConsoleProjectImageEndpoints(group);
-        Apps.RegisteredAppEndpoints.MapConsoleRegisteredAppEndpoints(group, options);
+        // A project's own pages: not in the server's console, which has no project.
+        if (!options.ServerConsole)
+        {
+            group.MapConsoleOverviewEndpoints(options);
+            Project.ProjectEndpoints.MapConsoleProjectEndpoints(group);
+            Project.DataLocationEndpoints.MapConsoleDataLocationEndpoints(group, options);
+            Project.ProjectImageEndpoints.MapConsoleProjectImageEndpoints(group);
+            Apps.RegisteredAppEndpoints.MapConsoleRegisteredAppEndpoints(group, options);
+        }
         if (options.ProjectMembers) Project.ProjectMemberEndpoints.MapConsoleProjectMemberEndpoints(group);
         // Functions, when the app uses Winche.Functions (AddWincheFunctions).
         if (isService?.IsService(typeof(Winche.Functions.WincheFunctions)) == true)

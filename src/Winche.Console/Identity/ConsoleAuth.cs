@@ -43,12 +43,12 @@ internal static class ConsoleAuth
             .AddPolicy(ConsoleRoles.SignedInPolicy, p => p
                 .AddAuthenticationSchemes(ConsoleSession.Scheme, ConsoleTokenHandler.Scheme)
                 .RequireAuthenticatedUser())
-            .AddPolicy(ConsoleRoles.ViewerPolicy, p => p
-                .AddAuthenticationSchemes(ConsoleSession.Scheme, ConsoleTokenHandler.Scheme)
-                .RequireRole(ConsoleRoles.Viewer, ConsoleRoles.Member, ConsoleRoles.Admin))
-            .AddPolicy(ConsoleRoles.MemberPolicy, p => p
-                .AddAuthenticationSchemes(ConsoleSession.Scheme, ConsoleTokenHandler.Scheme)
-                .RequireRole(ConsoleRoles.Member, ConsoleRoles.Admin))
+            // The server's own console has no project, so no project roles: there anyone signed in may use what a
+            // Viewer or Member could (their own account, their projects); Admin is a server admin.
+            .AddPolicy(ConsoleRoles.ViewerPolicy, p => (options.ServerConsole ? p.RequireAuthenticatedUser() : p.RequireRole(ConsoleRoles.Viewer, ConsoleRoles.Member, ConsoleRoles.Admin))
+                .AddAuthenticationSchemes(ConsoleSession.Scheme, ConsoleTokenHandler.Scheme))
+            .AddPolicy(ConsoleRoles.MemberPolicy, p => (options.ServerConsole ? p.RequireAuthenticatedUser() : p.RequireRole(ConsoleRoles.Member, ConsoleRoles.Admin))
+                .AddAuthenticationSchemes(ConsoleSession.Scheme, ConsoleTokenHandler.Scheme))
             .AddPolicy(ConsoleRoles.AdminPolicy, p => p
                 .AddAuthenticationSchemes(ConsoleSession.Scheme, ConsoleTokenHandler.Scheme)
                 .RequireRole(ConsoleRoles.Admin));

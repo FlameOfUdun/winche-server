@@ -113,7 +113,7 @@ internal sealed class ProjectRoleClaims(ProjectMembers members) : IClaimsTransfo
 
         var identity = new ClaimsIdentity(principal.Identity!.AuthenticationType, ClaimTypes.Name, ClaimTypes.Role);
         identity.AddClaims(principal.Claims.Where(c => c.Type != ClaimTypes.Role));
-        // The account's own role stays readable (the first project, which goes by it, is listed from here too).
+        // The account's own role stays readable (whether they're a server admin).
         foreach (var r in principal.FindAll(ClaimTypes.Role)) identity.AddClaim(new Claim(WincheProjectsCaller.AccountRoleClaim, r.Value));
         if (role is not null) identity.AddClaim(new Claim(ClaimTypes.Role, role));
         if (serverAdmin) identity.AddClaim(new Claim(ServerAdminClaim, "true"));

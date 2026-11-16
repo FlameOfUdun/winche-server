@@ -69,18 +69,12 @@ internal sealed class InProcessServer : IServer
 }
 
 /// <summary>A running project: its app, and the server the router hands its requests to.</summary>
-internal sealed record ProjectHost(ServerProject Project, WebApplication App, InProcessServer Server)
-{
-    /// <summary>The project's id as its console has it now (the default project's comes from its setup).</summary>
-    public string CurrentId => Project.IsDefault
-        ? App.Services.GetRequiredService<Winche.Console.Project.ProjectSetup>().Current.Id
-        : Project.Id;
-}
+internal sealed record ProjectHost(ServerProject Project, WebApplication App, InProcessServer Server);
 
 /// <summary>
-/// The projects this server runs. The default one is the server's own database (<c>Winche__ConnectionString</c>); the
-/// others are listed in its table <c>winche_server_projects</c>, each with a database of its own, made when the
-/// project is created (the server's database user needs CREATEDB), and files under <c>ProjectsPath/&lt;id&gt;</c>.
+/// The projects this server runs, listed in the control database's table <c>winche_server_projects</c>: each with a
+/// database of its own, made when the project is created (the server's database user needs CREATEDB), and files under
+/// <c>ProjectsPath/&lt;id&gt;</c>. The server runs with none: its own console (<see cref="ServerConsoleApp"/>) makes them.
 /// </summary>
 public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsProvider settings, IConfiguration configuration,
     IWebHostEnvironment environment, ILogger<ProjectHosts> logger, ConsoleAccounts accounts) : IHostedService
@@ -89,13 +83,8 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
 
     /// <summary>The console's accounts, for every project's console.</summary>
     internal ConsoleAccounts Accounts => accounts;
-    private const string DefaultTable = "winche_server_default_data";
-
-    /// <summary>The first project's key for its configuration schema (its id can change during setup).</summary>
-    internal const string DefaultKey = "default";
     private readonly ConcurrentDictionary<string, ProjectHost> _hosts = new();
     private readonly SemaphoreSlim _creating = new(1, 1);
-    private ProjectHost? _default;
 
     private NpgsqlDataSource? _db;
     private NpgsqlDataSource Db => _db ??= NpgsqlDataSource.Create(server.ConnectionString);
@@ -134,24 +123,13 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
         $"ALTER TABLE {Table} ADD COLUMN IF NOT EXISTS db_host text NULL, ADD COLUMN IF NOT EXISTS db_port int NULL, ADD COLUMN IF NOT EXISTS db_username text NULL, ADD COLUMN IF NOT EXISTS db_ssl_mode text NULL;",
         // Connection pool settings, and where the data was before a move (kept until the move is finished).
         $"ALTER TABLE {Table} ADD COLUMN IF NOT EXISTS pool_max int NULL, ADD COLUMN IF NOT EXISTS command_timeout int NULL, ADD COLUMN IF NOT EXISTS previous jsonb NULL;",
-        // The first project's data, once it has a database of its own (no row: it's in the control database).
-        $"""
-        CREATE TABLE IF NOT EXISTS {DefaultTable} (
-            id text PRIMARY KEY, database text NOT NULL, db_host text NULL, db_port int NULL, db_username text NULL, db_ssl_mode text NULL,
-            pool_max int NULL, command_timeout int NULL, previous jsonb NULL
-        );
-        """,
     ], ct);
 
-    /// <summary>The default project (the server's own database).</summary>
-    internal ProjectHost Default => _default ?? throw new InvalidOperationException("The server isn't running yet.");
-
-    /// <summary>Every running project, the default first.</summary>
-    internal IReadOnlyList<ProjectHost> All => [Default, .. _hosts.Values.OrderBy(h => h.Project.Id, StringComparer.Ordinal)];
+    /// <summary>Every running project, by id.</summary>
+    internal IReadOnlyList<ProjectHost> All => [.. _hosts.Values.OrderBy(h => h.Project.Id, StringComparer.Ordinal)];
 
     /// <summary>The project at <c>/p/&lt;id&gt;</c>, or null.</summary>
-    internal ProjectHost? Find(string id) =>
-        _hosts.TryGetValue(id, out var host) ? host : _default is { } d && d.CurrentId == id ? d : null;
+    internal ProjectHost? Find(string id) => _hosts.TryGetValue(id, out var host) ? host : null;
 
     /// <summary>A project's schema in the control database, for its configuration.</summary>
     public static string ConfigSchema(string key) => "project_" + NotWord().Replace(key, "_");
@@ -162,7 +140,7 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
     /// </summary>
     internal async Task<(int Secrets, int Reencrypted, int Unreadable)> ReencryptSecretsAsync(CancellationToken ct)
     {
-        var schemas = new List<string> { "server", ConsoleAccounts.Schema, ConfigSchema(DefaultKey) };
+        var schemas = new List<string> { "server", ConsoleAccounts.Schema };
         schemas.AddRange((await ListAsync(ct)).Select(r => ConfigSchema(r.Id)));
         int total = 0, moved = 0, unreadable = 0;
         foreach (var schema in schemas.Distinct())
@@ -212,7 +190,7 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
         return b.ConnectionString;
     }
 
-    /// <summary>The control database's name (where the first project's data is until it moves).</summary>
+    /// <summary>The control database's name (never a project's).</summary>
     internal string ControlDatabase => new NpgsqlConnectionStringBuilder(server.ConnectionString).Database ?? "";
 
     private async Task<ServerProject> ProjectForAsync(ProjectRow row, CancellationToken ct) => new(
@@ -220,17 +198,7 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
         await DataConnectionAsync(row, ct),
         Path.Combine(server.ProjectsPath, row.Id, "files"),
         $"{settings.Current.PublicUrl.TrimEnd('/')}/p/{row.Id}",
-        IsDefault: false,
         ConfigConnection(row.Id));
-
-    private async Task<ServerProject> DefaultProjectAsync(CancellationToken ct)
-    {
-        var (at, _) = await DefaultLocationAsync(ct);
-        var conn = at is null ? server.ConnectionString : await ConnectionForAsync(at, PasswordSecret(DefaultKey), ct);
-        // The first project's files: under the projects' folder like the others, unless the deployment keeps its own.
-        var files = string.IsNullOrWhiteSpace(server.FilesPath) ? Path.Combine(server.ProjectsPath, server.ProjectId, "files") : server.FilesPath;
-        return new(server.ProjectId, conn, files, settings.Current.PublicUrl.TrimEnd('/'), IsDefault: true, ConfigConnection(DefaultKey));
-    }
 
     private async Task<ProjectHost> StartAsync(ServerProject project, CancellationToken ct)
     {
@@ -257,7 +225,6 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
                 });
         };
         await EnsureAsync(ct);
-        _default = await StartAsync(await DefaultProjectAsync(ct), ct);
         foreach (var row in await ListAsync(ct))
         {
             if (row.ArchivedAt is not null) { _archived[row.Id] = true; continue; }
@@ -283,7 +250,6 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
     public async Task StopAsync(CancellationToken ct)
     {
         foreach (var host in _hosts.Values) await StopAsync(host, ct);
-        if (_default is { } d) await StopAsync(d, ct);
     }
 
     private async Task StopAsync(ProjectHost host, CancellationToken ct)
@@ -314,7 +280,7 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
 
     private async Task<ProjectRow> RowAsync(string id, CancellationToken ct) =>
         (await ListAsync(ct)).FirstOrDefault(r => r.Id == id)
-            ?? throw new ArgumentException(Default.CurrentId == id ? "The server's first project can't be archived or deleted." : $"There's no project {id}.");
+            ?? throw new ArgumentException($"There's no project {id}.");
 
     private async Task SetArchivedAsync(string id, bool archived, CancellationToken ct)
     {
@@ -398,11 +364,6 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
         var retired = new List<ProjectHost>();
         try
         {
-            if (_default is { } d)
-            {
-                _default = await StartAsync(await DefaultProjectAsync(ct), ct);
-                retired.Add(d);
-            }
             foreach (var row in (await ListAsync(ct)).Where(r => r.ArchivedAt is null))
             {
                 var fresh = await StartAsync(await ProjectForAsync(row, ct), ct);
@@ -501,46 +462,6 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
     }
 
     /// <summary>
-    /// The first project's data, when first-run setup names it: a database of its own like any project's (none: on this
-    /// server's PostgreSQL), never the server's own. The project restarts on it; what it logged before setup goes.
-    /// </summary>
-    public async Task PlaceFirstAsync(string id, DataTarget? database, IReadOnlyList<string> products, string? by, CancellationToken ct = default)
-    {
-        await _creating.WaitAsync(ct);
-        try
-        {
-            if ((await DefaultLocationAsync(ct)).At is not null) throw new ArgumentException("The project already has its database.");
-            var at = NewLocation(id, database);
-            var check = await CheckNewAsync(id, database, ct);
-            if (!check.Ok) throw new ArgumentException(check.Problem);
-            if (at.Host is not null && !string.IsNullOrEmpty(database?.Password)) await settings.Secrets.SetAsync(PasswordSecret(DefaultKey), database.Password, by, ct);
-            if (!check.Exists)
-            {
-                var conn = await ConnectionForAsync(at, PasswordSecret(DefaultKey), ct);
-                await using var maintenance = NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(conn) { Database = "postgres", Pooling = false }.ConnectionString);
-                await using var create = maintenance.CreateCommand($"CREATE DATABASE \"{at.Database}\"");
-                await create.ExecuteNonQueryAsync(ct);
-            }
-            await SaveLocationAsync(DefaultKey, at, null, ct);
-            var old = _default;
-            var next = await StartAsync(await DefaultProjectAsync(ct), ct);
-            var runner = next.App.Services.GetRequiredService<Winche.Console.Project.ProductSetupRunner>();
-            foreach (var product in products) await runner.SetUpNowAsync(product, ct);
-            _default = next;
-            if (old is not null)
-                _ = Task.Run(async () =>
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(2));
-                    await StopAsync(old, CancellationToken.None);
-                    // Before setup it logged into the server's database: those tables go (the server's own stay).
-                    try { await DataCopy.DropPreSetupAsync(Db, CancellationToken.None); }
-                    catch (Exception ex) { logger.LogWarning(ex, "Couldn't drop the logs from before setup in the server's database"); }
-                });
-        }
-        finally { _creating.Release(); }
-    }
-
-    /// <summary>
     /// The project's database: the server's own database's name, <c>_p_</c> and the id with underscores (so two servers
     /// sharing a PostgreSQL don't collide), at most PostgreSQL's 63 characters.
     /// </summary>
@@ -555,16 +476,19 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
     private static partial Regex NotWord();
 }
 
-/// <summary>What a project's console sees of the server's projects (<see cref="Winche.Console.Project.IWincheProjects"/>).</summary>
-internal sealed class ServerProjectsForConsole(ProjectHosts hosts, ServerProject project, ServerOptions server) : Winche.Console.Project.IWincheProjects
+/// <summary>
+/// What a console sees of the server's projects (<see cref="Winche.Console.Project.IWincheProjects"/>): a project's
+/// console (<paramref name="project"/>), or the server's own (null).
+/// </summary>
+internal sealed class ServerProjectsForConsole(ProjectHosts hosts, ServerProject? project, ServerOptions server) : Winche.Console.Project.IWincheProjects
 {
-    public string CurrentPrefix => project.IsDefault ? "" : $"/p/{project.Id}";
+    public string CurrentPrefix => project is null ? "" : $"/p/{project.Id}";
 
     private async Task<Winche.Console.Project.WincheProjectInfo> InfoAsync(ProjectHost host, CancellationToken ct)
     {
         var current = host.App.Services.GetRequiredService<Winche.Console.Project.ProjectSetup>().Current;
         var image = await host.App.Services.GetRequiredService<Winche.Console.Project.ProjectImageStore>().VersionAsync(ct);
-        return new(current.Id, current.Name, $"{(host.Project.IsDefault ? "" : $"/p/{host.Project.Id}")}{server.ConsolePath}", image, host.Project.IsDefault)
+        return new(host.Project.Id, current.Name, $"/p/{host.Project.Id}{server.ConsolePath}", image)
         {
             Products = [.. Winche.Console.Project.WincheProducts.All.Where(current.IsStarted)],
         };
@@ -578,11 +502,10 @@ internal sealed class ServerProjectsForConsole(ProjectHosts hosts, ServerProject
         return list;
     }
 
-    /// <summary>Server admins use every project; the first goes by the account's role; the others by their members.</summary>
+    /// <summary>Server admins use every project; everyone else, the projects they're members of.</summary>
     private static async Task<bool> MayUseAsync(ProjectHost host, Winche.Console.Project.WincheProjectsCaller caller, CancellationToken ct)
     {
         if (caller.ServerAdmin) return true;
-        if (host.Project.IsDefault) return caller.HasAccountRole;
         return caller.UserId is { } id && host.App.Services.GetService<Winche.Console.Project.ProjectMembers>() is { } members
             && await members.RoleOfAsync(id, ct) is not null;
     }
@@ -591,13 +514,6 @@ internal sealed class ServerProjectsForConsole(ProjectHosts hosts, ServerProject
     {
         await hosts.CreateAsync(name, id, Target(database), by, ct);
         return await InfoAsync(hosts.Find(id)!, ct);
-    }
-
-    public async Task<bool> PlaceFirstAsync(string id, Winche.Console.Project.DataMoveTarget? database, IReadOnlyList<string> products, string? by, CancellationToken ct)
-    {
-        if (!project.IsDefault) return false;
-        await hosts.PlaceFirstAsync(id, Target(database), products, by, ct);
-        return true;
     }
 
     public async Task<Winche.Console.Project.DataMoveCheck> CheckDatabaseAsync(string id, Winche.Console.Project.DataMoveTarget? database, CancellationToken ct)
@@ -618,12 +534,12 @@ internal sealed class ServerProjectsForConsole(ProjectHosts hosts, ServerProject
 }
 
 /// <summary>
-/// Sends each request to its project: <c>/p/&lt;id&gt;/…</c> to that project (seen at that path), anything else to
-/// the default project (as before projects). <c>/healthz</c> is the server's own.
+/// Sends each request to its project: <c>/p/&lt;id&gt;/…</c> to that project (seen at that path); anything else to the
+/// server's own console app (its console, and a pointer to the projects for app APIs). <c>/healthz</c> is the server's own.
 /// </summary>
 internal static class ProjectRouter
 {
-    public static async Task RouteAsync(HttpContext http, ProjectHosts projects)
+    public static async Task RouteAsync(HttpContext http, ProjectHosts projects, ServerConsoleApp console)
     {
         var path = http.Request.Path;
         if (path.StartsWithSegments("/p", out var rest) && rest.HasValue && rest.Value!.Length > 1)
@@ -646,8 +562,7 @@ internal static class ProjectRouter
             await host.Server.HandleAsync(http, pathBase, slash < 0 ? PathString.Empty : new PathString(value[slash..]));
             return;
         }
-        if (await PausedAsync(http, projects, projects.Default)) return;
-        await projects.Default.Server.HandleAsync(http, http.Request.PathBase, path);
+        await console.Server.HandleAsync(http, http.Request.PathBase, path);
     }
 
     /// <summary>A project whose data is moving is paused: requests are told to try again, with how far the move has got.</summary>

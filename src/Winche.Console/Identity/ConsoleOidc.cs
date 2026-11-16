@@ -53,11 +53,6 @@ public sealed record ConsoleOidcSettings
     /// <summary>Values of <see cref="RoleClaim"/> that make someone a server admin (Admin everywhere).</summary>
     public IReadOnlyList<string> AdminValues { get; init; } = [];
 
-    /// <summary>Values that make someone a Member (of the first project; others go by their members list).</summary>
-    public IReadOnlyList<string> MemberValues { get; init; } = [];
-
-    public IReadOnlyList<string> ViewerValues { get; init; } = [];
-
     /// <summary>People the console doesn't know yet get an account at their first sign-in; off: an admin adds them first.</summary>
     public bool CreateAccounts { get; init; } = true;
 
@@ -111,12 +106,12 @@ public sealed record ConsoleOidcSettings
         return problems;
     }
 
-    /// <summary>The console role <paramref name="values"/> map to: Admin, Member, Viewer, or null.</summary>
-    public string? RoleFor(IReadOnlyCollection<string> values)
-    {
-        bool Any(IReadOnlyList<string> wanted) => wanted.Any(w => values.Contains(w, StringComparer.OrdinalIgnoreCase));
-        return Any(AdminValues) ? ConsoleRoles.Admin : Any(MemberValues) ? ConsoleRoles.Member : Any(ViewerValues) ? ConsoleRoles.Viewer : null;
-    }
+    /// <summary>
+    /// The account role <paramref name="values"/> map to: Admin (a server admin), or null. What people may do in a
+    /// project is that project's members list.
+    /// </summary>
+    public string? RoleFor(IReadOnlyCollection<string> values) =>
+        AdminValues.Any(w => values.Contains(w, StringComparer.OrdinalIgnoreCase)) ? ConsoleRoles.Admin : null;
 }
 
 /// <summary>The OpenID Connect sign-in: authorization code with PKCE, run by the server, ending in the console's own cookie.</summary>

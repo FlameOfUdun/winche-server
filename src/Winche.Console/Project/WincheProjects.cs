@@ -9,7 +9,7 @@ using Winche.Console.Identity;
 namespace Winche.Console.Project;
 
 /// <summary>Who's asking for the list of projects: which ones they may see.</summary>
-public sealed record WincheProjectsCaller(string? UserId, bool ServerAdmin, bool HasAccountRole)
+public sealed record WincheProjectsCaller(string? UserId, bool ServerAdmin)
 {
     internal const string AccountRoleClaim = "winche:account-role";
 
@@ -19,14 +19,13 @@ public sealed record WincheProjectsCaller(string? UserId, bool ServerAdmin, bool
         // Without project members here, the role claims are the account's own.
         if (!user.HasClaim(c => c.Type == ProjectRoleClaims.DoneClaim)) accountRoles = [.. user.FindAll(ClaimTypes.Role).Select(c => c.Value)];
         var id = user.FindFirstValue(ClaimTypes.NameIdentifier) is { Length: > 0 } uid ? uid : null;
-        return new(id, accountRoles.Contains(ConsoleRoles.Admin), accountRoles.Count > 0);
+        return new(id, accountRoles.Contains(ConsoleRoles.Admin));
     }
 }
 
 /// <summary>A project on the server, for the console's project switcher.</summary>
 /// <param name="ConsolePath">Its console under the server's root, e.g. <c>/p/wards/_console</c>.</param>
-/// <param name="IsDefault">The server's first project (at its root): it can't be archived or deleted.</param>
-public sealed record WincheProjectInfo(string Id, string Name, string ConsolePath, DateTimeOffset? ImageVersion, bool IsDefault = false)
+public sealed record WincheProjectInfo(string Id, string Name, string ConsolePath, DateTimeOffset? ImageVersion)
 {
     /// <summary>The products started in it (database, storage, authentication, functions); null: the host doesn't say.</summary>
     public IReadOnlyList<string>? Products { get; init; }
@@ -41,7 +40,7 @@ public sealed record WincheArchivedProject(string Id, string Name, DateTimeOffse
 /// </summary>
 public interface IWincheProjects
 {
-    /// <summary>This console's project's path under the server's root (empty for the default project at the root).</summary>
+    /// <summary>This console's path under the server's root: <c>/p/&lt;id&gt;</c> for a project's, empty for the server's own.</summary>
     string CurrentPrefix { get; }
 
     /// <summary>The projects <paramref name="caller"/> may use.</summary>
@@ -53,20 +52,13 @@ public interface IWincheProjects
     /// </summary>
     Task<WincheProjectInfo> CreateAsync(string name, string id, DataMoveTarget? database, string? by, CancellationToken ct);
 
-    /// <summary>
-    /// The first project's data, as first-run setup names the project: a database of its own (none: on the server's
-    /// PostgreSQL). Nothing for a project made from the switcher (it got one then).
-    /// </summary>
-    /// <returns>Whether it moved there: the project restarted, and <paramref name="products"/> were set up there.</returns>
-    Task<bool> PlaceFirstAsync(string id, DataMoveTarget? database, IReadOnlyList<string> products, string? by, CancellationToken ct) => Task.FromResult(false);
-
     /// <summary>Whether a new project's data can go to <paramref name="database"/>: reachable, new or empty.</summary>
     Task<DataMoveCheck> CheckDatabaseAsync(string id, DataMoveTarget? database, CancellationToken ct);
 
     /// <summary>The archived projects (shown to server admins).</summary>
     Task<IReadOnlyList<WincheArchivedProject>> ListArchivedAsync(CancellationToken ct);
 
-    /// <summary>Stops a project and refuses its address; its database and files stay. Not the first project.</summary>
+    /// <summary>Stops a project and refuses its address; its database and files stay.</summary>
     Task ArchiveAsync(string id, string? by, CancellationToken ct);
 
     /// <summary>Starts an archived project again.</summary>
@@ -88,11 +80,8 @@ public static class WincheProjectEndpoints
     private static string Root(HttpRequest request, IWincheProjects projects)
     {
         var pathBase = request.PathBase.Value ?? "";
-        foreach (var prefix in new[] { projects.CurrentPrefix }.Where(p => p.Length > 0))
-            if (pathBase.EndsWith(prefix, StringComparison.Ordinal)) return pathBase[..^prefix.Length];
-        // The default project, reached at its own /p/<id> too: strip that.
-        var marker = pathBase.LastIndexOf("/p/", StringComparison.Ordinal);
-        return marker >= 0 && pathBase.IndexOf('/', marker + 3) < 0 ? pathBase[..marker] : pathBase;
+        var prefix = projects.CurrentPrefix;
+        return prefix.Length > 0 && pathBase.EndsWith(prefix, StringComparison.Ordinal) ? pathBase[..^prefix.Length] : pathBase;
     }
 
     internal static IEndpointRouteBuilder MapConsoleWincheProjectEndpoints(this IEndpointRouteBuilder app, Options.ConsoleOptions options)
@@ -108,11 +97,11 @@ public static class WincheProjectEndpoints
             {
                 available = true,
                 canCreate = caller.ServerAdmin,   // projects are the server's: its admins make them
-                current = setup.Current.Id,
+                current = options.ServerConsole ? null : setup.Current.Id,   // the server's console is in none
                 projects = list.Select(p => new
                 {
                     id = p.Id, name = p.Name, consoleUrl = root + p.ConsolePath,
-                    imageVersion = p.ImageVersion?.ToUnixTimeMilliseconds().ToString(), isDefault = p.IsDefault, products = p.Products,
+                    imageVersion = p.ImageVersion?.ToUnixTimeMilliseconds().ToString(), products = p.Products,
                 }),
                 archived = caller.ServerAdmin
                     ? (await projects.ListArchivedAsync(ct)).Select(a => new { id = a.Id, name = a.Name, archivedAt = a.ArchivedAt }).Cast<object>()
@@ -150,7 +139,7 @@ public static class WincheProjectEndpoints
                 return ConsoleErrors.Problem("projects", "The project id is 3 to 40 lower-case letters, digits and dashes, starting with a letter.", null);
             return Results.Json(await projects.CheckDatabaseAsync(body.Id!, body.Database, ct));
         }).RequireAuthorization(ConsoleRoles.AdminPolicy);
-        // Archiving, restoring and deleting: server admins, never the first project.
+        // Archiving, restoring and deleting: server admins.
         async Task<IResult> AsServerAdmin(HttpContext http, Func<IWincheProjects, Task<IResult>> work)
         {
             if (http.RequestServices.GetService<IWincheProjects>() is not { } projects)

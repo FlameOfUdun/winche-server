@@ -31,15 +31,15 @@ nothing else) to wherever the server will run.
    - your admin account, a server admin with a password;
    - two-step sign-in, with an authenticator app (you can do it later);
    - your company sign-in, optional: Keycloak, Microsoft Entra ID, Google Workspace, Okta or any OpenID Connect
-     provider, with a test sign-in;
-   - your first project: its name, its id, and **its database**. That's a database of its own, either on this
-     server's PostgreSQL or on another PostgreSQL server (checked before it's used). The server's own database never
-     holds a project's data.
-   - your first app, optional.
+     provider, with a test sign-in.
 
-   Or do all of it from a terminal, without the console: `winche setup --url http://localhost:8080` (the
-   [CLI](https://github.com/FlameOfUdun/winche-cli) asks for the setup code, your account and the first project, and
-   signs you in). Products, settings (as files), CI tokens and more projects have CLI commands too.
+   That's the server set up: it runs with no projects. **Add a project** on its Projects page: its name, its id, and
+   **its database**, a database of its own either on this server's PostgreSQL or on another PostgreSQL server (checked
+   before it's used). The server's own database never holds a project's data.
+
+   Or do it from a terminal, without the console: `winche setup --url http://localhost:8080` (the
+   [CLI](https://github.com/FlameOfUdun/winche-cli) asks for the setup code and your account, and signs you in), then
+   `winche projects:create clinic --name Clinic`. Products, settings (as files), CI tokens have CLI commands too.
 
 4. **Start a product.** Every product (Authentication, Database, Storage, Functions, Assets) is off until you start it from its
    page (**Get started**). Its API refuses requests until then (`failed-precondition`, reason `service-disabled`).
@@ -53,21 +53,23 @@ nothing else) to wherever the server will run.
    await WincheFlutter.initializeApp(options: DefaultWincheOptions.currentPlatform);
    ```
 
-   Flutter is the only SDK so far. The API is plain HTTP for anything else: documents under `/documents/v1`, files under
-   `/files/v1`, sign-in under `/auth/v1`, functions under `/functions/v1`, assets under `/assets/v1`. `GET /.well-known/winche` describes it
-   (nothing secret).
+   Flutter is the only SDK so far. The API is plain HTTP for anything else, under the project's address
+   (`/p/<id>`): documents under `/p/<id>/documents/v1`, files under `…/files/v1`, sign-in under `…/auth/v1`, functions
+   under `…/functions/v1`, assets under `…/assets/v1`. `GET /p/<id>/.well-known/winche` describes it (nothing secret).
 
 Run it behind HTTPS (a proxy or load balancer) for anything but trying it out: it trusts the `X-Forwarded-*` headers.
 
 ## Projects
 
-A server runs any number of projects. The first is at the root (`https://api.example.com/_console`); the others are under
-`/p/<id>` (`https://api.example.com/p/wards/_console`, apps at `https://api.example.com/p/wards`). Add one from the project
-picker in the console's top bar. A project can be **archived**: its apps and console are refused (`410`) until a server
-admin restores it, and nothing is deleted. Archived projects can be **deleted** for good, which removes their database
-and files.
+A server runs any number of projects, none to start with. The server's own console is at the root
+(`https://api.example.com/_console`: its projects, accounts and Server settings); each project is under `/p/<id>`
+(`https://api.example.com/p/wards/_console`, apps at `https://api.example.com/p/wards`). Every project is alike: add one
+on the Projects page. Any project can be **archived**: its apps and console are refused (`410`) until a server admin
+restores it, and nothing is deleted. Archived projects can be **deleted** for good, which removes their database and
+files.
 
-Each project has its own members (Project settings → Members). Server admins can use every project.
+Each project has its own members (Project settings → Members). An account is a server admin or not: server admins use
+every project and make projects; everyone else uses the projects they're members of.
 
 ## Configuration
 
@@ -80,14 +82,12 @@ Environment variables (or `appsettings.json`, section `Winche`):
 | `Winche__PreviousMasterKeys__0` | Only while changing the master key: the old one. On start the server moves everything to the new key and logs when it's done ("Remove Winche__PreviousMasterKeys and restart"). |
 | `Winche__PublicUrl` | Where apps reach the server (tokens' issuer, file links), e.g. `https://api.example.com`. Set here only. |
 | `Winche__SetupCode` | Optional: the code first-run setup asks for. Unset, the server makes one and prints it in its log (`Setup code: …`) until someone has set it up. A wrong code takes a second to be refused. |
-| `Winche__ConsoleSignIn__Issuer`, `__ClientId`, `__ClientSecret` | Optional: console sign-in through an OpenID Connect provider from the start (also `__ButtonLabel`, `__RoleClaim`, `__AdminValues__0`, `__MemberValues__0`, `__ViewerValues__0`, `__PasswordsOnlyForAdmins`). It becomes the first of the console's identity providers; more are added in **Server settings → Authentication → Sign-in method**. Register `<PublicUrl>/_console/api/auth/oidc/callback` at each provider, and optionally `<PublicUrl>/_console/api/auth/oidc/backchannel-logout` as its back-channel logout URL. |
+| `Winche__ConsoleSignIn__Issuer`, `__ClientId`, `__ClientSecret` | Optional: console sign-in through an OpenID Connect provider from the start (also `__ButtonLabel`, `__RoleClaim`, `__AdminValues__0` (the groups that make server admins), `__PasswordsOnlyForAdmins`). It becomes the first of the console's identity providers; more are added in **Server settings → Authentication → Sign-in method**. Register `<PublicUrl>/_console/api/auth/oidc/callback` at each provider, and optionally `<PublicUrl>/_console/api/auth/oidc/backchannel-logout` as its back-channel logout URL. |
 | `Winche__RequireTwoFactorForSettings` | Default `true`: changing settings needs two-step sign-in (a trusted provider's own second step counts). Set `false` only to try the server out. Also in **Server settings → Authentication → Sign-in method**. |
 | `Winche__FunctionsMaxMinutes` | Optional: the longest any function may run, in minutes (default 9, at most 60). Also in **Server settings → General**; projects set their default and each function's own time up to it (**Functions → Settings**). |
 | `Winche__ProjectsPath` | Projects' files on disk, each under `<id>/files`, until they're moved to a bucket (default `/data/projects`: mount a volume). |
-| `Winche__FilesPath` | Optional: keeps an existing first project's files in their own folder. |
 | `Winche__ConsolePath` | Where the console is served (default `/_console`). |
 | `Winche__Email__Provider`, `__Region`, `__FromAddress` | Optional: the server's own email, `ses` (Amazon SES), e.g. region `eu-west-1`, from `no-reply@example.com` (verified in SES); `__FromName` sets the name, else each project's app name. **No keys are kept**: the AWS credentials of the server's environment are used (`AWS_*` variables, the ECS task's role, the instance's profile). Console emails go through it with nothing to set up, and projects can choose it for their sign-in emails (**Authentication → Settings → Emails to users → The server's email**). |
-| `Winche__ProjectId`, `Winche__ProjectName` | Defaults for the first project as apps see it (default `winche`). Setup asks for its own. |
 
 Several servers can share one database: settings, rules and webhooks follow within seconds, and console sign-ins
 carry over (their keys are kept in the database). `GET /healthz` answers 200 once the database does.

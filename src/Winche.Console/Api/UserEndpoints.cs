@@ -14,6 +14,15 @@ public static class UserEndpoints
     public sealed record UpdateUserRequest(string? FirstName, string? LastName, string? Email, string? Role, bool? Active, bool? TwoFactorRequired);
     public sealed record ResetPasswordRequest(string? NewPassword);
 
+    /// <summary>
+    /// On a server (its own console) an account is a server admin or not: what someone does in a project is that
+    /// project's members list. Null when <paramref name="role"/> is fine here.
+    /// </summary>
+    internal static IResult? ServerRoleRefused(Options.ConsoleOptions options, string role) =>
+        options.ServerConsole && role != ConsoleRoles.Admin
+            ? Results.BadRequest(new { error = "On a server an account is a server admin or not: give people roles in a project (its members)." })
+            : null;
+
     public static IEndpointRouteBuilder MapUserEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/users").RequireAuthorization(ConsoleRoles.AdminPolicy);
@@ -24,22 +33,26 @@ public static class UserEndpoints
             twoFactorEnabled = u.TwoFactorEnabled, twoFactorRequired = u.TwoFactorRequired, lockedOut = u.LockedOut,
         })));
 
-        group.MapPost("/", async (CreateUserRequest body, ConsoleAccounts accounts, CancellationToken ct) =>
+        group.MapPost("/", async (CreateUserRequest body, ConsoleAccounts accounts, Options.ConsoleOptions options, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(body.Email)) return Results.BadRequest(new { error = "Email is required." });
-            if (!ConsoleRoles.All.Contains(body.Role)) return Results.BadRequest(new { error = "Invalid role." });
+            // On a server, "none": an account that isn't a server admin (projects add it to their members).
+            var role = options.ServerConsole && body.Role == "none" ? null : body.Role;
+            if (role is not null && !ConsoleRoles.All.Contains(role)) return Results.BadRequest(new { error = "Invalid role." });
+            if (role is not null && ServerRoleRefused(options, role) is { } refused) return refused;
             if (string.IsNullOrWhiteSpace(body.Password))
                 return Results.BadRequest(new { error = "A password is required (use an invite to onboard without one)." });
             try
             {
-                var user = await accounts.CreateAsync(body.Email, body.Password, body.FirstName, body.LastName, body.Role, ct: ct);
+                var user = await accounts.CreateAsync(body.Email, body.Password, body.FirstName, body.LastName, role, ct: ct);
                 return Results.Json(new { id = user.Id, email = user.Email });
             }
             catch (Winche.Auth.AuthException ex) { return Results.BadRequest(new { error = ex.Message }); }
         });
 
-        group.MapPut("/{id}", async (string id, UpdateUserRequest body, ConsoleAccounts accounts, CancellationToken ct) =>
+        group.MapPut("/{id}", async (string id, UpdateUserRequest body, ConsoleAccounts accounts, Options.ConsoleOptions options, CancellationToken ct) =>
         {
+            if (body.Role is not null && body.Role != "none" && ServerRoleRefused(options, body.Role) is { } refused) return refused;
             var user = await accounts.FindAsync(id, ct);
             if (user is null) return Results.NotFound();
             // A new email: set at once (an admin's change), and the account's sign-ins end.
@@ -57,7 +70,7 @@ public static class UserEndpoints
             if ((demoting || deactivating) && user.IsAdmin && await accounts.AdminCountAsync(ct) <= 1)
                 return Results.BadRequest(new { error = "Cannot demote or deactivate the last admin." });
 
-            // "none" takes the account's role away (no access to the first project; a created project's membership stays).
+            // "none" takes the account's role away (on a server: no longer a server admin; project memberships stay).
             var clear = body.Role == "none";
             var role = body.Role is not null && ConsoleRoles.All.Contains(body.Role) ? body.Role : null;
             await accounts.UpdateAsync(id, body.FirstName, body.LastName, role, body.TwoFactorRequired, clearRole: clear, ct: ct);

@@ -41,7 +41,7 @@ public interface IWincheServerSettings
     /// <summary>Where providers tell the console someone signed out (back-channel logout; register it there).</summary>
     string ConsoleSignInLogoutUrl => ConsoleSignInCallbackUrl[..ConsoleSignInCallbackUrl.LastIndexOf('/')] + "/backchannel-logout";
 
-    /// <summary>Where a sign-in goes when it doesn't say (the first project's console).</summary>
+    /// <summary>Where a sign-in goes when it doesn't say (the server's console).</summary>
     string ConsoleSignInReturnPath { get; }
 
     /// <summary>A secret was set or removed (some are copied where they're used, e.g. a Keycloak sync's to the console accounts).</summary>

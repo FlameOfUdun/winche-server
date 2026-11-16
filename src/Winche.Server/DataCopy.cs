@@ -146,14 +146,4 @@ internal static class DataCopy
         while (await r.ReadAsync(ct)) list.Add(r.GetString(0));
         return list;
     }
-
-    /// <summary>What the first project logged into the server's database before setup gave it one of its own: dropped.</summary>
-    internal static async Task DropPreSetupAsync(NpgsqlDataSource control, CancellationToken ct)
-    {
-        await using var c = await control.OpenConnectionAsync(ct);
-        await using var tx = await c.BeginTransactionAsync(ct);
-        await ExecAsync(c, "DROP TABLE IF EXISTS public.console_logs, public.console_log_queries, public.console_log_settings CASCADE", ct);
-        await ExecAsync(c, "DELETE FROM public.winche_schema WHERE component = 'console-logs'", ct);
-        await tx.CommitAsync(ct);
-    }
 }

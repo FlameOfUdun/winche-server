@@ -62,8 +62,8 @@ public sealed record ServerSettings
                 new Winche.Console.Identity.ConsoleOidcSettings
                 {
                     Id = FirstProviderId, Enabled = true, Issuer = c.Issuer, ClientId = c.ClientId, Scopes = c.Scopes ?? "openid profile email",
-                    ButtonLabel = c.ButtonLabel, RoleClaim = c.RoleClaim, AdminValues = c.AdminValues, MemberValues = c.MemberValues,
-                    ViewerValues = c.ViewerValues, CreateAccounts = c.CreateAccounts, TrustProviderTwoStep = c.TrustProviderTwoStep,
+                    ButtonLabel = c.ButtonLabel, RoleClaim = c.RoleClaim, AdminValues = c.AdminValues,
+                    CreateAccounts = c.CreateAccounts, TrustProviderTwoStep = c.TrustProviderTwoStep,
                 },
             ]
             : [],

@@ -137,7 +137,8 @@ public static class ConsoleTokenEndpoints
             return Results.NoContent();
         }).RequireAuthorization(ConsoleRoles.ViewerPolicy).WithMetadata(new ConsoleCiScope(ConsoleCiScope.Functions), new ConsoleCiScope(ConsoleCiScope.Rules));
 
-        // ── admins: CI tokens ───────────────────────────────────────────────────────────────────────────────────
+        // ── admins: CI tokens (a project's: the server's console has none) ──────────────────────────────────────────
+        if (options.ServerConsole) return app;
         var admin = app.MapGroup("/api/tokens").RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         admin.MapGet("", async (ConsoleTokenStore store, CancellationToken ct) => Results.Json(new

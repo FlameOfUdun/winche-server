@@ -8,8 +8,9 @@ using Winche.Server;
 // up in each project's console.
 //
 // Each project runs as its own app in this process (ProjectApp: its own database, services, keys and background work);
-// this app is only the router in front of them (ProjectRouter): /p/<id>/… goes to that project, anything else to the
-// default project — the server's own database, as before there were projects.
+// the server's own console is an app too (ServerConsoleApp: setup, sign-in, accounts, Server settings, the projects), and
+// it runs with no project at all. This app is only the router in front of them (ProjectRouter): /p/<id>/… goes to that
+// project, anything else to the server's console.
 var builder = WebApplication.CreateBuilder(args);
 var server = builder.Configuration.GetSection("Winche").Get<ServerOptions>() ?? new ServerOptions();
 if (server.Problems() is { Count: > 0 } problems)
@@ -49,10 +50,13 @@ builder.Services.AddSingleton<ConsoleAccounts>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ConsoleAccounts>());
 builder.Services.AddSingleton<ProjectHosts>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectHosts>());   // starts every project before requests come in
+builder.Services.AddSingleton<ServerConsoleApp>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerConsoleApp>());
 
 var app = builder.Build();
 app.UseForwardedHeaders();
 var projects = app.Services.GetRequiredService<ProjectHosts>();
+var console = app.Services.GetRequiredService<ServerConsoleApp>();
 app.Run(async http =>
 {
     // For load balancers and orchestrators: 200 once the database answers.
@@ -70,7 +74,7 @@ app.Run(async http =>
         }
         return;
     }
-    await ProjectRouter.RouteAsync(http, projects);
+    await ProjectRouter.RouteAsync(http, projects, console);
 });
 
 await app.RunAsync();

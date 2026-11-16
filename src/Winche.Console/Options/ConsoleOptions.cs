@@ -90,6 +90,19 @@ public sealed class ConsoleOptions
     internal bool ProjectMembers { get; private set; }
 
     /// <summary>
+    /// The server's own console (Winche Server at its root): first-run setup (the first admin), sign-in, the accounts,
+    /// Server settings and the projects — and no project of its own. Each project has its own console at
+    /// <c>/p/&lt;id&gt;</c>. Accounts' roles are server roles here: Admin (a server admin) or none.
+    /// </summary>
+    public ConsoleOptions UseServerConsole()
+    {
+        ServerConsole = true;
+        return this;
+    }
+
+    internal bool ServerConsole { get; private set; }
+
+    /// <summary>
     /// Whether a console that was in use before setup existed becomes a project with every product on. Off for
     /// projects a server creates (they share accounts with older ones, which would look like "in use").
     /// </summary>

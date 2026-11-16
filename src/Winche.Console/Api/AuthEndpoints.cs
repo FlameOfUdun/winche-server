@@ -26,7 +26,14 @@ public static class AuthEndpoints
 
     // manageUsers/invites/etc. describe the Identity provider (role-gated client-side); database/storage are
     // per-user (tab enabled AND the user's role meets its MinRole).
-    private static object CapabilitiesFor(ConsoleRole? role, ConsoleOptions options, IServiceProvider sp) => new
+    private static object CapabilitiesFor(ConsoleRole? role, ConsoleOptions options, IServiceProvider sp) => options.ServerConsole
+        ? new
+        {
+            // The server's console: accounts and server settings for its admins; the projects for everyone.
+            manageUsers = role == ConsoleRole.Admin, invites = role == ConsoleRole.Admin, members = false,
+            twoFactor = true, changePassword = true, editProfile = true, database = false, storage = false,
+        }
+        : new
     {
         // With project members, accounts are the server's: this project manages who's in it, not the accounts.
         manageUsers = !options.ProjectMembers, invites = !options.ProjectMembers, members = options.ProjectMembers,
@@ -123,7 +130,7 @@ public static class AuthEndpoints
                 : null;
             var user = principal is null ? null : await accounts.CurrentAsync(principal, http.RequestAborted);
             if (user is null)
-                return Results.Json(new { provider = "identity", capabilities = CapabilitiesFor(null, options, sp), initialized, setup, selfServiceResetEnabled, oidc, user = (object?)null });
+                return Results.Json(new { provider = "identity", server = options.ServerConsole, capabilities = CapabilitiesFor(null, options, sp), initialized, setup, selfServiceResetEnabled, oidc, user = (object?)null });
 
             var viaProvider = principal!.HasClaim(Identity.ConsoleOidc.SignedInWithClaim, Identity.ConsoleOidc.LoginProvider);
             var providerTwoStep = Identity.ConsoleOidc.ProviderOf(principal, options) is { TrustProviderTwoStep: true };
@@ -138,6 +145,8 @@ public static class AuthEndpoints
             return Results.Json(new
             {
                 provider = "identity",
+                // The server's own console (no project): the projects, the accounts and Server settings.
+                server = options.ServerConsole,
                 capabilities = CapabilitiesFor(consoleRole, options, sp),
                 initialized,
                 setup,
@@ -150,8 +159,9 @@ public static class AuthEndpoints
                     firstName = user.FirstName,
                     lastName = user.LastName,
                     role,
-                    // Not a member of this project (project members): signed in, but nothing here.
-                    member = role is not null,
+                    // Not a member of this project (project members): signed in, but nothing here. The server's
+                    // console has no project: everyone signed in may use it (they see their projects).
+                    member = options.ServerConsole || role is not null,
                     serverAdmin = user.IsAdmin,
                     twoFactorEnabled = user.TwoFactorEnabled,
                     twoFactorRequired = user.TwoFactorRequired,
