@@ -1437,4 +1437,33 @@ public class ServerEmailTests(PostgresFixture pg)
         Assert.Equal((System.Net.WebSockets.WebSocketCloseStatus)4401, await ClosedWith(bobSocket));
         Directory.Delete(files, recursive: true);
     }
+
+    [Fact]
+    public async Task Http_functions_answer_on_the_projects_address_without_a_sign_in()
+    {
+        if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 }) return;   // functions need Deno
+        var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
+        var projectsPath = Directory.CreateTempSubdirectory("winche-server-projects-").FullName;
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"), ("Winche:ProjectsPath", projectsPath));
+        var console = server.CreateClient();
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/project", new { name = "Clinic", id = "clinic", products = Array.Empty<string>() }));
+        await Json(await console.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards", products = new[] { "functions" } }));
+        await Json(await console.PostAsync("/p/wards/_console/api/project/products/functions/start", null));
+        for (var i = 0; i < 100 && !(await Json(await console.GetAsync("/p/wards/_console/api/project"))).GetProperty("products").EnumerateArray().Any(p => p.GetProperty("id").GetString() == "functions" && p.GetProperty("ready").GetBoolean()); i++)
+            await Task.Delay(100);
+        await Json(await console.PostAsJsonAsync("/p/wards/_console/api/functions/deploy", new { note = "Hook", files = new Dictionary<string, string>
+        {
+            ["index.ts"] = """
+                import { http } from "@winche/functions";
+                export const hook = http.onRequest(async (req) => ({ method: req.method, path: new URL(req.url).pathname, body: await req.text() }));
+                """,
+        } }));
+        var anyone = server.CreateClient();
+        var answer = await Json(await anyone.PostAsync("/p/wards/functions/v1/http/hook/x", new StringContent("hello")));
+        Assert.Equal(("POST", "/p/wards/functions/v1/http/hook/x", "hello"),
+            (answer.GetProperty("method").GetString(), answer.GetProperty("path").GetString(), answer.GetProperty("body").GetString()));
+        Directory.Delete(files, recursive: true);
+    }
 }
