@@ -27,7 +27,10 @@ public static class ConsoleAuthSettingsEndpoints
     public sealed record TestTokenRequest(string? Token, JsonElement? Settings);
     public sealed record ReasonRequest(string? Reason);
     /// <param name="SyncSecrets">Keycloak sync client secrets typed in, by provider name (empty: removed).</param>
-    public sealed record SaveSignInRequest(JsonElement? Settings, string? SmtpPassword, string? Reason, Dictionary<string, string>? SyncSecrets = null, int? BasedOn = null);
+    /// <param name="SmtpPasswordReference">Or where the SMTP password is read from (<c>aws-sm:…</c>).</param>
+    /// <param name="SyncSecretReferences">Or where sync client secrets are read from, by provider name.</param>
+    public sealed record SaveSignInRequest(JsonElement? Settings, string? SmtpPassword, string? Reason, Dictionary<string, string>? SyncSecrets = null, int? BasedOn = null,
+        string? SmtpPasswordReference = null, Dictionary<string, string>? SyncSecretReferences = null);
     public sealed record TestEmailRequest(JsonElement? Settings, string? SmtpPassword, string? To);
 
     /// <summary>Null when the console admin may change sensitive settings; otherwise the refusal.</summary>
@@ -86,7 +89,7 @@ public static class ConsoleAuthSettingsEndpoints
             if (secrets is { Available: true })
                 foreach (var p in area.Current.Providers.Where(p => p.KeycloakSync is not null))
                     syncSecrets[p.Name] = await secrets.InfoAsync(Winche.Auth.Settings.KeycloakSyncSettings.SecretName(p.Name), ct) is { } i
-                        ? new { setAt = i.SetAt, setBy = i.SetBy } : null;
+                        ? new { setAt = i.SetAt, setBy = i.SetBy, reference = ConsoleSecretsEndpoints.ReferenceOf(i) } : null;
             return Results.Json(new
             {
                 available = true,
@@ -97,7 +100,7 @@ public static class ConsoleAuthSettingsEndpoints
                 version = area.Version is { } v ? Version(v, store) : null,
                 editable = store is not null,
                 whyReadOnly = store is null ? "The app needs AddWincheConfig(…) to save settings." : null,
-                smtpPassword = password is null ? null : new { setAt = password.SetAt, setBy = password.SetBy },
+                smtpPassword = password is null ? null : new { setAt = password.SetAt, setBy = password.SetBy, reference = ConsoleSecretsEndpoints.ReferenceOf(password) },
                 secretsAvailable = secrets?.Available ?? false,
                 appSender = isService?.IsService(typeof(Winche.Auth.Email.IAuthEmailSender)) == true,
             }, SettingsArea.Json);
@@ -113,11 +116,20 @@ public static class ConsoleAuthSettingsEndpoints
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're making this change: it goes in the history.");
             var node = JsonNode.Parse(doc.GetRawText())!;
             if (area.Validate(node) is { Count: > 0 } problems) return Problem("These settings can't be saved.", problems);
-            if (!string.IsNullOrEmpty(body.SmtpPassword))
+            if (!string.IsNullOrEmpty(body.SmtpPassword) || !string.IsNullOrWhiteSpace(body.SmtpPasswordReference))
             {
                 var secrets = sp.GetRequiredService<SecretStore>();
                 if (!secrets.Available) return Problem("Secrets need the project's master key: set WincheConfigOptions.MasterKey.");
-                await secrets.SetAsync(Winche.Auth.Email.SmtpEmailSender.SecretName, body.SmtpPassword, Who(http.User), ct);
+                if (await ConsoleSecretsEndpoints.SetAsync(secrets, Winche.Auth.Email.SmtpEmailSender.SecretName, body.SmtpPassword, body.SmtpPasswordReference, http, ct) is { } refusedSecret)
+                    return refusedSecret;
+            }
+            if (body.SyncSecretReferences is { Count: > 0 })
+            {
+                var secrets = sp.GetRequiredService<SecretStore>();
+                if (!secrets.Available) return Problem("Secrets need the project's master key: set WincheConfigOptions.MasterKey.");
+                foreach (var (provider, reference) in body.SyncSecretReferences.Where(r => !string.IsNullOrWhiteSpace(r.Value)))
+                    if (await ConsoleSecretsEndpoints.SetAsync(secrets, Winche.Auth.Settings.KeycloakSyncSettings.SecretName(provider), null, reference, http, ct) is { } refusedSecret)
+                        return refusedSecret;
             }
             if (body.SyncSecrets is { Count: > 0 })
             {

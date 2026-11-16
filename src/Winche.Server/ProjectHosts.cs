@@ -153,7 +153,7 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
                 o.MasterKey = server.MasterKey;
                 o.PreviousMasterKeys = server.PreviousMasterKeys;
             });
-            Winche.Secrets.SecretsServiceCollectionExtensions.AddWincheSecrets(services);
+            Winche.Secrets.Aws.SecretsAwsServiceCollectionExtensions.AddWincheSecretsAws(services);   // secrets may be references to AWS Secrets Manager or Parameter Store
             await using var sp = services.BuildServiceProvider();
             try
             {

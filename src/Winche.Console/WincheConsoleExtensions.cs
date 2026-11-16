@@ -226,6 +226,7 @@ public static class WincheConsoleExtensions
         if (isService?.IsService(typeof(Winche.Webhooks.HookCatalog)) == true) group.MapConsoleHooksEndpoints();
         // Background deliveries (hooks inside the app) of every package that has them.
         group.MapConsoleTokenEndpoints(options);
+        group.MapConsoleSecretsEndpoints();   // where secrets may be read from; references and the project's own keys
         Project.WincheProjectEndpoints.MapConsoleWincheProjectEndpoints(group, options);
         Project.ServerSettingsEndpoints.MapConsoleServerSettingsEndpoints(group, options);
         // A project's own pages: not in the server's console, which has no project.

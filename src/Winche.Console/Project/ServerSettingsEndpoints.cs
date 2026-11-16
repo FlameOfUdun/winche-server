@@ -53,7 +53,7 @@ public interface IWincheServerSettings
 public static class ServerSettingsEndpoints
 {
     public sealed record SaveRequest(JsonElement? Settings, string? Reason, int? BasedOn = null);
-    public sealed record SecretRequest(string? Value);
+    public sealed record SecretRequest(string? Value, string? Reference = null);
     public sealed record TestEmailRequest(string? To);
     public sealed record SignInTestRequest(Identity.ConsoleOidcSettings? Settings, string? ClientSecret);
 
@@ -77,7 +77,7 @@ public static class ServerSettingsEndpoints
             foreach (var (name, about) in s.SecretNames)
             {
                 var info = await s.Secrets.InfoAsync(name, ct);
-                secrets.Add(new { name, about, setAt = info?.SetAt, setBy = info?.SetBy });
+                secrets.Add(new { name, about, setAt = info?.SetAt, setBy = info?.SetBy, reference = Api.ConsoleSecretsEndpoints.ReferenceOf(info) });
             }
             return Results.Json(new
             {
@@ -125,8 +125,8 @@ public static class ServerSettingsEndpoints
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } twoFactor) return twoFactor;
             var s = options.ServerSettings!;
             if (!s.SecretNames.ContainsKey(name)) return Results.NotFound();
-            if (string.IsNullOrEmpty(body.Value)) await s.Secrets.DeleteAsync(name, ct);
-            else await s.Secrets.SetAsync(name, body.Value, Who(http.User), ct);
+            if (string.IsNullOrEmpty(body.Value) && string.IsNullOrWhiteSpace(body.Reference)) await s.Secrets.DeleteAsync(name, ct);
+            else if (await Api.ConsoleSecretsEndpoints.SetAsync(s.Secrets, name, body.Value, body.Reference, http, ct) is { } bad) return bad;
             await s.SecretChangedAsync(name, ct);
             return Results.NoContent();
         });

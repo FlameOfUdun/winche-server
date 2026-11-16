@@ -24,7 +24,7 @@ public static class ConsoleFunctionsEndpoints
     public sealed record ResourcesRequest(List<string>? Hashes);
     public sealed record NoteRequest(string? Note);
     public sealed record RunRequest(string? Name, JsonElement? Data, string? AsUid);
-    public sealed record SecretRequest(string? Value);
+    public sealed record SecretRequest(string? Value, string? Reference = null);
 
     internal static bool Capability(IServiceProvider sp, ConsoleRole? role) => role == ConsoleRole.Admin && sp.GetService<WincheFunctions>() is not null;
 
@@ -117,7 +117,7 @@ public static class ConsoleFunctionsEndpoints
             return Results.Json(new
             {
                 available = secrets.Available,
-                secrets = (await secrets.ListAsync(functions.Current, ct)).Select(s => new { name = s.Name, isSet = s.IsSet, setAt = s.SetAt, setBy = s.SetBy, usedBy = s.UsedBy }),
+                secrets = (await secrets.ListAsync(functions.Current, ct)).Select(s => new { name = s.Name, isSet = s.IsSet, setAt = s.SetAt, setBy = s.SetBy, usedBy = s.UsedBy, reference = s.Reference?.ToString() }),
             });
         });
 
@@ -125,10 +125,18 @@ public static class ConsoleFunctionsEndpoints
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
             if (FunctionSecrets.Problem(name) is { } bad) return Problem(bad);
-            if (string.IsNullOrEmpty(body.Value)) return Problem("Give the secret's value.");
+            if (string.IsNullOrEmpty(body.Value) && string.IsNullOrWhiteSpace(body.Reference)) return Problem("Give the secret's value, or where to read it from.");
             if (!secrets.Available) return Problem("Secrets need the server's master key.");
-            await secrets.SetAsync(name, body.Value, Who(http.User), ct);
-            return Results.NoContent();
+            var store = http.RequestServices.GetRequiredService<Winche.Secrets.SecretStore>();
+            return await ConsoleSecretsEndpoints.SetAsync(store, FunctionSecrets.Prefix + name, body.Value, body.Reference, http, ct) ?? Results.NoContent();
+        });
+
+        // Reads it now (a reference through its source): whether it works, never the value.
+        group.MapPost("/secrets/{name}/test", async (string name, FunctionSecrets secrets, CancellationToken ct) =>
+        {
+            if (FunctionSecrets.Problem(name) is { } bad) return Problem(bad);
+            var result = await secrets.TestAsync(name, ct);
+            return Results.Json(new { ok = result.Ok, problem = result.Problem, code = result.Code });
         });
 
         group.MapDelete("/secrets/{name}", async (string name, HttpContext http, FunctionSecrets secrets, CancellationToken ct) =>

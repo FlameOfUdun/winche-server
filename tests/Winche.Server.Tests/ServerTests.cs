@@ -1619,6 +1619,61 @@ public class ServerEmailTests(PostgresFixture pg)
     }
 
     [Fact]
+    public async Task Secrets_may_be_references_to_aws_and_only_server_admins_have_them_read_with_the_servers_credentials()
+    {
+        if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 }) return;   // functions need Deno
+        var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
+        var admin = server.CreateClient();
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await TestProjects.CreateAsync(admin, "wards", "Wards", "functions");
+        var added = await Json(await admin.PostAsJsonAsync("/p/wards/_console/api/members", new { email = "bob@example.com", role = "Admin" }));
+        var code = System.Web.HttpUtility.ParseQueryString(new Uri(added.GetProperty("link").GetString()!).Query)["code"];
+        await admin.PostAsJsonAsync("/p/wards/_console/api/auth/reset-password", new { code, newPassword = "Bob-Passw0rd!long" });
+        var bob = server.CreateClient();   // the project's admin, not the server's
+        await Json(await bob.PostAsJsonAsync("/p/wards/_console/api/auth/login", new { email = "bob@example.com", password = "Bob-Passw0rd!long" }));
+
+        var sources = await Json(await bob.GetAsync("/p/wards/_console/api/secrets/sources"));
+        Assert.Equal(["aws-sm", "aws-ssm"], sources.GetProperty("sources").EnumerateArray().Select(x => x.GetProperty("name").GetString()));
+        Assert.False(sources.GetProperty("appCredentials").GetBoolean());
+        var key = Assert.Single(sources.GetProperty("keys").EnumerateArray());
+        Assert.Equal(("secrets.source.aws", false), (key.GetProperty("name").GetString(), key.GetProperty("isSet").GetBoolean()));
+        Assert.True((await Json(await admin.GetAsync("/p/wards/_console/api/secrets/sources"))).GetProperty("appCredentials").GetBoolean());
+
+        // Read with the server's credentials: only its admin may.
+        var reference = new { reference = "aws-ssm:/wards/mail-key" };
+        var refused = await bob.PutAsJsonAsync("/p/wards/_console/api/functions/secrets/MAIL_KEY", reference);
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Contains("server's own credentials", await refused.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/p/wards/_console/api/functions/secrets/MAIL_KEY", reference)).StatusCode);
+        var listed = (await Json(await bob.GetAsync("/p/wards/_console/api/functions/secrets"))).GetProperty("secrets").EnumerateArray().Single(x => x.GetProperty("name").GetString() == "MAIL_KEY");
+        Assert.Equal("aws-ssm:/wards/mail-key", listed.GetProperty("reference").GetString());
+
+        // With the project's own AWS key, its admins may (and the key is never shown).
+        Assert.Equal(HttpStatusCode.BadRequest, (await bob.PutAsJsonAsync("/p/wards/_console/api/secrets/keys/secrets.source.aws",
+            new { values = new Dictionary<string, string> { ["accessKeyId"] = "AKIDWARDS" } })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await bob.PutAsJsonAsync("/p/wards/_console/api/secrets/keys/secrets.source.aws",
+            new { values = new Dictionary<string, string> { ["accessKeyId"] = "AKIDWARDS", ["secretAccessKey"] = "wards-secret", ["region"] = "eu-west-2" } })).StatusCode);
+        var withKey = await bob.GetStringAsync("/p/wards/_console/api/secrets/sources");
+        Assert.DoesNotContain("wards-secret", withKey);
+        Assert.Contains("\"isSet\":true", withKey);
+        Assert.Equal(HttpStatusCode.NoContent, (await bob.PutAsJsonAsync("/p/wards/_console/api/functions/secrets/SES_SECRET",
+            new { reference = "aws-sm:arn:aws:secretsmanager:eu-west-2:123456789012:secret:wards/ses-AbCdEf#secretAccessKey" })).StatusCode);
+
+        // What isn't a reference here says why; a value still works.
+        var unknown = await bob.PutAsJsonAsync("/p/wards/_console/api/functions/secrets/OTHER", new { reference = "vault:/x" });
+        Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
+        Assert.Contains("use aws-sm or aws-ssm", await unknown.Content.ReadAsStringAsync());
+        var tried = await Json(await bob.PostAsJsonAsync("/p/wards/_console/api/secrets/test", new { reference = "aws-sm:arn:aws:s3:::bucket" }));
+        Assert.False(tried.GetProperty("ok").GetBoolean());
+        Assert.Contains("isn't a Secrets Manager ARN", tried.GetProperty("problem").GetString());
+        Assert.Equal(HttpStatusCode.NoContent, (await bob.PutAsJsonAsync("/p/wards/_console/api/functions/secrets/OTHER", new { value = "plain" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await bob.DeleteAsync("/p/wards/_console/api/secrets/keys/secrets.source.aws")).StatusCode);
+        Directory.Delete(files, recursive: true);
+    }
+
+    [Fact]
     public async Task How_long_functions_run_is_the_servers_longest_then_the_projects_default_and_each_functions_own()
     {
         if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 }) return;   // functions need Deno
