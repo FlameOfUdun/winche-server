@@ -922,7 +922,7 @@ public class ServerTests(PostgresFixture pg)
         string? copied = null;
         for (var i = 0; i < 50 && copied is null; i++)
         {
-            copied = await accounts.Services.GetRequiredService<Winche.Core.SecretStore>().GetAsync(Winche.Auth.Settings.KeycloakSyncSettings.SecretName("staff"));
+            copied = await accounts.Services.GetRequiredService<Winche.Secrets.SecretStore>().GetAsync(Winche.Auth.Settings.KeycloakSyncSettings.SecretName("staff"));
             if (copied is null) await Task.Delay(100);
         }
         Assert.Equal("sync-secret", copied);

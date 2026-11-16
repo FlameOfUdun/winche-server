@@ -94,6 +94,7 @@ internal static class ProjectApp
 
         // Settings the console changes, and its encrypted secrets.
         builder.Services.AddWincheConfig(o => { o.ConnectionString = config; o.MasterKey = server.MasterKey; o.PreviousMasterKeys = server.PreviousMasterKeys; });
+        Winche.Secrets.SecretsServiceCollectionExtensions.AddWincheSecrets(builder.Services);
 
         // Users: Winche Auth (email and password and two-step sign-in to start with; everything else in the console).
         builder.Services.AddWincheAuth(o =>

@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Routing;
 using Winche.Console.Api;
 using Winche.Console.Identity;
 using Winche.Core;
+using Winche.Secrets;
 
 namespace Winche.Console.Project;
 

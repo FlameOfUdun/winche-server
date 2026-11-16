@@ -37,6 +37,7 @@ builder.Services.AddWincheConfig(o =>
     o.MasterKey = server.MasterKey;
     o.PreviousMasterKeys = server.PreviousMasterKeys;
 });
+Winche.Secrets.SecretsServiceCollectionExtensions.AddWincheSecrets(builder.Services);
 var deployed = ServerSettings.From(server);
 // The public address is the deployment's (Winche__PublicUrl): where DNS and the proxy put the server, and the issuer of
 // its tokens. The console shows it but can't change it.

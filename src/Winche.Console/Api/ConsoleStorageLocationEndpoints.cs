@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Winche.Core;
+using Winche.Secrets;
 using Winche.Console.Identity;
 using Winche.Storage.Locations;
 

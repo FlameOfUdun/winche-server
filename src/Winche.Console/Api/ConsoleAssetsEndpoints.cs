@@ -9,6 +9,7 @@ using Winche.Console.Identity;
 using Winche.Console.Options;
 using Winche.Console.Tabs;
 using Winche.Core;
+using Winche.Secrets;
 using Winche.Storage.Locations;
 
 namespace Winche.Console.Api;

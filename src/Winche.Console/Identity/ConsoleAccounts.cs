@@ -7,6 +7,7 @@ using Winche.Auth;
 using Winche.Auth.DependencyInjection;
 using Winche.Console.Options;
 using Winche.Core;
+using Winche.Secrets;
 
 namespace Winche.Console.Identity;
 
@@ -39,6 +40,7 @@ public static class ConsoleAccountsApp
             o.MasterKey = masterKey;
             o.PreviousMasterKeys = previousMasterKeys;
         });
+        Winche.Secrets.SecretsServiceCollectionExtensions.AddWincheSecrets(builder.Services);
         builder.Services.AddWincheAuth(o =>
         {
             o.ConnectionString = connectionString;

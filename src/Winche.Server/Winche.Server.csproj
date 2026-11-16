@@ -7,20 +7,20 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Winche.Core" Version="1.1.0" />
-    <PackageReference Include="Winche.Core.AspNetCore" Version="1.1.0" />
+    <PackageReference Include="Winche.Core" Version="2.0.0" />
+    <PackageReference Include="Winche.Core.AspNetCore" Version="2.0.0" />
     <PackageReference Include="Winche.Database.AspNetCore.Rest" Version="12.1.0" />
     <PackageReference Include="Winche.Database.AspNetCore.WebSockets" Version="12.1.0" />
-    <PackageReference Include="Winche.Storage.AspNetCore.Rest" Version="10.0.0" />
-    <PackageReference Include="Winche.Storage.FileSystem" Version="10.0.0" />
-    <PackageReference Include="Winche.Storage.S3" Version="10.0.0" />
-    <PackageReference Include="Winche.Auth.AspNetCore" Version="1.0.1" />
+    <PackageReference Include="Winche.Storage.AspNetCore.Rest" Version="11.0.0" />
+    <PackageReference Include="Winche.Storage.FileSystem" Version="11.0.0" />
+    <PackageReference Include="Winche.Storage.S3" Version="11.0.0" />
+    <PackageReference Include="Winche.Auth.AspNetCore" Version="2.0.0" />
     <PackageReference Include="AWSSDK.SimpleEmailV2" Version="4.0.14.7" />
-    <PackageReference Include="Winche.Functions.Database" Version="1.1.0" />
-    <PackageReference Include="Winche.Functions.Storage" Version="1.1.0" />
-    <PackageReference Include="Winche.Functions.Auth" Version="1.1.0" />
+    <PackageReference Include="Winche.Functions.Database" Version="2.0.0" />
+    <PackageReference Include="Winche.Functions.Storage" Version="2.0.0" />
+    <PackageReference Include="Winche.Functions.Auth" Version="2.0.0" />
     <PackageReference Include="Winche.Assets.AspNetCore" Version="1.0.0" />
-    <PackageReference Include="Winche.Functions.Assets" Version="1.1.0" />
+    <PackageReference Include="Winche.Functions.Assets" Version="2.0.0" />
   </ItemGroup>
 
   <ItemGroup>

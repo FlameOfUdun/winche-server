@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http.Features;
 using Npgsql;
 using Winche.Core;
+using Winche.Secrets;
 
 namespace Winche.Server;
 
@@ -152,6 +153,7 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
                 o.MasterKey = server.MasterKey;
                 o.PreviousMasterKeys = server.PreviousMasterKeys;
             });
+            Winche.Secrets.SecretsServiceCollectionExtensions.AddWincheSecrets(services);
             await using var sp = services.BuildServiceProvider();
             try
             {

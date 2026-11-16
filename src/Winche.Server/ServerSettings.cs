@@ -1,5 +1,6 @@
 using Npgsql;
 using Winche.Core;
+using Winche.Secrets;
 
 namespace Winche.Server;
 

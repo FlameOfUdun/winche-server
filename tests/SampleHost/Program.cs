@@ -83,6 +83,7 @@ builder.Services.AddSingleton<IArchive, NoOpArchive>();
         c.MasterKey = "sample-host-master-key-for-tests-only-0123456789";
         c.PollInterval = TimeSpan.FromMilliseconds(500);
     });
+    Winche.Secrets.SecretsServiceCollectionExtensions.AddWincheSecrets(builder.Services);
     builder.Services.AddAuthentication().AddWincheTokens(t => (externalOnly ? t : t.TrustWincheAuth()).UseSettings());
     // The console's accounts: a Winche Auth of their own (Winche Server runs one for the whole server), in their own schema.
     var accountsConn = new Npgsql.NpgsqlConnectionStringBuilder(authConn) { SearchPath = "console_accounts" }.ConnectionString;
