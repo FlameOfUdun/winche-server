@@ -62,9 +62,9 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         string Code(string greeting) => $$"""
             import { callable } from "@winche/functions";
             export const hello = callable(async (data: { name: string }, ctx) => {
-              const n = (await ctx.db.query("people")).length;
+              const n = await ctx.documents.collection("people").count();
               console.log("people:", n);
-              return `{{greeting}} ${data.name} (${ctx.auth?.uid ?? "server"})`;
+              return `{{greeting}} ${data.name} (${ctx.caller?.uid ?? "server"})`;
             });
             """;
         var v1 = await Json(await client.PostAsJsonAsync("/_console/api/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = Code("Hello") }, note = "First" }));
