@@ -7,8 +7,9 @@ rules, sign-in methods, identity providers, indexes, where files are kept, webho
 
 ## Quickstart
 
-You need Docker. Until the image and the Winche packages are published, the image is built from this repository:
-put the Winche `.nupkg` files in `packages/` (see [Building](#building-before-the-packages-are-on-nugetorg)).
+You need Docker. The image is `ghcr.io/flameofudun/winche-server` (amd64 and arm64), tagged by version: `1` follows the
+latest 1.x, `1.0` the latest 1.0.x, `1.0.0` stays put. The compose file in this repository uses `1`; copy it (with
+nothing else) to wherever the server will run.
 
 1. **Configure.** Create a `.env` file beside `docker-compose.yml`:
 
@@ -200,7 +201,11 @@ NuGet packages, the console's npm packages). After changing dependencies or the 
 scripts/update-notices.py                # publishes the server, reads ../winche-console, rewrites the file
 ```
 
-## Building before the packages are on nuget.org
+## Building the image yourself
 
-Build the Winche libraries (core, database, storage, auth, rules, webhooks, functions) and copy their `.nupkg` files into
-`packages/` (ignored by git). `nuget.config` reads that folder. Then run `docker compose build`.
+`docker build -t winche-server:local .` builds it from this repository; set `WINCHE_IMAGE=winche-server:local` in `.env`
+for the compose file to use it. To build against Winche libraries not yet on nuget.org, put their `.nupkg` files in
+`packages/` (ignored by git): `nuget.config` reads that folder too.
+
+Releases: pushing a `v*` tag (matching `<Version>` in `Directory.Build.props`) tests the server and publishes the image
+for amd64 and arm64.

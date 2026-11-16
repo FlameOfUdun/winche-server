@@ -18,8 +18,9 @@ services:
     restart: unless-stopped
 
   winche:
-    build: .
-    image: winche-server:local
+    # The published image (1: the latest 1.x). To run your own build instead: docker build -t winche-server:local .
+    # and set WINCHE_IMAGE=winche-server:local in .env.
+    image: ${WINCHE_IMAGE:-ghcr.io/flameofudun/winche-server:1}
     depends_on:
       postgres:
         condition: service_healthy

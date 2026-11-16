@@ -1,13 +1,16 @@
 # Winche Server: the whole Winche stack and its console in one container.
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# The .NET build runs once, on the build machine's own platform, for the platform being built (amd64 or arm64):
+# only the small final stage runs per platform.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+ARG TARGETARCH
 WORKDIR /src
 COPY nuget.config Directory.Build.props ./
 COPY packages/ packages/
 COPY src/Winche.Server/Winche.Server.csproj src/Winche.Server/
 COPY src/Winche.Console/Winche.Console.csproj src/Winche.Console/
-RUN dotnet restore src/Winche.Server/Winche.Server.csproj
+RUN dotnet restore src/Winche.Server/Winche.Server.csproj -a $TARGETARCH
 COPY src/ src/
-RUN dotnet publish src/Winche.Server/Winche.Server.csproj -c Release -o /app --no-restore
+RUN dotnet publish src/Winche.Server/Winche.Server.csproj -c Release -a $TARGETARCH --self-contained false -o /app --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app

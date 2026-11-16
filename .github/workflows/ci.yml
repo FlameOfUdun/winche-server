@@ -21,6 +21,12 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: The tag matches the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(dotnet msbuild src/Winche.Server/Winche.Server.csproj -getProperty:Version)
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::Tag $GITHUB_REF_NAME doesn't match Version $version in Directory.Build.props"; exit 1; }
+
       - name: Setup Deno (functions run on it; the tests use it)
         uses: denoland/setup-deno@v2
         with:
@@ -28,6 +34,14 @@ jobs:
 
       - name: Test
         run: dotnet test Winche.Server.slnx -c Release
+
+      - name: Set up QEMU (to build the arm64 image)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
         if: startsWith(github.ref, 'refs/tags/v')
@@ -37,12 +51,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push the image
+      # v1.2.3 is tagged 1.2.3, 1.2, 1 and latest (a pre-release such as v1.3.0-rc.1 only under its own name).
+      - name: Image tags and labels
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/flameofudun/winche-server
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+          labels: |
+            org.opencontainers.image.title=Winche Server
+            org.opencontainers.image.description=Winche Server: database, storage, auth, functions and webhooks, with the Winche console, in one container.
+            org.opencontainers.image.licenses=Elastic-2.0
+
+      - name: Build and push the image (amd64 and arm64)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/flameofudun/winche-server:${{ github.ref_name }}
-            ghcr.io/flameofudun/winche-server:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
