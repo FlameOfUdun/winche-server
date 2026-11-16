@@ -105,6 +105,10 @@ carry over (their keys are kept in the database). `GET /healthz` answers 200 onc
   You write them in your editor and deploy them with the CLI (`winche functions deploy`, or a CI token). The console
   lists them, runs callables and shows each trigger's runs and versions, and keeps their secrets (API keys and
   passwords they read with `ctx.secrets.get`, encrypted, never shown again).
+- **Secrets:** every secret (function secrets, the SMTP password, sync and client secrets) is a value kept encrypted
+  or a reference read from AWS Secrets Manager or Parameter Store (`aws-ssm:/app/key`). A project keeps its own AWS
+  key in Settings → Secrets; without one, references use the server's AWS credentials, which only server admins may
+  choose.
 - **Assets:** versioned content apps read (translations, pages, media): numbered releases published from the CLI
   (`winche assets deploy`, or a CI token with the `assets` scope), channels apps follow (moving one back is a
   rollback), and rules per path. Kept in the project's files folder unless the console moves them to a bucket.
