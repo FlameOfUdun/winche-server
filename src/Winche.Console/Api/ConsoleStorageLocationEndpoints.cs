@@ -39,7 +39,7 @@ public static class ConsoleStorageLocationEndpoints
     }
 
     /// <summary>The app's own location, in words.</summary>
-    private static string DescribeCode(ArchiveLocations locations)
+    internal static string DescribeCode(ArchiveLocations locations)
     {
         var archive = locations.Code;
         return archive.GetType().Name switch

@@ -56,12 +56,12 @@ public static class ConsoleAssetsEndpoints
                 : Problem("Start Assets first (Project → Products)."));
         var ci = new ConsoleCiScope(ConsoleCiScope.Assets);
 
-        group.MapGet("", (WincheAssets assets, AssetMoves moves, CancellationToken ct) => Run(async () => Results.Json(new
+        group.MapGet("", (WincheAssets assets, AssetMoves moves, AssetArchives archives, CancellationToken ct) => Run(async () => Results.Json(new
         {
             channels = (await assets.ChannelsAsync(ct)).Select(Channel),
             releases = (await assets.ReleasesAsync(20, ct)).Select(Summary),
             limits = assets.Limits,
-            location = assets.Location,
+            location = Label(moves.State.Active, archives),
             moving = moves.State.Move is { } m ? new { to = m.To.Describe(), m.Copied, m.Total, m.Error, m.StartedAt } : null,
         }, SettingsArea.Json))).WithMetadata(ci);
 
@@ -123,7 +123,8 @@ public static class ConsoleAssetsEndpoints
         admin.MapGet("/location", (AssetArchives archives, AssetMoves moves, IServiceProvider sp) => Results.Json(new
         {
             active = moves.State.Active,
-            activeLabel = archives.Describe(),
+            activeLabel = Label(moves.State.Active, archives),
+            codeLabel = ConsoleStorageLocationEndpoints.DescribeCode(archives.Locations),
             move = moves.State.Move,
             editable = sp.GetService<SettingsStore>() is not null && sp.GetService<SettingsArea<AssetLocationSettings>>() is not null,
             secretsAvailable = sp.GetService<SecretStore>()?.Available ?? false,
@@ -158,6 +159,10 @@ public static class ConsoleAssetsEndpoints
         }));
         return app;
     }
+
+    /// <summary>Where contents are, in words: a bucket by name, else the app's own location as Storage words it.</summary>
+    private static string Label(ArchiveLocation? active, AssetArchives archives) =>
+        active?.Describe() ?? ConsoleStorageLocationEndpoints.DescribeCode(archives.Locations);
 
     private static ArchiveLocation WithId(ArchiveLocation l) => string.IsNullOrWhiteSpace(l.Id) ? l with { Id = Guid.NewGuid().ToString("N")[..12] } : l;
 
