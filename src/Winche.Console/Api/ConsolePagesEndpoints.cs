@@ -85,7 +85,7 @@ public static class ConsolePagesEndpoints
             var data = body.Data is { ValueKind: not (JsonValueKind.Undefined or JsonValueKind.Null) } d ? JsonNode.Parse(d.GetRawText()) : null;
             var r = await functions.RunConsoleActionAsync(name, data, Who(http.User), role, ct);
             if (r.Ok) return Results.Json(new { data = r.Result });
-            return FunctionsEndpoints.ErrorOf(r).ToResult();
+            return FunctionsEndpoints.ErrorOf(r, reason: true).ToResult();   // the project's own people: why it failed
         });
 
         // The page's files: no session (the frame has none), the signed address instead.

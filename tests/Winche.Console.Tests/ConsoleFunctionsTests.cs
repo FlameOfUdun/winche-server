@@ -140,6 +140,7 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
                 export const tools = consolePage({ title: "Tools", files: "console/tools", minRole: "admin" });
                 export const summary = consoleAction(async (_d, ctx) => ({ by: ctx.console?.user.email, role: ctx.console?.user.role }), { minRole: "viewer" });
                 export const wipe = consoleAction(async () => "wiped");
+                export const broken = consoleAction(async () => { throw new Error("The mail server refused the key."); }, { minRole: "viewer" });
                 """,
             ["console/reports/index.html"] = "<!doctype html><html><head><title>R</title></head><body><script src=\"app.js\"></script></body></html>",
             ["console/reports/app.js"] = "winche.ready.then(() => winche.call('summary'));",
@@ -186,5 +187,10 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
         Assert.Contains("needs the admin role", await refused.Content.ReadAsStringAsync());
         Assert.Equal("wiped", (await Json(await admin.PostAsJsonAsync("/_console/api/console-pages/actions/wipe", new { data = (object?)null }))).GetProperty("data").GetString());
+
+        // A failure says why to the console's people (apps get "The function failed.").
+        var broken = await viewer.PostAsJsonAsync("/_console/api/console-pages/actions/broken", new { data = (object?)null });
+        Assert.False(broken.IsSuccessStatusCode);
+        Assert.Contains("The mail server refused the key.", await broken.Content.ReadAsStringAsync());
     }
 }
