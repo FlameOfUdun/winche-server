@@ -177,20 +177,6 @@ public sealed class RuleFieldSampler(DocumentDatabase db)
         }
     }
 
-    // The type a rule sees (see Winche.Rules' `x is type`).
-    private static string TypeOf(Value v) => v switch
-    {
-        NullValue => "null",
-        BooleanValue => "bool",
-        IntegerValue => "int",
-        DoubleValue => "float",
-        TimestampValue => "timestamp",
-        StringValue => "string",
-        BytesValue => "bytes",
-        ReferenceValue => "path",
-        FileRefValue => "fileRef",
-        UserRefValue => "userRef",
-        ArrayValue => "list",
-        _ => "map",   // map, geopoint
-    };
+    // The type a rule sees (`x is type`): the rules engine's own name for it, the same as everywhere.
+    private static string TypeOf(Value v) => Winche.Rules.RuleValues.TypeName(v);
 }

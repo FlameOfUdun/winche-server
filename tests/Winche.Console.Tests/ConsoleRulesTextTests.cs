@@ -176,7 +176,7 @@ public class ConsoleRulesTextTests(PostgresFixture fx) : IAsyncLifetime
         var rules = RuleText.ParseRuleSet("""
             match /posts/{postId} {
               allow update: if request.auth.uid == resource.data.owner && request.auth.token.email_verified == true
-                && request.resource.data.likes is int && request.method == 'update' && resource.id == postId;
+                && request.resource.data.likes is integer && request.method == 'update' && resource.id == postId;
             }
             """);
 

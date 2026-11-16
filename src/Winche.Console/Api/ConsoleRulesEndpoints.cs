@@ -439,8 +439,8 @@ public static class ConsoleRulesEndpoints
     [
         new("createdAt", ["timestamp"]), new("directory", ["string"]), new("id", ["string"]),
         new("metadata", ["map"]), new("mimeType", ["string"]), new("path", ["string"]),
-        new("sizeBytes", ["int"]), new("updatedAt", ["timestamp"]), new("uploadStatus", ["string"]),
-        new("version", ["int"]),
+        new("sizeBytes", ["integer"]), new("updatedAt", ["timestamp"]), new("uploadStatus", ["string"]),
+        new("version", ["integer"]),
     ];
 
     private static RuleSubsystemRegistration? FindRegistration(IEnumerable<RuleSubsystemRegistration> registrations, string sys) =>
@@ -477,7 +477,7 @@ public static class ConsoleRulesEndpoints
         else
         {
             map.TryAdd("id", new StringValue(segments.LastOrDefault() ?? ""));
-            map.TryAdd("path", new ReferenceValue(path.Trim('/')));
+            map.TryAdd("path", new DocumentReferenceValue(path.Trim('/')));
             map.TryAdd("collection", new StringValue(segments.Length > 1 ? segments[^2] : ""));
             map.TryAdd("data", new MapValue(values));
         }

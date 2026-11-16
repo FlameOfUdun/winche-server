@@ -47,12 +47,12 @@ public class RuleFieldSamplerTests(PostgresFixture fx) : IAsyncLifetime
 
         var users = Map(await sampler.SampleAsync("s1u/{uid}"));
         Assert.Equal(["address", "address.city", "address.geo", "address.geo.lat", "age", "name"], users.Keys.Order());
-        Assert.Equal(["float", "int"], users["age"]);
+        Assert.Equal(["double", "integer"], users["age"]);
         Assert.Equal(["map"], users["address"]);
 
         var notes = Map(await sampler.SampleAsync("s1u/{uid}/notes/{noteId}"));
         Assert.Equal(["pinned", "tags", "text"], notes.Keys.Order());
-        Assert.Equal(["list"], notes["tags"]);
+        Assert.Equal(["array"], notes["tags"]);
 
         var exact = Map(await sampler.SampleAsync("s1u/a"));
         Assert.Contains("address.city", exact.Keys);
