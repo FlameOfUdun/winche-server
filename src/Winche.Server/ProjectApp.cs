@@ -113,6 +113,8 @@ internal static class ProjectApp
             o.UseSettings();
             o.UseHooks(h => h.PublishChanges());
         }).AddWincheDatabaseWsApi(ws => { ws.UseSettings(); ws.Compression = true; });
+        // Disabled or deleted app users lose their open database connections at once.
+        builder.Services.AddSingleton<Winche.Auth.IWincheAuthObserver, ClosedSockets>();
 
         // Files: on disk under the project's folder, served through signed links; the console can move them to a bucket.
         builder.Services.AddWincheStorage(o =>

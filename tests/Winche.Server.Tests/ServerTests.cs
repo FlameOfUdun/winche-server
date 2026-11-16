@@ -1391,4 +1391,50 @@ public class ServerEmailTests(PostgresFixture pg)
             new { location = new { kind = "s3", s3 = new { bucket = "server-bucket", region = "eu-west-1", serviceUrl = "http://127.0.0.1:9", forcePathStyle = true } } })).StatusCode);
         Directory.Delete(files, recursive: true);
     }
+
+    [Fact]
+    public async Task An_app_user_disabled_or_deleted_loses_their_open_database_connection_at_once()
+    {
+        var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
+        var console = server.CreateClient();
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/project", new { name = "Clinic", id = "clinic", products = new[] { "database", "authentication" } }));
+        var app = server.CreateClient();
+
+        async Task<(string Uid, System.Net.WebSockets.WebSocket Socket)> Connect(string email)
+        {
+            var session = await Json(await app.PostAsJsonAsync("/auth/v1/signUp", new { email, password = "correct horse battery" }));
+            var token = session.GetProperty("accessToken").GetString()!;
+            var ws = server.Server.CreateWebSocketClient();
+            var socket = await ws.ConnectAsync(new Uri(server.Server.BaseAddress, $"/documents/v1/ws?access_token={token}"), CancellationToken.None);
+            return (session.GetProperty("user").GetProperty("uid").GetString()!, socket);
+        }
+
+        async Task<System.Net.WebSockets.WebSocketCloseStatus?> ClosedWith(System.Net.WebSockets.WebSocket socket)
+        {
+            var buffer = new byte[4096];
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            try
+            {
+                while (true)
+                {
+                    var r = await socket.ReceiveAsync(buffer, timeout.Token);
+                    if (r.MessageType == System.Net.WebSockets.WebSocketMessageType.Close) return socket.CloseStatus;
+                }
+            }
+            catch (OperationCanceledException) { return null; }
+        }
+
+        var (ann, annSocket) = await Connect("ann@example.com");
+        Assert.Equal(System.Net.WebSockets.WebSocketState.Open, annSocket.State);
+        await Json(await console.PostAsJsonAsync($"/_console/api/app-auth/users/{ann}/disabled", new { disabled = true }));
+        Assert.Equal((System.Net.WebSockets.WebSocketCloseStatus)4401, await ClosedWith(annSocket));
+
+        var (bob, bobSocket) = await Connect("bob@example.com");
+        Assert.True((await console.DeleteAsync($"/_console/api/app-auth/users/{bob}")).IsSuccessStatusCode);
+        Assert.Equal((System.Net.WebSockets.WebSocketCloseStatus)4401, await ClosedWith(bobSocket));
+        Directory.Delete(files, recursive: true);
+    }
 }
