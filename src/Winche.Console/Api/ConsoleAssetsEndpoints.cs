@@ -75,13 +75,13 @@ public static class ConsoleAssetsEndpoints
                     number = r.Number, note = r.Note, by = r.By, at = r.At, size = r.TotalSize,
                     files = r.Files.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => new { path = f.Key, hash = f.Value.Hash, size = f.Value.Size, mimeType = f.Value.MimeType }),
                 })
-                : Refused(new AssetsException("not-found", $"There's no release {number}."))));
+                : Refused(new AssetsException("not-found", $"There's no release {number}.")))).WithMetadata(ci);
 
         group.MapGet("/releases/{from:int}/diff/{to:int}", (int from, int to, WincheAssets assets, CancellationToken ct) =>
-            Run(async () => Results.Json(await assets.DiffAsync(from, to, ct))));
+            Run(async () => Results.Json(await assets.DiffAsync(from, to, ct)))).WithMetadata(ci);
 
         group.MapGet("/channels/{name}/history", (string name, WincheAssets assets, CancellationToken ct) =>
-            Run(async () => Results.Json(new { moves = await assets.HistoryAsync(name, 100, ct) })));
+            Run(async () => Results.Json(new { moves = await assets.HistoryAsync(name, 100, ct) }))).WithMetadata(ci);
 
         // Publishing and channels: admins (and CI tokens with the assets scope); two-step sign-in where settings ask.
         var admin = group.MapGroup("").RequireAuthorization(ConsoleRoles.AdminPolicy);
@@ -117,7 +117,7 @@ public static class ConsoleAssetsEndpoints
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
             await assets.RemoveChannelAsync(name, ct);
             return Results.NoContent();
-        }));
+        })).WithMetadata(ci);
 
         // Where contents are kept (with UseSettings): test a place, move there, cancel. Not for CI tokens.
         admin.MapGet("/location", (AssetArchives archives, AssetMoves moves, IServiceProvider sp) => Results.Json(new

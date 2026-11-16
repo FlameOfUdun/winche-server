@@ -1292,6 +1292,21 @@ public class ServerTests(PostgresFixture pg)
         var overview = await Json(await console.GetAsync("/_console/api/overview"));
         Assert.Contains(overview.GetProperty("products").EnumerateArray(), p => p.GetProperty("id").GetString() == "assets" && p.GetProperty("on").GetBoolean());
         Assert.True((await Json(await console.GetAsync("/_console/api/auth/state"))).GetProperty("capabilities").GetProperty("assets").GetBoolean());
+
+        // CI publishes with a token scoped to assets: it reads releases to compare, and publishes; it can't move contents.
+        var token = (await Json(await console.PostAsJsonAsync("/_console/api/tokens", new { name = "ci", scopes = new[] { "assets" }, days = 7 }))).GetProperty("secret").GetString();
+        var ci = server.CreateClient();
+        ci.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        await Json(await ci.GetAsync("/_console/api/assets"));
+        await Json(await ci.GetAsync("/_console/api/assets/releases/1"));
+        Assert.Equal(0, (await Json(await ci.PostAsJsonAsync("/_console/api/assets/contents/missing", new { hashes = new[] { Hash(en) } }))).GetProperty("missing").GetArrayLength());
+        var second = await Json(await ci.PostAsJsonAsync("/_console/api/assets/releases", new
+        {
+            note = "From CI", channel = "production",
+            files = new Dictionary<string, object> { ["translations/en.json"] = new { hash = Hash(en), size = en.Length, mimeType = "" } },
+        }));
+        Assert.Equal(2, second.GetProperty("number").GetInt32());
+        Assert.False((await ci.GetAsync("/_console/api/assets/location")).IsSuccessStatusCode);
         Directory.Delete(files, recursive: true);
     }
 }
