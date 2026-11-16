@@ -104,6 +104,19 @@ public static class ConsoleOverviewEndpoints
                 changes.AddRange(deploys.Select(d => new Change(d.At, $"Functions v{d.Version}{Note(d.Note)}", d.By)));
             }
 
+            if (ConsoleAssetsEndpoints.Capability(options, role) && sp.GetService<Winche.Assets.WincheAssets>() is { } assets)
+            {
+                var channels = Ready("assets") ? await Try("asset channels", () => assets.ChannelsAsync(ct)) ?? [] : [];
+                var releases = Ready("assets") ? await Try("asset releases", () => assets.ReleasesAsync(5, ct)) ?? [] : [];
+                var stats = new List<Stat>();
+                if (releases.FirstOrDefault() is { } latest) stats.Add(new("release", $"#{latest.Number}"));
+                if (channels.Count > 0) stats.Add(new("channels", channels.Count.ToString()));
+                var assetVersions = options.AssetsRulesEditor is not null ? await Try("assets rules", () => RuleVersions("assets")) ?? [] : [];
+                if (assetVersions.FirstOrDefault(v => v.IsActive) is { } active) stats.Add(new("rules", $"v{active.Version}"));
+                products.Add(new("assets", "Assets", "/assets", On("assets", releases.Count > 0), "Versioned content for your apps", stats));
+                changes.AddRange(releases.Select(r => new Change(r.At, $"Assets release #{r.Number}{Note(r.Note)}", r.By)));
+            }
+
             if (role >= ConsoleRole.Admin && sp.GetService<SettingsStore>() is { } store
                 && await Try("settings history", () => store.HistoryAsync(null, 10, ct)) is { } history)
             {

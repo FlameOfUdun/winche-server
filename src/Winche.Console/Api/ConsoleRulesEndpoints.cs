@@ -468,7 +468,7 @@ public static class ConsoleRulesEndpoints
         var values = fields.ToDictionary(f => f.Key, f => JsonSerializer.Deserialize<Value>(f.Value.GetRawText(), RuleJson.Options)!, StringComparer.Ordinal);
         var segments = path.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         var map = new Dictionary<string, Value>(values, StringComparer.Ordinal);
-        if (subsystem == "storage")
+        if (subsystem is "storage" or "assets")
         {
             map.TryAdd("id", new StringValue(segments.LastOrDefault() ?? ""));
             map.TryAdd("path", new StringValue(path.Trim('/')));

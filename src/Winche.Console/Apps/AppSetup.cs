@@ -24,6 +24,7 @@ public static class AppSetup
         if (Has(typeof(Winche.Storage.Services.FileStorage)) && Started("storage")) list.Add(new("storage", "/files/v1"));
         if (Has(typeof(Winche.Auth.IWincheAuth)) && Started("authentication")) list.Add(new("auth", "/auth/v1"));
         if (Has(typeof(Winche.Functions.WincheFunctions)) && Started("functions")) list.Add(new("functions", "/functions/v1"));
+        if (Has(typeof(Winche.Assets.WincheAssets)) && Started("assets")) list.Add(new("assets", "/assets/v1"));
         var providers = services.GetService<Winche.Auth.WincheAuthOptions>()?.IdentityProviders
             .Select(p => new WincheAppSetupProvider(p.Name, p.Kind, p.DisplayName ?? p.Name, [.. p.Audiences]))
             .ToList() ?? [];

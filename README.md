@@ -1,6 +1,6 @@
 # Winche Server
 
-The whole Winche stack in one container: documents (REST and live), files, users and sign-in, functions, webhooks and
+The whole Winche stack in one container: documents (REST and live), files, users and sign-in, functions, assets, webhooks and
 logs, set up and run from its built-in **console**. Only what the server needs to start is configuration. Everything
 else is changed in the console, applies within seconds on every server, and is kept in a change history. That covers
 rules, sign-in methods, identity providers, indexes, where files are kept, webhooks and who may do what.
@@ -41,7 +41,7 @@ nothing else) to wherever the server will run.
    [CLI](https://github.com/FlameOfUdun/winche-cli) asks for the setup code, your account and the first project, and
    signs you in). Products, settings (as files), CI tokens and more projects have CLI commands too.
 
-4. **Start a product.** Every product (Authentication, Database, Storage, Functions) is off until you start it from its
+4. **Start a product.** Every product (Authentication, Database, Storage, Functions, Assets) is off until you start it from its
    page (**Get started**). Its API refuses requests until then (`failed-precondition`, reason `service-disabled`).
    Database and Storage start **locked**, with nothing allowed until you publish rules, or in **test mode**, with
    everything allowed for 30 days.
@@ -54,7 +54,7 @@ nothing else) to wherever the server will run.
    ```
 
    Flutter is the only SDK so far. The API is plain HTTP for anything else: documents under `/documents/v1`, files under
-   `/files/v1`, sign-in under `/auth/v1`, functions under `/functions/v1`. `GET /.well-known/winche` describes it
+   `/files/v1`, sign-in under `/auth/v1`, functions under `/functions/v1`, assets under `/assets/v1`. `GET /.well-known/winche` describes it
    (nothing secret).
 
 Run it behind HTTPS (a proxy or load balancer) for anything but trying it out: it trusts the `X-Forwarded-*` headers.
@@ -105,6 +105,9 @@ carry over (their keys are kept in the database). `GET /healthz` answers 200 onc
   You write them in your editor and deploy them with the CLI (`winche functions deploy`, or a CI token). The console
   lists them, runs callables and shows each trigger's runs and versions, and keeps their secrets (API keys and
   passwords they read with `ctx.secrets.get`, encrypted, never shown again).
+- **Assets:** versioned content apps read (translations, pages, media): numbered releases published from the CLI
+  (`winche assets deploy`, or a CI token with the `assets` scope), channels apps follow (moving one back is a
+  rollback), and rules per path. Kept in the project's files folder unless the console moves them to a bucket.
 - **Project pages:** pages of the project's own in the console's sidebar: its HTML, JS and CSS, deployed with its
   functions, shown in a sandboxed frame, and talking to the server only through its console actions (role-checked,
   logged). See Winche.Functions' README.

@@ -26,6 +26,7 @@ public static class ConsoleSettingsEndpoints
         "database.live",   // Winche.Database.AspNetCore.WebSockets: live-connection limits
         Winche.Storage.Settings.StorageSettings.Area,
         Winche.Functions.FunctionsSettings.Area,   // run times
+        "assets",   // Winche.Assets: limits and how many releases are kept
     };
 
     /// <param name="BasedOn">The version the change was made from (0: none saved yet); a save since is refused, not undone.</param>
@@ -37,6 +38,7 @@ public static class ConsoleSettingsEndpoints
     {
         database = role == ConsoleRole.Admin && (Area(sp, Winche.Database.Settings.DatabaseSettings.Area) ?? Area(sp, "database.live")) is not null,
         storage = role == ConsoleRole.Admin && Area(sp, Winche.Storage.Settings.StorageSettings.Area) is not null,
+        assets = role == ConsoleRole.Admin && Area(sp, "assets") is not null,
     };
 
     private static SettingsArea? Area(IServiceProvider sp, string name) =>

@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting.Server;
 using Npgsql;
+using Winche.Assets;
+using Winche.Assets.AspNetCore;
 using Winche.Auth.AspNetCore;
 using Winche.Auth.DependencyInjection;
 using Winche.Console;
@@ -134,6 +136,14 @@ internal static class ProjectApp
             });
         });
 
+        // Assets: versioned content apps read (translations, pages, media), published from the CLI; kept in the project's
+        // files folder unless the console moves them to a bucket. Rules start as "deny everything" until published.
+        builder.Services.AddWincheAssets(o =>
+        {
+            o.ConnectionString = conn;
+            o.UseSettings();
+        });
+
         // The console, at ConsolePath under the project's path. Accounts are the server's: one sign-in, every project.
         builder.Services.AddWincheConsole(o =>
         {
@@ -144,6 +154,7 @@ internal static class ProjectApp
             o.SignInCookiePath = "/";
             o.AddDatabaseTab(b => { b.UseRulesEditor(); b.UseLogs(); b.UseHistory(); });
             o.AddStorageTab(b => { b.UseRulesEditor(); b.UseLogs(); });
+            o.AddAssetsTab(b => b.UseRulesEditor());
             o.AddAuthenticationTab();
             o.AddLogsTab();
             // Console emails: the server's own SMTP server (Server settings), never this project's.
@@ -224,6 +235,7 @@ internal static class ProjectApp
         app.MapWincheStorageFileSystem();
         app.MapWincheAuth();
         app.MapWincheFunctions();
+        app.MapWincheAssets();
         app.MapWincheConsole(server.ConsolePath);
         Winche.Console.Apps.AppSetupEndpoints.MapWincheAppSetup(app);   // GET /.well-known/winche: winche configure reads it
         app.MapGet("/", (HttpContext http) => Results.Redirect($"{http.Request.PathBase}{server.ConsolePath}"));
@@ -235,7 +247,7 @@ internal static class ProjectApp
     /// <summary>The JSON reader's message in plain words, without .NET type names.</summary>
     /// <summary>Whether answers on <paramref name="path"/> may be compressed (see the pipeline).</summary>
     internal static bool Compressible(PathString path, string consolePath) =>
-        Api(path, "/documents/v1") || Api(path, "/files/v1") || Api(path, "/functions/v1")
+        Api(path, "/documents/v1") || Api(path, "/files/v1") || Api(path, "/functions/v1") || Api(path, "/assets/v1")
         || (path.StartsWithSegments(consolePath, out var rest) && !rest.StartsWithSegments("/api"));
 
     /// <summary>An API's routes: <c>/documents/v1</c>, <c>/documents/v1/…</c> and its verbs, <c>/documents/v1:runQuery</c>.</summary>

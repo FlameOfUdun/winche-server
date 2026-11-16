@@ -39,6 +39,7 @@ public static class AuthEndpoints
         settings = ConsoleSettingsEndpoints.Capabilities(sp, role),
         hooks = ConsoleHooksEndpoints.Capability(sp, role),
         functions = ConsoleFunctionsEndpoints.Capability(sp, role),
+        assets = ConsoleAssetsEndpoints.Capability(options, role),
         consolePages = role is not null && sp.GetService<Winche.Functions.WincheFunctions>() is not null,
     };
 

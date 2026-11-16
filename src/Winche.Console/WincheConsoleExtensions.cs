@@ -44,7 +44,7 @@ public static class WincheConsoleExtensions
         }
         if (options.DatabaseTab is not null)
             services.AddSingleton(sp => new Api.IndexSuggestions(sp.GetRequiredService<Winche.Database.Querying.CollectionIndexResolver>()));
-        if (options.DatabaseRulesEditor is not null || options.StorageRulesEditor is not null)
+        if (options.DatabaseRulesEditor is not null || options.StorageRulesEditor is not null || options.AssetsRulesEditor is not null)
         {
             // The versioned rules store reuses the console's connection string (a dedicated table, never
             // the identity tables). Mandatory whenever any rules editor is enabled — including Keycloak
@@ -73,6 +73,15 @@ public static class WincheConsoleExtensions
                     WincheStorageKeys.RULE_ENGINE_KEY,
                     options.StorageRulesEditor.ApplyPersistedRulesOnStartup,
                     options.StorageRulesEditor.SyncInterval));
+            }
+
+            if (options.AssetsRulesEditor is not null)
+            {
+                services.AddSingleton(new RuleSubsystemRegistration(
+                    RuleSubsystems.Assets,
+                    Winche.Assets.AssetsServiceCollectionExtensions.RulesKey,
+                    options.AssetsRulesEditor.ApplyPersistedRulesOnStartup,
+                    options.AssetsRulesEditor.SyncInterval));
             }
         }
 
@@ -194,7 +203,13 @@ public static class WincheConsoleExtensions
                     "AddStorageTab() requires AddWincheStorage() — the Storage tab browses the file store.");
             group.MapConsoleStorageEndpoints(storageTab.MinRole);
         }
-        if (options.DatabaseRulesEditor is not null || options.StorageRulesEditor is not null)
+        if (options.AssetsTab is not null)
+        {
+            if (isService?.IsService(typeof(Winche.Assets.WincheAssets)) == false)
+                throw new InvalidOperationException("AddAssetsTab() requires AddWincheAssets() — the Assets page manages its releases.");
+            group.MapConsoleAssetsEndpoints();
+        }
+        if (options.DatabaseRulesEditor is not null || options.StorageRulesEditor is not null || options.AssetsRulesEditor is not null)
         {
             group.MapConsoleRulesEndpoints();
         }

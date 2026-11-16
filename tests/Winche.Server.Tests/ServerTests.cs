@@ -1228,6 +1228,72 @@ public class ServerTests(PostgresFixture pg)
         Assert.Matches($"^{Regex.Escape(files)}/[^/]+/files/objects/public/", stored);
         Directory.Delete(files, recursive: true);
     }
+
+    [Fact]
+    public async Task Assets_are_published_from_the_console_and_read_by_apps_through_their_rules()
+    {
+        var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), null, ("Winche:ProjectsPath", files), ("Winche:RequireTwoFactorForSettings", "false"));
+        var app = server.CreateClient(new() { AllowAutoRedirect = false });
+        var console = server.CreateClient();
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/project", new { name = "Clinic", id = "clinic", products = new[] { "database" } }));
+
+        // Not started: apps are told so, and the console reads nothing.
+        var off = await app.GetAsync("/assets/v1/channels/production");
+        Assert.Contains("service-disabled", await off.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.BadRequest, (await console.GetAsync("/_console/api/assets")).StatusCode);
+        await StartProductAsync(console, "", "assets");
+
+        // Contents first (by hash, once), then the release, which moves the channel.
+        var en = "{\"hello\":\"Hello\"}"u8.ToArray();
+        var guide = "<p>staff only</p>"u8.ToArray();
+        string Hash(byte[] b) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(b));
+        var missing = await Json(await console.PostAsJsonAsync("/_console/api/assets/contents/missing", new { hashes = new[] { Hash(en), Hash(guide) } }));
+        Assert.Equal(2, missing.GetProperty("missing").GetArrayLength());
+        Assert.Equal(HttpStatusCode.BadRequest, (await console.PutAsync($"/_console/api/assets/contents/{Hash(en)}", new ByteArrayContent(en[..5]))).StatusCode);
+        foreach (var b in new[] { en, guide })
+            Assert.Equal(HttpStatusCode.NoContent, (await console.PutAsync($"/_console/api/assets/contents/{Hash(b)}", new ByteArrayContent(b))).StatusCode);
+        var noNote = await console.PostAsJsonAsync("/_console/api/assets/releases", new { files = new { }, channel = "production" });
+        Assert.Equal(HttpStatusCode.BadRequest, noNote.StatusCode);
+        var release = await Json(await console.PostAsJsonAsync("/_console/api/assets/releases", new
+        {
+            note = "First translations",
+            channel = "production",
+            files = new Dictionary<string, object>
+            {
+                ["translations/en.json"] = new { hash = Hash(en), size = en.Length, mimeType = "" },
+                ["staff/guide.html"] = new { hash = Hash(guide), size = guide.Length, mimeType = "" },
+            },
+        }));
+        Assert.Equal(1, release.GetProperty("number").GetInt32());
+
+        // Rules start as deny-all; published, they decide what apps list and read.
+        Assert.Equal(HttpStatusCode.NotFound, (await app.GetAsync("/assets/v1/channels/beta")).StatusCode);
+        Assert.Equal(0, (await Json(await app.GetAsync("/assets/v1/channels/production"))).GetProperty("files").GetArrayLength());
+        var parsed = await Json(await console.PostAsJsonAsync("/_console/api/rules/text/parse", new { text = "match translations/{rest=**} { allow read; }" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/rules/assets", new { rulesJson = parsed.GetProperty("rulesJson").GetString(), note = "Translations are public" }));
+        var listing = await Json(await app.GetAsync("/assets/v1/channels/production"));
+        Assert.Equal("translations/en.json", Assert.Single(listing.GetProperty("files").EnumerateArray()).GetProperty("path").GetString());
+        Assert.Equal(HttpStatusCode.Forbidden, (await app.GetAsync("/assets/v1/channels/production/files/staff/guide.html")).StatusCode);
+
+        // A file: a signed link into the project's files folder.
+        var file = await app.GetAsync("/assets/v1/channels/production/files/translations/en.json");
+        Assert.Equal(HttpStatusCode.Redirect, file.StatusCode);
+        Assert.StartsWith("http://localhost/_files/", file.Headers.Location!.ToString());
+        var bytes = await app.GetByteArrayAsync(file.Headers.Location.PathAndQuery);
+        Assert.Equal(en, bytes);
+        Assert.Single(Directory.GetFiles(files, Hash(en), SearchOption.AllDirectories));
+
+        // The console's view, and the overview's card.
+        var page = await Json(await console.GetAsync("/_console/api/assets"));
+        Assert.Equal(1, Assert.Single(page.GetProperty("channels").EnumerateArray()).GetProperty("release").GetInt32());
+        var overview = await Json(await console.GetAsync("/_console/api/overview"));
+        Assert.Contains(overview.GetProperty("products").EnumerateArray(), p => p.GetProperty("id").GetString() == "assets" && p.GetProperty("on").GetBoolean());
+        Assert.True((await Json(await console.GetAsync("/_console/api/auth/state"))).GetProperty("capabilities").GetProperty("assets").GetBoolean());
+        Directory.Delete(files, recursive: true);
+    }
 }
 
 [Collection("postgres")]

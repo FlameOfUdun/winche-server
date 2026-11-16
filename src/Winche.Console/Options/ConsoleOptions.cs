@@ -171,6 +171,8 @@ public sealed class ConsoleOptions
     // registration, MapConsoleRulesEndpoints) is unchanged: a rules editor is enabled iff its tab set one.
     internal RulesEditorOptions? DatabaseRulesEditor => DatabaseTab?.RulesEditor;
     internal RulesEditorOptions? StorageRulesEditor => StorageTab?.RulesEditor;
+    internal BuiltInTabConfig? AssetsTab { get; private set; }
+    internal RulesEditorOptions? AssetsRulesEditor => AssetsTab?.RulesEditor;
 
     /// <summary>Enable the Database browser tab (requires AddWincheDatabase). Configure its min role and optional rules editor.</summary>
     public ConsoleOptions AddDatabaseTab(Action<BuiltInTabBuilder>? configure = null)
@@ -185,6 +187,15 @@ public sealed class ConsoleOptions
         StorageTab = BuildBuiltInTab(configure, StorageTab, "Storage");
         if (StorageTab.History)
             throw new InvalidOperationException("UseHistory() is for the Database tab: document history comes from Winche.Database.");
+        return this;
+    }
+
+    /// <summary>Enable the Assets page (requires AddWincheAssets): channels, releases, its rules editor and settings.</summary>
+    public ConsoleOptions AddAssetsTab(Action<BuiltInTabBuilder>? configure = null)
+    {
+        AssetsTab = BuildBuiltInTab(configure, AssetsTab, "Assets");
+        if (AssetsTab.History || AssetsTab.Logs)
+            throw new InvalidOperationException("The Assets tab has no history or logs of its own: its rules editor only.");
         return this;
     }
 

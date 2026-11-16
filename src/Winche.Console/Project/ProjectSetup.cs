@@ -16,17 +16,17 @@ namespace Winche.Console.Project;
 /// <summary>The products a project can start: each is off until someone starts it (with <c>UseProjectSetup()</c>).</summary>
 public static class WincheProducts
 {
-    public const string Database = "database", Storage = "storage", Authentication = "authentication", Functions = "functions";
+    public const string Database = "database", Storage = "storage", Authentication = "authentication", Functions = "functions", Assets = "assets";
 
     /// <summary>Hooks were a product before each product got its own: kept in older saved projects, ignored.</summary>
     internal const string FormerHooks = "hooks";
 
-    public static readonly string[] All = [Database, Storage, Authentication, Functions];
+    public static readonly string[] All = [Database, Storage, Authentication, Functions, Assets];
 
     /// <summary>The public API each product answers on (refused while the product isn't started). Hooks have none.</summary>
     internal static readonly (string Prefix, string Product)[] Paths =
     [
-        ("/documents/v1", Database), ("/files/v1", Storage), ("/auth/v1", Authentication), ("/functions/v1", Functions),
+        ("/documents/v1", Database), ("/files/v1", Storage), ("/auth/v1", Authentication), ("/functions/v1", Functions), ("/assets/v1", Assets),
         // Winche Auth's signing keys and discovery: none until Authentication is set up.
         ("/.well-known/jwks.json", Authentication), ("/.well-known/openid-configuration", Authentication),
     ];
