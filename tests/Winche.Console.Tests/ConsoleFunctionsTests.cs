@@ -122,4 +122,69 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/_console/api/functions/secrets/MAIL_KEY")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync("/_console/api/functions/secrets/MAIL_KEY")).StatusCode);
     }
+
+    [Fact]
+    public async Task Console_pages_are_listed_by_role_served_sandboxed_and_their_actions_check_the_role()
+    {
+        using var app = new ConsoleAppFactory(fx);
+        using var admin = app.CreateClient();
+        await admin.SetupAdminAsync();
+        await admin.LoginAsync();
+        if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 }) return;   // deploying needs Deno
+
+        await Json(await admin.PostAsJsonAsync("/_console/api/functions/deploy", new { note = "Pages", files = new Dictionary<string, string>
+        {
+            ["index.ts"] = """
+                import { consolePage, consoleAction } from "@winche/functions";
+                export const reports = consolePage({ title: "Reports", files: "console/reports", icon: "chart-bar" });
+                export const tools = consolePage({ title: "Tools", files: "console/tools", minRole: "admin" });
+                export const summary = consoleAction(async (_d, ctx) => ({ by: ctx.console?.user.email, role: ctx.console?.user.role }), { minRole: "viewer" });
+                export const wipe = consoleAction(async () => "wiped");
+                """,
+            ["console/reports/index.html"] = "<!doctype html><html><head><title>R</title></head><body><script src=\"app.js\"></script></body></html>",
+            ["console/reports/app.js"] = "winche.ready.then(() => winche.call('summary'));",
+            ["console/reports/sub/more.html"] = "<html><head></head><body>more</body></html>",
+            ["console/tools/index.html"] = "<p>tools</p>",
+        } }));
+        var state = await Json(await admin.GetAsync("/_console/api/auth/state"));
+        Assert.True(state.GetProperty("capabilities").GetProperty("consolePages").GetBoolean());
+        var pages = await Json(await admin.GetAsync("/_console/api/console-pages"));
+        Assert.Equal(["reports", "tools"], pages.GetProperty("pages").EnumerateArray().Select(p => p.GetProperty("name").GetString()));
+
+        await admin.PostAsJsonAsync("/_console/api/users", new { email = "v@example.com", role = "Viewer", password = "Passw0rd!" });
+        using var viewer = app.CreateClient();
+        await viewer.LoginAsync("v@example.com", "Passw0rd!");
+        pages = await Json(await viewer.GetAsync("/_console/api/console-pages"));
+        Assert.Equal(["reports"], pages.GetProperty("pages").EnumerateArray().Select(p => p.GetProperty("name").GetString()));
+        Assert.Equal(HttpStatusCode.NotFound, (await viewer.PostAsync("/_console/api/console-pages/tools/open", null)).StatusCode);
+
+        var opened = await Json(await viewer.PostAsync("/_console/api/console-pages/reports/open", null));
+        var url = opened.GetProperty("url").GetString()!;
+        Assert.Equal(("v@example.com", "viewer"), (opened.GetProperty("user").GetProperty("email").GetString(), opened.GetProperty("user").GetProperty("role").GetString()));
+
+        // The frame's requests carry no session: the signed address is enough, and the page is sandboxed.
+        using var frame = app.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions { HandleCookies = false });
+        var index = await frame.GetAsync(url);
+        Assert.Equal(HttpStatusCode.OK, index.StatusCode);
+        var csp = index.Headers.GetValues("Content-Security-Policy").Single();
+        Assert.StartsWith("sandbox allow-scripts", csp);
+        Assert.Contains("connect-src 'none'", csp);
+        var html = await index.Content.ReadAsStringAsync();
+        Assert.Contains("<head><script src=\"_winche/console.js\"></script><title>R</title>", html);
+        Assert.Contains("../_winche/console.js", await frame.GetStringAsync(url + "sub/more.html"));
+        Assert.Contains("window.winche", await frame.GetStringAsync(url + "_winche/console.js"));
+        Assert.Equal("text/javascript; charset=utf-8", (await frame.GetAsync(url + "app.js")).Content.Headers.ContentType!.ToString());
+        Assert.False((await frame.GetAsync(url + "../tools/index.html")).IsSuccessStatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await frame.GetAsync(url + "..%2F..%2Ftools%2Findex.html")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await frame.GetAsync(url.Replace("/reports/", "/reports/x").TrimEnd('/') + "/")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await frame.GetAsync(url.Replace("/reports/", "/tools/"))).StatusCode);   // a link is for one page
+        Assert.Equal(HttpStatusCode.Unauthorized, (await frame.PostAsJsonAsync("/_console/api/console-pages/actions/summary", new { data = (object?)null })).StatusCode);
+
+        var ran = await Json(await viewer.PostAsJsonAsync("/_console/api/console-pages/actions/summary", new { data = (object?)null }));
+        Assert.Equal(("v@example.com", "viewer"), (ran.GetProperty("data").GetProperty("by").GetString(), ran.GetProperty("data").GetProperty("role").GetString()));
+        var refused = await viewer.PostAsJsonAsync("/_console/api/console-pages/actions/wipe", new { data = (object?)null });
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Contains("needs the admin role", await refused.Content.ReadAsStringAsync());
+        Assert.Equal("wiped", (await Json(await admin.PostAsJsonAsync("/_console/api/console-pages/actions/wipe", new { data = (object?)null }))).GetProperty("data").GetString());
+    }
 }

@@ -39,6 +39,7 @@ public static class AuthEndpoints
         settings = ConsoleSettingsEndpoints.Capabilities(sp, role),
         hooks = ConsoleHooksEndpoints.Capability(sp, role),
         functions = ConsoleFunctionsEndpoints.Capability(sp, role),
+        consolePages = role is not null && sp.GetService<Winche.Functions.WincheFunctions>() is not null,
     };
 
     /// <summary>The account's role in this console: its project role with project members, else its own; null: no access.</summary>

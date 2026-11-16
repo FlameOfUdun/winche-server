@@ -219,7 +219,11 @@ public static class WincheConsoleExtensions
         Apps.RegisteredAppEndpoints.MapConsoleRegisteredAppEndpoints(group, options);
         if (options.ProjectMembers) Project.ProjectMemberEndpoints.MapConsoleProjectMemberEndpoints(group);
         // Functions, when the app uses Winche.Functions (AddWincheFunctions).
-        if (isService?.IsService(typeof(Winche.Functions.WincheFunctions)) == true) group.MapConsoleFunctionsEndpoints();
+        if (isService?.IsService(typeof(Winche.Functions.WincheFunctions)) == true)
+        {
+            group.MapConsoleFunctionsEndpoints();
+            group.MapConsolePagesEndpoints();   // the project's own pages and their actions
+        }
 
         if (options.AnyLogs)
         {

@@ -103,6 +103,9 @@ carry over (their keys are kept in the database). `GET /healthz` answers 200 onc
   You write them in your editor and deploy them with the CLI (`winche functions deploy`, or a CI token). The console
   lists them, runs callables and shows each trigger's runs and versions, and keeps their secrets (API keys and
   passwords they read with `ctx.secrets.get`, encrypted, never shown again).
+- **Project pages:** pages of the project's own in the console's sidebar: its HTML, JS and CSS, deployed with its
+  functions, shown in a sandboxed frame, and talking to the server only through its console actions (role-checked,
+  logged). See Winche.Functions' README.
 - **Logs:** every product's requests and events, as plain sentences, with filters and saved queries. Changes are always
   logged; successful reads are sampled.
 - **Project settings:** the project (name, id, image), apps and browser origins, members and invites, CI tokens, and
