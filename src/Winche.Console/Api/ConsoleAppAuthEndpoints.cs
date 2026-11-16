@@ -269,7 +269,6 @@ public static class ConsoleAppAuthEndpoints
                         server = k.AdminServer ?? p.Authority,
                         pollSeconds = k.PollInterval.TotalSeconds,
                         reconcileHours = k.ReconcileInterval.TotalHours,
-                        whenDeleted = k.WhenDeleted,
                         claims = (IEnumerable<string>?)k.Claims ?? p.CopiedClaims,
                         attributes = k.Attributes,
                         webhookUrl = k.WebhookSecret is null ? null : $"{o.Issuer.TrimEnd('/')}/auth/v1/providers/{Uri.EscapeDataString(p.Name)}/changed",
