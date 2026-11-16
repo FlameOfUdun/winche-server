@@ -1466,4 +1466,50 @@ public class ServerEmailTests(PostgresFixture pg)
             (answer.GetProperty("method").GetString(), answer.GetProperty("path").GetString(), answer.GetProperty("body").GetString()));
         Directory.Delete(files, recursive: true);
     }
+
+    [Fact]
+    public async Task How_long_functions_run_is_the_servers_longest_then_the_projects_default_and_each_functions_own()
+    {
+        if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 }) return;   // functions need Deno
+        var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
+        var admin = server.CreateClient();
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/project", new { name = "Clinic", id = "clinic", products = new[] { "functions" } }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/functions/deploy", new { note = "Jobs", files = new Dictionary<string, string>
+        {
+            ["index.ts"] = """
+                import { callable, schedule } from "@winche/functions";
+                export const quick = callable(async () => 1);
+                export const backfill = schedule("0 3 * * *", async () => {}, { timeoutSeconds: 480 });
+                """,
+        } }));
+        async Task<(int Max, int Quick, int Backfill)> Times()
+        {
+            var page = await Json(await admin.GetAsync("/_console/api/functions"));
+            int T(string n) => page.GetProperty("current").GetProperty("functions").EnumerateArray().Single(f => f.GetProperty("name").GetString() == n).GetProperty("timeoutSeconds").GetInt32();
+            return (page.GetProperty("maxTimeoutSeconds").GetInt32(), T("quick"), T("backfill"));
+        }
+        Assert.Equal((540, 60, 480), await Times());
+
+        // The project: a longer default, and the backfill's own time, up to the server's longest.
+        var settings = System.Text.Json.Nodes.JsonNode.Parse("""{ "defaultTimeoutSeconds": 120, "timeouts": { "backfill": 1800 } }""")!;
+        var refused = await admin.PutAsJsonAsync("/_console/api/settings/functions", new { settings, reason = "Longer backfill" });
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        Assert.Contains("backfill: 1 second to 9 minutes", await refused.Content.ReadAsStringAsync());
+
+        // The server allows longer runs: in force at once, with no restart.
+        var page = await Json(await admin.GetAsync("/_console/api/server/settings"));
+        var server1 = System.Text.Json.Nodes.JsonNode.Parse(page.GetProperty("settings").GetRawText())!.AsObject();
+        server1["functionsMaxMinutes"] = 61;
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = server1, reason = "x" })).StatusCode);
+        server1["functionsMaxMinutes"] = 45;
+        await Json(await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = server1, reason = "Long backfills" }));
+        for (var i = 0; i < 100 && (await Times()).Max != 2700; i++) await Task.Delay(100);
+        await Json(await admin.PutAsJsonAsync("/_console/api/settings/functions", new { settings, reason = "Longer backfill" }));
+        for (var i = 0; i < 100 && (await Times()).Quick != 120; i++) await Task.Delay(100);
+        Assert.Equal((2700, 120, 1800), await Times());
+        Directory.Delete(files, recursive: true);
+    }
 }

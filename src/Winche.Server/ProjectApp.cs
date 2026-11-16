@@ -102,7 +102,10 @@ internal static class ProjectApp
         {
             o.ConnectionString = config;   // deployments and schedules are configuration
             o.DenoPath = string.IsNullOrWhiteSpace(server.DenoPath) ? null : server.DenoPath;   // the image has deno on the PATH
+            o.MaxTimeout = TimeSpan.FromMinutes(settings.Current.FunctionsMaxMinutes);   // the server's longest; followed below
+            o.UseSettings();   // Functions → Settings: the project's default and each function's own time
         });
+        builder.Services.AddHostedService(sp => new FunctionsLongestRun(settings, sp.GetRequiredService<Winche.Functions.FunctionsOptions>()));
         builder.Services.AddWincheFunctionsForDatabase().AddWincheFunctionsForStorage().AddWincheFunctionsForAuth();
 
         // Documents: REST and live (WebSocket) APIs; rules start as "deny everything" until published in the console.

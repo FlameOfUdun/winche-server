@@ -62,6 +62,9 @@ public sealed class ServerOptions
     /// </summary>
     public bool RequireTwoFactorForSettings { get; set; } = true;
 
+    /// <summary>The longest any function may run, in minutes (default 9, at most 60): where the server setting starts.</summary>
+    public int FunctionsMaxMinutes { get; set; } = 9;
+
     /// <summary>
     /// The deno program that runs functions, only when running the server outside its image (the image installs deno
     /// and has it on the PATH). Not a console setting.

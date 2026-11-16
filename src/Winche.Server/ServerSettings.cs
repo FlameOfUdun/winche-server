@@ -20,6 +20,12 @@ public sealed record ServerSettings
     public bool RequireTwoFactorForSettings { get; init; } = true;
 
     /// <summary>
+    /// The longest any project's function may run, in minutes (default 9, at most 60). Projects set their default and
+    /// each function's own time up to it. Changes apply from the next run.
+    /// </summary>
+    public int FunctionsMaxMinutes { get; init; } = 9;
+
+    /// <summary>
     /// The identity providers people can sign in to the console with, besides email and password (always there). Each
     /// one's client secret is the secret <see cref="Winche.Console.Identity.ConsoleOidcSettings.SecretFor"/> its id.
     /// </summary>
@@ -49,6 +55,7 @@ public sealed record ServerSettings
     {
         PublicUrl = o.PublicUrl.TrimEnd('/'),
         RequireTwoFactorForSettings = o.RequireTwoFactorForSettings,
+        FunctionsMaxMinutes = o.FunctionsMaxMinutes,
         ConsoleProviders = o.ConsoleSignIn is { Issuer.Length: > 0 } c
             ?
             [
@@ -68,6 +75,7 @@ public sealed record ServerSettings
         var problems = new List<string>();
         if (!Uri.TryCreate(PublicUrl, UriKind.Absolute, out var u) || u.Scheme is not ("https" or "http") || !string.IsNullOrEmpty(u.Query))
             problems.Add("The public address is an http(s) address, like https://api.example.com.");
+        if (FunctionsMaxMinutes is < 1 or > 60) problems.Add("Functions may run 1 to 60 minutes at most.");
         problems.AddRange(Winche.Console.Identity.ConsoleOidcSettings.Problems(ConsoleProviders));
         return problems;
     }

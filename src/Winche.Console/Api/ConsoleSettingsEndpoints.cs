@@ -25,6 +25,7 @@ public static class ConsoleSettingsEndpoints
         Winche.Database.Settings.DatabaseSettings.Area,
         "database.live",   // Winche.Database.AspNetCore.WebSockets: live-connection limits
         Winche.Storage.Settings.StorageSettings.Area,
+        Winche.Functions.FunctionsSettings.Area,   // run times
     };
 
     /// <param name="BasedOn">The version the change was made from (0: none saved yet); a save since is refused, not undone.</param>

@@ -32,15 +32,16 @@ public static class ConsoleFunctionsEndpoints
     private static IResult Problem(string message, IReadOnlyList<string>? problems = null) =>
         ConsoleErrors.Problem("functions", message, problems);
 
-    private static object Info(FunctionInfo f) => new
+    private static object Info(FunctionInfo f, WincheFunctions? functions = null) => new
     {
         name = f.Name, kind = f.Trigger.Kind, events = f.Trigger.Events, path = f.Trigger.Path, cron = f.Trigger.Cron, timeZone = f.Trigger.TimeZone,
-        description = f.Trigger.Describe(), timeoutSeconds = f.TimeoutSeconds, secrets = f.Secrets ?? [],
+        description = f.Trigger.Describe(), timeoutSeconds = functions?.TimeoutFor(f) ?? f.TimeoutSeconds, codeTimeoutSeconds = f.CodeTimeoutSeconds,
+        secrets = f.Secrets ?? [],
     };
 
-    private static object Version(Deployment d) => new
+    private static object Version(Deployment d, WincheFunctions? functions = null) => new
     {
-        version = d.Version, note = d.Note, by = d.By, at = d.At, rolledBackFrom = d.RolledBackFrom, functions = d.Functions.Select(Info),
+        version = d.Version, note = d.Note, by = d.By, at = d.At, rolledBackFrom = d.RolledBackFrom, functions = d.Functions.Select(f => Info(f, functions)),
     };
 
     public static IEndpointRouteBuilder MapConsoleFunctionsEndpoints(this IEndpointRouteBuilder app)
@@ -57,14 +58,15 @@ public static class ConsoleFunctionsEndpoints
             var current = functions.Current;
             return Results.Json(new
             {
-                current = current is null ? null : Version(current),
+                current = current is null ? null : Version(current, functions),   // times as they apply now
+                maxTimeoutSeconds = (int)options.MaxTimeout.TotalSeconds,
                 files = current?.Files.Keys.Order(StringComparer.Ordinal) ?? Enumerable.Empty<string>(),   // names only: the code is in the repository
                 runtimeProblem,
             });
         }).WithMetadata(ci);
 
         group.MapGet("/versions", async (FunctionStore store, CancellationToken ct) =>
-            Results.Json(new { versions = (await store.ListAsync(50, ct)).Select(Version) })).WithMetadata(ci);
+            Results.Json(new { versions = (await store.ListAsync(50, ct)).Select(v => Version(v)) })).WithMetadata(ci);
 
         group.MapPost("/deploy", async (DeployRequest body, HttpContext http, WincheFunctions functions, CancellationToken ct) =>
         {
