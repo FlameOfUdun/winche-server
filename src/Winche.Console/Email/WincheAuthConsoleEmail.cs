@@ -14,7 +14,7 @@ public sealed class WincheAuthConsoleEmail(Func<AuthEmailOptions?> sending, ISer
     /// <summary>Through Winche Auth's email (Authentication → Settings → Email).</summary>
     public WincheAuthConsoleEmail(WincheAuthOptions auth, IServiceProvider services) : this(() => auth.EmailSending, services) { }
 
-    public bool Ready => sending() is { Smtp: not null } or { LogLinksOnly: true };
+    public bool Ready => sending() is { Smtp: not null } or { LogLinksOnly: true } || sending() is not null && services.GetService(typeof(IAuthEmailSender)) is not null;
 
     public string WhyNotReady => sending() is null
         ? $"turn on email in {where} and choose an SMTP server."
@@ -39,9 +39,9 @@ public sealed class WincheAuthConsoleEmail(Func<AuthEmailOptions?> sending, ISer
         var text = $"{hello}\n\n{intro}\n\n{link}\n\n{outro}";
         var html = $"<p>{WebUtility.HtmlEncode(hello)}</p><p>{WebUtility.HtmlEncode(intro)}</p>" +
                    $"<p><a href=\"{WebUtility.HtmlEncode(link)}\">{WebUtility.HtmlEncode(button)}</a></p><p>{WebUtility.HtmlEncode(outro)}</p>";
-        IAuthEmailSender sender = email.LogLinksOnly
-            ? new LogOnly(services)
-            : new SmtpEmailSender(email, services);
+        IAuthEmailSender sender = email.LogLinksOnly ? new LogOnly(services)
+            : email.Smtp is not null ? new SmtpEmailSender(email, services)
+            : services.GetService(typeof(IAuthEmailSender)) as IAuthEmailSender ?? throw new InvalidOperationException(WhyNotReady);
         await sender.SendAsync(new AuthEmailMessage(user.Email, kind, subject, text, html, link), ct);
     }
 

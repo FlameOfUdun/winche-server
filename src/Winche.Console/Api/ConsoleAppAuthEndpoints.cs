@@ -83,6 +83,8 @@ public static class ConsoleAppAuthEndpoints
             return Results.Json(new
             {
                 wincheAuth = o is not null,
+                // The host's own email (the server's email service), offered as a way to send besides SMTP.
+                serverEmail = (sp.GetService<Winche.Auth.Email.IAuthEmailSender>() as Email.IHostEmailSender)?.Description,
                 directory = await DirectoryInfoAsync(sp, ct),
                 trustedProviders = sp.GetService<WincheTokenProviders>() is not null,
                 signInSettings = sp.GetService<Winche.Core.SettingsArea<Winche.Auth.Settings.WincheAuthSettings>>() is not null,
@@ -94,7 +96,7 @@ public static class ConsoleAppAuthEndpoints
                     sendVerificationOnSignUp = es.SendVerificationOnSignUp,
                     maxPerAddressPerHour = es.MaxPerAddressPerHour,
                     logLinksOnly = es.LogLinksOnly,
-                    sender = es.LogLinksOnly ? null : sp.GetService<Winche.Auth.Email.IAuthEmailSender>()?.GetType().Name,
+                    sender = es.LogLinksOnly ? null : sp.GetService<Winche.Auth.Email.IAuthEmailSender>() is { } s ? (s as Email.IHostEmailSender)?.Description ?? s.GetType().Name : null,
                 } : null,
                 emailLink = o?.EmailLinkSignIn is { } el ? new { linkUrl = el.LinkUrl } : null,
                 mfa = o?.MfaSettings is { } m ? new { issuer = m.Issuer ?? o.EmailSending?.AppName ?? new Uri(o.Issuer).Host, recoveryCodes = m.RecoveryCodes, pendingMinutes = m.PendingLifetime.TotalMinutes } : null,

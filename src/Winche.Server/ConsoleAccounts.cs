@@ -32,7 +32,8 @@ public sealed class ConsoleAccounts(ServerOptions server, ServerSettingsProvider
             await cmd.ExecuteNonQueryAsync(ct);
 
         _app = await Winche.Console.Identity.ConsoleAccountsApp.StartAsync(ConnectionString, server.MasterKey, server.PreviousMasterKeys, Issuer,
-            settings.Current.PublicUrl.TrimEnd('/') + "/_console/reset-password", configuration, ct);
+            settings.Current.PublicUrl.TrimEnd('/') + "/_console/reset-password", configuration, ct,
+            ServerEmail.Of(server)?.For(() => "Winche console"));
         logger.LogInformation("Console accounts are ready (Winche Auth, schema {Schema})", Schema);
 
         // The console's identity providers are the accounts' Sign-in method providers: kept in step with Server settings.

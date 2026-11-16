@@ -28,7 +28,7 @@ public static class ConsoleAccountsApp
     /// <param name="issuer">The issuer of its tokens (they never leave the server).</param>
     /// <param name="actionUrl">The console page its emailed links open (password resets).</param>
     public static async Task<WebApplication> StartAsync(string connectionString, string masterKey, string[] previousMasterKeys, string issuer,
-        string actionUrl, IConfiguration? configuration = null, CancellationToken ct = default)
+        string actionUrl, IConfiguration? configuration = null, CancellationToken ct = default, Winche.Auth.Email.IAuthEmailSender? email = null)
     {
         var builder = WebApplication.CreateBuilder();
         if (configuration is not null) builder.Configuration.AddConfiguration(configuration);
@@ -45,9 +45,12 @@ public static class ConsoleAccountsApp
             o.Issuer = issuer;
             o.EmailPassword(p => p.MinLength = 8);   // as console accounts always had (changeable in its settings)
             o.Mfa(m => m.Issuer = "Winche console");
-            o.Email(e => { e.AppName = "Winche console"; e.ActionUrl = actionUrl; e.SendVerificationOnSignUp = false; e.LogLinks(); });
+            // With the host's own email, its emails go out with nothing to set up; otherwise links are only logged until
+            // an SMTP server is chosen.
+            o.Email(e => { e.AppName = "Winche console"; e.ActionUrl = actionUrl; e.SendVerificationOnSignUp = false; if (email is null) e.LogLinks(); });
             o.UseSettings();
         });
+        if (email is not null) builder.Services.AddSingleton(email);
         var app = builder.Build();
         await app.StartAsync(ct);
         return app;

@@ -1300,4 +1300,95 @@ public class ServerEmailTests(PostgresFixture pg)
         Directory.Delete(files, recursive: true);
     }
 
+
+    /// <summary>The server's own email: the AWS credentials and SES address of its environment, as a deployment sets them.</summary>
+    private static IDisposable AwsEnvironment(FakeSes ses)
+    {
+        var vars = new Dictionary<string, string?> { ["AWS_ACCESS_KEY_ID"] = "AKIDTESTONLY", ["AWS_SECRET_ACCESS_KEY"] = "test-secret", ["AWS_ENDPOINT_URL_SESV2"] = ses.Url };
+        var before = vars.Keys.ToDictionary(k => k, Environment.GetEnvironmentVariable);
+        foreach (var (k, v) in vars) Environment.SetEnvironmentVariable(k, v);
+        return new Restore(() => { foreach (var (k, v) in before) Environment.SetEnvironmentVariable(k, v); });
+    }
+
+    private sealed class Restore(Action undo) : IDisposable { public void Dispose() => undo(); }
+
+    [Fact]
+    public async Task The_servers_own_email_sends_console_and_project_emails_with_its_environments_credentials()
+    {
+        using var ses = new FakeSes();
+        using var env = AwsEnvironment(ses);
+        var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"),
+            ("Winche:Email:Provider", "ses"), ("Winche:Email:Region", "eu-west-1"), ("Winche:Email:FromAddress", "no-reply@winche.example"));
+        var console = server.CreateClient();
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/project", new { name = "Clinic", id = "clinic", products = new[] { "authentication" } }));
+
+        // Console invites go out with nothing set up: no SMTP server, no keys saved.
+        Assert.True((await Json(await console.PostAsJsonAsync("/_console/api/invites", new { email = "colleague@example.com", role = "Member", expiresInHours = 72 }))).GetProperty("emailed").GetBoolean());
+        var invite = Assert.Single(ses.Sent);
+        Assert.Equal("colleague@example.com", invite["Destination"]!["ToAddresses"]![0]!.GetValue<string>());
+        Assert.Equal("Winche console <no-reply@winche.example>", invite["FromEmailAddress"]!.GetValue<string>());
+        Assert.Contains("/invite?token=", invite["Content"]!["Simple"]!["Body"]!["Text"]!["Data"]!.GetValue<string>());
+        Assert.Contains("Credential=AKIDTESTONLY/", ses.Authorizations[0]);   // signed with the environment's credentials
+
+        // A project's sign-in emails: the console offers the server's email, and sending through it needs no setup.
+        var config = await Json(await console.GetAsync("/_console/api/app-auth/config"));
+        Assert.Equal("Amazon SES (eu-west-1) as no-reply@winche.example", config.GetProperty("serverEmail").GetString());
+        var signin = await Json(await console.GetAsync("/_console/api/app-auth/settings/signin"));
+        var settings = System.Text.Json.Nodes.JsonNode.Parse(signin.GetProperty("settings").GetRawText())!;
+        settings["email"] = new System.Text.Json.Nodes.JsonObject
+        {
+            ["enabled"] = true, ["appName"] = "Clinic", ["sendVerificationOnSignUp"] = false, ["maxPerAddressPerHour"] = 5, ["verifyLinkHours"] = 24,
+            ["resetLinkHours"] = 1, ["sender"] = "app",
+        };
+        await Json(await console.PutAsJsonAsync("/_console/api/app-auth/settings/signin", new { settings, reason = "Email through the server" }));
+        var user = await Json(await console.PostAsJsonAsync("/_console/api/app-auth/users", new { email = "ann@example.com", password = "Ann-Passw0rd!" }));
+        Assert.True((await console.PostAsync($"/_console/api/app-auth/users/{user.GetProperty("uid").GetString()}/sendPasswordReset", null)).IsSuccessStatusCode);
+        for (var i = 0; i < 100 && ses.Sent.Count < 2; i++) await Task.Delay(100);   // sent in the background
+        var reset = ses.Sent[1];
+        Assert.Equal("ann@example.com", reset["Destination"]!["ToAddresses"]![0]!.GetValue<string>());
+        Assert.Equal("Clinic <no-reply@winche.example>", reset["FromEmailAddress"]!.GetValue<string>());
+        Directory.Delete(files, recursive: true);
+    }
+
+    [Fact]
+    public async Task Without_an_access_key_a_bucket_uses_the_servers_credentials_so_only_server_admins_may_choose_one()
+    {
+        var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
+        var projectsPath = Directory.CreateTempSubdirectory("winche-server-projects-").FullName;
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:ProjectsPath", projectsPath), ("Winche:RequireTwoFactorForSettings", "false"));
+        var admin = server.CreateClient();
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/project", new { name = "Clinic", id = "clinic", products = Array.Empty<string>() }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards", products = new[] { "storage" } }));
+        await Json(await admin.PostAsync("/p/wards/_console/api/project/products/storage/start", null));
+        for (var i = 0; i < 100 && !(await Json(await admin.GetAsync("/p/wards/_console/api/project"))).GetProperty("products").EnumerateArray().Any(p => p.GetProperty("id").GetString() == "storage" && p.GetProperty("ready").GetBoolean()); i++)
+            await Task.Delay(100);
+
+        // Bob is the project's admin, not the server's.
+        var added = await Json(await admin.PostAsJsonAsync("/p/wards/_console/api/members", new { email = "bob@example.com", role = "Admin" }));
+        var code = System.Web.HttpUtility.ParseQueryString(new Uri(added.GetProperty("link").GetString()!).Query)["code"];
+        await admin.PostAsJsonAsync("/p/wards/_console/api/auth/reset-password", new { code, newPassword = "Bob-Passw0rd!long" });
+        var bob = server.CreateClient();
+        await Json(await bob.PostAsJsonAsync("/p/wards/_console/api/auth/login", new { email = "bob@example.com", password = "Bob-Passw0rd!long" }));
+
+        var keyless = new { kind = "s3", s3 = new { bucket = "server-bucket", region = "eu-west-1" } };
+        var refused = await bob.PostAsJsonAsync("/p/wards/_console/api/settings/storage/location/test", new { location = keyless });
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        Assert.Contains("only a server admin", await refused.Content.ReadAsStringAsync());
+        refused = await bob.PostAsJsonAsync("/p/wards/_console/api/settings/storage/location/move", new { location = keyless, reason = "Mine now" });
+        Assert.Contains("only a server admin", await refused.Content.ReadAsStringAsync());
+
+        // With a key of its own, his test is run (and fails here: there's no such bucket), not refused.
+        var keyed = await bob.PostAsJsonAsync("/p/wards/_console/api/settings/storage/location/test",
+            new { location = new { kind = "s3", s3 = new { bucket = "wards-bucket", region = "eu-west-1", serviceUrl = "http://127.0.0.1:9", accessKey = "AKIDWARDS", forcePathStyle = true } }, secretKey = "s" });
+        Assert.Equal(HttpStatusCode.OK, keyed.StatusCode);
+        // The server admin may use the server's own credentials.
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsJsonAsync("/p/wards/_console/api/settings/storage/location/test",
+            new { location = new { kind = "s3", s3 = new { bucket = "server-bucket", region = "eu-west-1", serviceUrl = "http://127.0.0.1:9", forcePathStyle = true } } })).StatusCode);
+        Directory.Delete(files, recursive: true);
+    }
 }

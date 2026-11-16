@@ -85,6 +85,7 @@ Environment variables (or `appsettings.json`, section `Winche`):
 | `Winche__ProjectsPath` | Projects' files on disk, each under `<id>/files`, until they're moved to a bucket (default `/data/projects`: mount a volume). |
 | `Winche__FilesPath` | Optional: keeps an existing first project's files in their own folder. |
 | `Winche__ConsolePath` | Where the console is served (default `/_console`). |
+| `Winche__Email__Provider`, `__Region`, `__FromAddress` | Optional: the server's own email, `ses` (Amazon SES), e.g. region `eu-west-1`, from `no-reply@example.com` (verified in SES); `__FromName` sets the name, else each project's app name. **No keys are kept**: the AWS credentials of the server's environment are used (`AWS_*` variables, the ECS task's role, the instance's profile). Console emails go through it with nothing to set up, and projects can choose it for their sign-in emails (**Authentication → Settings → Emails to users → The server's email**). |
 | `Winche__ProjectId`, `Winche__ProjectName` | Defaults for the first project as apps see it (default `winche`). Setup asks for its own. |
 
 Several servers can share one database: settings, rules and webhooks follow within seconds, and console sign-ins
@@ -119,7 +120,7 @@ Settings are saved with a reason, as versions you can restore. A save made from 
 refused, so two admins can't undo each other's changes.
 
 Console emails (invites, password resets) go through the SMTP server set in **Server settings → Authentication →
-Settings → Emails to users**. Until there is one, invites are shared as links, and a server admin sets a new password
+Settings → Emails to users**, else the server's own email (`Winche__Email__*`). Until there is one, invites are shared as links, and a server admin sets a new password
 for someone who forgot theirs (Server settings → Authentication → Users).
 
 ## Products
@@ -141,6 +142,10 @@ are told to try again (`503`, `project-moving`) while every table is copied and 
 Then it carries on in the new database. If anything goes wrong, it carries on where it was. The old copy stays until you
 finish the move (delete it, or keep it). The same page sets the project's connections (how many at once, the command
 timeout).
+
+**Buckets and the server's credentials.** A bucket set up without an access key is reached with the server's own AWS
+credentials (its role). On a server with several projects that would give one project whatever the server can reach, so
+only server admins can choose such a bucket; a project's admins give theirs an access key of its own.
 
 ## Backups
 

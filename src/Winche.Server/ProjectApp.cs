@@ -85,6 +85,10 @@ internal static class ProjectApp
             o.Mfa();
             o.UseSettings();
         });
+        // The server's own email, when the deployment has one: sign-in emails go through it unless the project chooses SMTP.
+        if (ServerEmail.Of(server) is { } serverEmail)
+            builder.Services.AddSingleton<Winche.Auth.Email.IAuthEmailSender>(sp =>
+                serverEmail.For(() => sp.GetRequiredService<Winche.Auth.WincheAuthOptions>().EmailSending?.AppName ?? server.ProjectName));
         builder.Services.AddAuthentication().AddWincheTokens(t => t.TrustWincheAuth().UseSettings());
 
         // Who is calling: the verified token's claims, once per request, for every package (rules, logs, functions' ctx.auth).
@@ -140,11 +144,13 @@ internal static class ProjectApp
             // Console emails: the server's own SMTP server (Server settings), never this project's.
             // Console emails (invites, password resets): through the console accounts' email, as Server settings →
             // Authentication → Settings → Emails to users sets it (its SMTP server and password).
-            // Only a real SMTP server counts: links that are just logged would leave invitees waiting for an email.
+            // Only a real sender counts (an SMTP server, or the server's own email): links that are just logged would
+            // leave invitees waiting for an email.
             o.UseEmailSender(_ =>
             {
                 var auth = projects.Accounts.Services.GetRequiredService<Winche.Auth.WincheAuthOptions>();
-                return new Winche.Console.Email.WincheAuthConsoleEmail(() => auth.EmailSending is { Smtp: not null } e ? e : null,
+                var host = projects.Accounts.Services.GetService<Winche.Auth.Email.IAuthEmailSender>() is Winche.Console.Email.IHostEmailSender;
+                return new Winche.Console.Email.WincheAuthConsoleEmail(() => auth.EmailSending is { } e && (e.Smtp is not null || !e.LogLinksOnly && host) ? e : null,
                     projects.Accounts.Services, "Server settings → Authentication → Settings → Email");
             });
             o.RequireTwoFactorForSettings = settings.Current.RequireTwoFactorForSettings;

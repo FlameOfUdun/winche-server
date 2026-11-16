@@ -75,6 +75,14 @@ public sealed class ServerOptions
     /// </summary>
     public ConsoleSignInOptions? ConsoleSignIn { get; set; }
 
+    /// <summary>
+    /// Email through the server's own account with an email service (<c>Winche__Email__Provider=ses</c>,
+    /// <c>Winche__Email__Region</c>, <c>Winche__Email__FromAddress</c>): the console's emails, and every project's
+    /// sign-in emails unless a project sets an SMTP server. No keys are kept: the provider's own credentials of the
+    /// server's environment are used (for Amazon SES: AWS_* variables, the ECS task's role, the instance's profile).
+    /// </summary>
+    public ServerEmailOptions? Email { get; set; }
+
     public IReadOnlyList<string> Problems()
     {
         var problems = new List<string>();
@@ -83,9 +91,31 @@ public sealed class ServerOptions
         if (PreviousMasterKeys.Any(k => k.Length < 32)) problems.Add("Winche__PreviousMasterKeys: each is a master key used before, at least 32 characters.");
         if (!Uri.TryCreate(PublicUrl, UriKind.Absolute, out var u) || u.Scheme is not ("https" or "http"))
             problems.Add("Winche__PublicUrl: the address apps reach this server at, e.g. https://api.example.com.");
+        if (Email is { Provider.Length: > 0 } e) problems.AddRange(e.Problems());
         return problems;
     }
 
+}
+
+public sealed class ServerEmailOptions
+{
+    /// <summary>ses (Amazon SES); none when unset.</summary>
+    public string? Provider { get; set; }
+    /// <summary>The service's region, e.g. eu-west-1.</summary>
+    public string? Region { get; set; }
+    /// <summary>The address emails come from (verified with the service), e.g. no-reply@example.com.</summary>
+    public string? FromAddress { get; set; }
+    /// <summary>The name shown beside it; each project's app name when unset.</summary>
+    public string? FromName { get; set; }
+
+    public IReadOnlyList<string> Problems()
+    {
+        var problems = new List<string>();
+        if (Provider != "ses") problems.Add("Winche__Email__Provider: ses (Amazon SES) is the one there is.");
+        if (string.IsNullOrWhiteSpace(Region)) problems.Add("Winche__Email__Region: the email service's region, e.g. eu-west-1.");
+        if (string.IsNullOrWhiteSpace(FromAddress) || !FromAddress.Contains('@')) problems.Add("Winche__Email__FromAddress: the address emails come from, e.g. no-reply@example.com.");
+        return problems;
+    }
 }
 
 public sealed class ConsoleSignInOptions

@@ -23,6 +23,21 @@ public static class ConsoleStorageLocationEndpoints
 
     private static IResult Problem(string message) => ConsoleErrors.Problem("move", message, null);
 
+    /// <summary>
+    /// A bucket without an access key is reached with the server's own credentials (its environment's role). On a
+    /// server with several projects that would give one project whatever the server can reach, so only server admins
+    /// may choose one; others give the bucket a key of its own.
+    /// </summary>
+    private static async Task<IResult?> ServerCredentialsRefusedAsync(ArchiveLocation location, HttpContext http)
+    {
+        if (location is not { Kind: "s3", S3: { } s3 } || !string.IsNullOrWhiteSpace(s3.AccessKey)) return null;
+        var options = http.RequestServices.GetRequiredService<Options.ConsoleOptions>();
+        if (options.ServerSettings is null) return null;   // one app, its own credentials
+        var me = await http.RequestServices.GetRequiredService<ConsoleAccounts>().CurrentAsync(http.User, http.RequestAborted);
+        return me is { IsAdmin: true } ? null
+            : Problem("Give the bucket an access key: without one it would use the server's own credentials, which only a server admin can choose.");
+    }
+
     /// <summary>The app's own location, in words.</summary>
     private static string DescribeCode(ArchiveLocations locations)
     {
@@ -65,9 +80,12 @@ public static class ConsoleStorageLocationEndpoints
             }, SettingsArea.Json);
         });
 
-        group.MapPost("/test", async (TestRequest body, StorageMoves moves, CancellationToken ct) =>
-            body.Location is null ? Problem("Fill in the location.")
-                : Results.Json(await moves.TestAsync(WithId(body.Location), string.IsNullOrEmpty(body.SecretKey) ? null : body.SecretKey, ct), SettingsArea.Json));
+        group.MapPost("/test", async (TestRequest body, HttpContext http, StorageMoves moves, CancellationToken ct) =>
+        {
+            if (body.Location is null) return Problem("Fill in the location.");
+            if (await ServerCredentialsRefusedAsync(body.Location, http) is { } refused) return refused;
+            return Results.Json(await moves.TestAsync(WithId(body.Location), string.IsNullOrEmpty(body.SecretKey) ? null : body.SecretKey, ct), SettingsArea.Json);
+        });
 
         group.MapPost("/move", async (MoveRequest body, HttpContext http, StorageMoves moves, CancellationToken ct) =>
         {
@@ -75,6 +93,7 @@ public static class ConsoleStorageLocationEndpoints
             if (body.Location is null) return Problem("Fill in the location.");
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're moving the files: it goes in the history.");
             var location = WithId(body.Location);
+            if (await ServerCredentialsRefusedAsync(location, http) is { } noKey) return noKey;
             if (location.Kind != "code")
             {
                 var test = await moves.TestAsync(location, string.IsNullOrEmpty(body.SecretKey) ? null : body.SecretKey, ct);
