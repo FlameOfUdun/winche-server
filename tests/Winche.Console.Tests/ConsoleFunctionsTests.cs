@@ -91,4 +91,35 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Contains((await client.PostAsync("/_console/api/functions/deploy-key", null)).StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
         Assert.Contains((await ci.PostAsJsonAsync("/functions/v1/deploy", new { files = new Dictionary<string, string>() })).StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
     }
+    [Fact]
+    public async Task Secrets_are_set_listed_without_values_and_removed()
+    {
+        using var app = new ConsoleAppFactory(fx);
+        using var client = app.CreateClient();
+        await client.SetupAdminAsync();
+        await client.LoginAsync();
+        if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 }) return;   // deploying needs Deno
+
+        await Json(await client.PostAsJsonAsync("/_console/api/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = """
+            import { callable } from "@winche/functions";
+            export const keyLength = callable(async (_d, ctx) => ctx.secrets.get("MAIL_KEY").length, { secrets: ["MAIL_KEY"] });
+            """ }, note = "Secrets" }));
+        var list = await Json(await client.GetAsync("/_console/api/functions/secrets"));
+        Assert.True(list.GetProperty("available").GetBoolean());
+        var only = Assert.Single(list.GetProperty("secrets").EnumerateArray());
+        Assert.Equal(("MAIL_KEY", false, "keyLength"), (only.GetProperty("name").GetString(), only.GetProperty("isSet").GetBoolean(), only.GetProperty("usedBy")[0].GetString()));
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/_console/api/functions/secrets/mail-key", new { value = "x" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/_console/api/functions/secrets/MAIL_KEY", new { value = "" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PutAsJsonAsync("/_console/api/functions/secrets/MAIL_KEY", new { value = "k-123456" })).StatusCode);
+
+        var text = await (await client.GetAsync("/_console/api/functions/secrets")).Content.ReadAsStringAsync();
+        Assert.DoesNotContain("k-123456", text);   // values never come back
+        Assert.Contains("\"isSet\":true", text);
+        var run = await Json(await client.PostAsJsonAsync("/_console/api/functions/run", new { name = "keyLength" }));
+        Assert.Equal(8, run.GetProperty("result").GetInt32());
+
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/_console/api/functions/secrets/MAIL_KEY")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync("/_console/api/functions/secrets/MAIL_KEY")).StatusCode);
+    }
 }

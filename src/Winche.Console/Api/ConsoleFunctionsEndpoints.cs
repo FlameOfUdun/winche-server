@@ -23,6 +23,7 @@ public static class ConsoleFunctionsEndpoints
     public sealed record DeployRequest(Dictionary<string, string>? Files, string? Note);
     public sealed record NoteRequest(string? Note);
     public sealed record RunRequest(string? Name, JsonElement? Data, string? AsUid);
+    public sealed record SecretRequest(string? Value);
 
     internal static bool Capability(IServiceProvider sp, ConsoleRole? role) => role == ConsoleRole.Admin && sp.GetService<WincheFunctions>() is not null;
 
@@ -34,7 +35,7 @@ public static class ConsoleFunctionsEndpoints
     private static object Info(FunctionInfo f) => new
     {
         name = f.Name, kind = f.Trigger.Kind, events = f.Trigger.Events, path = f.Trigger.Path, cron = f.Trigger.Cron, timeZone = f.Trigger.TimeZone,
-        description = f.Trigger.Describe(), timeoutSeconds = f.TimeoutSeconds,
+        description = f.Trigger.Describe(), timeoutSeconds = f.TimeoutSeconds, secrets = f.Secrets ?? [],
     };
 
     private static object Version(Deployment d) => new
@@ -81,6 +82,36 @@ public static class ConsoleFunctionsEndpoints
             catch (FunctionDeployException ex) { return Problem(ex.Message, ex.Problems); }
             catch (FunctionsUnavailableException ex) { return Problem(ex.Message); }
         }).WithMetadata(ci);
+
+        // Secrets functions read with ctx.secrets.get: names, when and by whom they were set, which functions declare them.
+        // Values go in and never come back out. Setting or removing one needs two-step sign-in where settings do. Admins
+        // only: a CI token deploys, it doesn't handle secrets.
+        group.MapGet("/secrets", async (WincheFunctions functions, FunctionSecrets secrets, CancellationToken ct) =>
+        {
+            await functions.RefreshAsync(ct);
+            return Results.Json(new
+            {
+                available = secrets.Available,
+                secrets = (await secrets.ListAsync(functions.Current, ct)).Select(s => new { name = s.Name, isSet = s.IsSet, setAt = s.SetAt, setBy = s.SetBy, usedBy = s.UsedBy }),
+            });
+        });
+
+        group.MapPut("/secrets/{name}", async (string name, SecretRequest body, HttpContext http, FunctionSecrets secrets, CancellationToken ct) =>
+        {
+            if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
+            if (FunctionSecrets.Problem(name) is { } bad) return Problem(bad);
+            if (string.IsNullOrEmpty(body.Value)) return Problem("Give the secret's value.");
+            if (!secrets.Available) return Problem("Secrets need the server's master key.");
+            await secrets.SetAsync(name, body.Value, Who(http.User), ct);
+            return Results.NoContent();
+        });
+
+        group.MapDelete("/secrets/{name}", async (string name, HttpContext http, FunctionSecrets secrets, CancellationToken ct) =>
+        {
+            if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
+            if (FunctionSecrets.Problem(name) is { } bad) return Problem(bad);
+            return await secrets.RemoveAsync(name, ct) ? Results.NoContent() : new WincheError(WincheErrorCode.NotFound, $"There's no secret {name}.").ToResult();
+        });
 
         // Runs a callable now, as a signed-out caller or as a given user id, showing its result and what it logged.
         group.MapPost("/run", async (RunRequest body, WincheFunctions functions, CancellationToken ct) =>

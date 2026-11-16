@@ -101,7 +101,8 @@ carry over (their keys are kept in the database). `GET /healthz` answers 200 onc
 - **Storage:** files, rules, webhooks, logs and settings (size limit, a disk or an S3-compatible bucket).
 - **Functions:** TypeScript functions run by Deno: callables apps call, and triggers on documents, files and users.
   You write them in your editor and deploy them with the CLI (`winche functions deploy`, or a CI token). The console
-  lists them, runs callables and shows each trigger's runs and versions.
+  lists them, runs callables and shows each trigger's runs and versions, and keeps their secrets (API keys and
+  passwords they read with `ctx.secrets.get`, encrypted, never shown again).
 - **Logs:** every product's requests and events, as plain sentences, with filters and saved queries. Changes are always
   logged; successful reads are sampled.
 - **Project settings:** the project (name, id, image), apps and browser origins, members and invites, CI tokens, and
