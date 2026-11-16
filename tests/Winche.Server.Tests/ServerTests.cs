@@ -1468,7 +1468,7 @@ public class ServerEmailTests(PostgresFixture pg)
     }
 
     [Fact]
-    public async Task Functions_assets_are_sent_once_by_hash_and_read_by_the_deployment_naming_them()
+    public async Task Functions_resources_are_sent_once_by_hash_and_read_by_the_deployment_naming_them()
     {
         if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 }) return;   // functions need Deno
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
@@ -1482,32 +1482,32 @@ public class ServerEmailTests(PostgresFixture pg)
         new Random(7).NextBytes(font);
         var text = "Hallo"u8.ToArray();
         string Hash(byte[] b) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(b));
-        var missing = await Json(await admin.PostAsJsonAsync("/_console/api/functions/assets/missing", new { hashes = new[] { Hash(font), Hash(text) } }));
+        var missing = await Json(await admin.PostAsJsonAsync("/_console/api/functions/resources/missing", new { hashes = new[] { Hash(font), Hash(text) } }));
         Assert.Equal(2, missing.GetProperty("missing").GetArrayLength());
 
         // A torn upload is refused; whole ones are kept, once.
-        var torn = await admin.PutAsync($"/_console/api/functions/assets/{Hash(font)}", new ByteArrayContent(font[..1000]));
+        var torn = await admin.PutAsync($"/_console/api/functions/resources/{Hash(font)}", new ByteArrayContent(font[..1000]));
         Assert.Equal(HttpStatusCode.BadRequest, torn.StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/_console/api/functions/assets/{Hash(font)}", new ByteArrayContent(font))).StatusCode);
-        missing = await Json(await admin.PostAsJsonAsync("/_console/api/functions/assets/missing", new { hashes = new[] { Hash(font), Hash(text) } }));
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/_console/api/functions/resources/{Hash(font)}", new ByteArrayContent(font))).StatusCode);
+        missing = await Json(await admin.PostAsJsonAsync("/_console/api/functions/resources/missing", new { hashes = new[] { Hash(font), Hash(text) } }));
         Assert.Equal([Hash(text)], missing.GetProperty("missing").EnumerateArray().Select(h => h.GetString()));
 
         var code = new Dictionary<string, string>
         {
             ["index.ts"] = """
                 import { callable } from "@winche/functions";
-                export const read = callable(async (_d, ctx) => ({ text: await ctx.assets.readText("de/hello.txt"), font: (await ctx.assets.read("fonts/a.ttf"))?.length }));
+                export const read = callable(async (_d, ctx) => ({ text: await ctx.resources.readText("de/hello.txt"), font: (await ctx.resources.read("fonts/a.ttf"))?.length }));
                 """,
         };
-        var assets = new Dictionary<string, object> { ["fonts/a.ttf"] = new { hash = Hash(font), size = font.Length }, ["de/hello.txt"] = new { hash = Hash(text), size = text.Length } };
-        var refused = await admin.PostAsJsonAsync("/_console/api/functions/deploy", new { note = "Too soon", files = code, assets });
+        var resources = new Dictionary<string, object> { ["fonts/a.ttf"] = new { hash = Hash(font), size = font.Length }, ["de/hello.txt"] = new { hash = Hash(text), size = text.Length } };
+        var refused = await admin.PostAsJsonAsync("/_console/api/functions/deploy", new { note = "Too soon", files = code, resources });
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
-        Assert.Contains("assets/de/hello.txt", await refused.Content.ReadAsStringAsync());
+        Assert.Contains("resources/de/hello.txt", await refused.Content.ReadAsStringAsync());
 
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/_console/api/functions/assets/{Hash(text)}", new ByteArrayContent(text))).StatusCode);
-        await Json(await admin.PostAsJsonAsync("/_console/api/functions/deploy", new { note = "Assets", files = code, assets }));
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/_console/api/functions/resources/{Hash(text)}", new ByteArrayContent(text))).StatusCode);
+        await Json(await admin.PostAsJsonAsync("/_console/api/functions/deploy", new { note = "Resources", files = code, resources }));
         var page = await Json(await admin.GetAsync("/_console/api/functions"));
-        Assert.Equal(["de/hello.txt", "fonts/a.ttf"], page.GetProperty("assets").EnumerateArray().Select(a => a.GetProperty("path").GetString()));
+        Assert.Equal(["de/hello.txt", "fonts/a.ttf"], page.GetProperty("resources").EnumerateArray().Select(a => a.GetProperty("path").GetString()));
         var ran = await Json(await admin.PostAsJsonAsync("/_console/api/functions/run", new { name = "read" }));
         Assert.Equal(("Hallo", 2_000_000), (ran.GetProperty("result").GetProperty("text").GetString(), ran.GetProperty("result").GetProperty("font").GetInt32()));
         Directory.Delete(files, recursive: true);

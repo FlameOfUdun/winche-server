@@ -20,8 +20,8 @@ namespace Winche.Console.Api;
 /// </summary>
 public static class ConsoleFunctionsEndpoints
 {
-    public sealed record DeployRequest(Dictionary<string, string>? Files, string? Note, Dictionary<string, AssetEntry>? Assets = null);
-    public sealed record AssetsRequest(List<string>? Hashes);
+    public sealed record DeployRequest(Dictionary<string, string>? Files, string? Note, Dictionary<string, ResourceEntry>? Resources = null);
+    public sealed record ResourcesRequest(List<string>? Hashes);
     public sealed record NoteRequest(string? Note);
     public sealed record RunRequest(string? Name, JsonElement? Data, string? AsUid);
     public sealed record SecretRequest(string? Value);
@@ -62,7 +62,7 @@ public static class ConsoleFunctionsEndpoints
                 current = current is null ? null : Version(current, functions),   // times as they apply now
                 maxTimeoutSeconds = (int)options.MaxTimeout.TotalSeconds,
                 files = current?.Files.Keys.Order(StringComparer.Ordinal) ?? Enumerable.Empty<string>(),   // names only: the code is in the repository
-                assets = current?.AssetFiles.OrderBy(a => a.Key, StringComparer.Ordinal).Select(a => new { path = a.Key, size = a.Value.Size }) ?? [],
+                resources = current?.ResourceFiles.OrderBy(a => a.Key, StringComparer.Ordinal).Select(a => new { path = a.Key, size = a.Value.Size }) ?? [],
                 runtimeProblem,
             });
         }).WithMetadata(ci);
@@ -74,30 +74,30 @@ public static class ConsoleFunctionsEndpoints
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
             if (string.IsNullOrWhiteSpace(body.Note)) return Problem("Say what changed: it goes in the version list.");
-            try { return Results.Json(Version(await functions.DeployAsync(body.Files ?? [], body.Note.Trim(), Who(http.User), ct, assets: body.Assets))); }
+            try { return Results.Json(Version(await functions.DeployAsync(body.Files ?? [], body.Note.Trim(), Who(http.User), ct, resources: body.Resources))); }
             catch (FunctionDeployException ex) { return Problem(ex.Message, ex.Problems); }
             catch (FunctionsUnavailableException ex) { return Problem(ex.Message); }
         }).WithMetadata(ci);
 
-        // Assets (the functions folder's assets/): the CLI asks which contents are new, sends only those, then deploys
+        // Resources (the functions folder's resources/): the CLI asks which contents are new, sends only those, then deploys
         // naming them by hash. Each content is kept once, whatever the versions that use it.
-        group.MapPost("/assets/missing", async (AssetsRequest body, WincheFunctions functions, CancellationToken ct) =>
+        group.MapPost("/resources/missing", async (ResourcesRequest body, WincheFunctions functions, CancellationToken ct) =>
         {
             var hashes = body.Hashes ?? [];
-            if (hashes.Count > WincheFunctions.MaxAssets) return Problem($"There are more than {WincheFunctions.MaxAssets} assets.");
-            return Results.Json(new { missing = await functions.MissingAssetsAsync(hashes, ct) });
+            if (hashes.Count > WincheFunctions.MaxResources) return Problem($"There are more than {WincheFunctions.MaxResources} resources.");
+            return Results.Json(new { missing = await functions.MissingResourcesAsync(hashes, ct) });
         }).WithMetadata(ci);
 
-        group.MapPut("/assets/{hash}", async (string hash, HttpContext http, WincheFunctions functions, CancellationToken ct) =>
+        group.MapPut("/resources/{hash}", async (string hash, HttpContext http, WincheFunctions functions, CancellationToken ct) =>
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
-            if (http.Request.ContentLength > WincheFunctions.MaxAssetBytes) return Problem($"An asset is at most {WincheFunctions.MaxAssetBytes / 1024 / 1024} MB.");
+            if (http.Request.ContentLength > WincheFunctions.MaxResourceBytes) return Problem($"An resource is at most {WincheFunctions.MaxResourceBytes / 1024 / 1024} MB.");
             using var content = new MemoryStream();
             await http.Request.Body.CopyToAsync(content, ct);
-            try { await functions.PutAssetAsync(content.ToArray(), hash, ct); }
+            try { await functions.PutResourceAsync(content.ToArray(), hash, ct); }
             catch (FunctionDeployException ex) { return Problem(ex.Message); }
             return Results.NoContent();
-        }).WithMetadata(ci).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(WincheFunctions.MaxAssetBytes + 1));
+        }).WithMetadata(ci).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(WincheFunctions.MaxResourceBytes + 1));
 
         group.MapPost("/versions/{version:int}/rollback", async (int version, NoteRequest body, HttpContext http, WincheFunctions functions, CancellationToken ct) =>
         {
