@@ -1,6 +1,7 @@
 # Plan: one layout for every path (Winche Server 3.0)
 
-**Status:** plan, not started.
+**Status:** plan, not started. A clean break: the old addresses stop answering (no redirects), so it ships before
+servers go live.
 
 ## Why
 
@@ -92,41 +93,26 @@ Unchanged below the project, except storage's signed links:
 
 ## What changes beyond paths
 
+Nothing answers on the old addresses after the upgrade: no redirects, no aliases.
+
 - **Winche Auth's issuer** becomes `<PublicUrl>/projects/<id>/auth/v1`. Tokens issued before the upgrade name the old
-  issuer (`…/p/<id>/auth/v1`): 3.x accepts both for each project, so nobody is signed out; refreshed tokens carry the
-  new one.
+  issuer and are refused: their users sign in again.
 - **Sign-in callbacks registered elsewhere** (the console's OpenID Connect provider, a project's Google/Apple/OIDC
-  providers): the new callback paths need registering at each provider. The old ones keep working through 3.x
-  (redirects), and the console's settings pages show the URL to register, old and new, until the old one is unused.
-- **Links already handed out** (file download links, signed disk links, email action links, invite links) keep working
-  through the redirects.
+  providers) move to the new paths and are registered again at each provider; the console's settings pages show the
+  URL to register.
+- **Links already handed out** (file download links, signed disk links, email action links, invite links) stop
+  working.
 - **Cookies:** the console's session cookie gets path `/console`; apps never receive it.
 - **`Winche__ConsolePath`** goes: the console is always `/console`. (`Winche__PublicUrl` stays the host's address.)
-- **The app-token check** (2.3.1: everywhere but the console) becomes: only under `/projects/*`, excluding nothing
-  else, since the console isn't there any more.
-
-## Redirects (all of 3.x)
-
-| Old | New | How |
-| --- | --- | --- |
-| `/_console[/…]` (pages) | `/console[/…]` | 308 |
-| `/_console/api/…` | `/console/v1/…` (mapped as in the tables above) | 308 (method and body kept) |
-| `/p/<id>/_console[/…]` (pages) | `/console/projects/<id>[/…]` | 308 |
-| `/p/<id>/_console/api/…` | `/console/v1/projects/<id>/…` (mapped) | 308 |
-| `/p/<id>/_files/…` | `/projects/<id>/files/v1/signed/…` | 308 |
-| `/p/<id>/…` (everything else) | `/projects/<id>/…` | 308 |
-| The live socket `/p/<id>/documents/v1/ws` | `/projects/<id>/documents/v1/ws` | served at both (WebSocket clients don't follow redirects) |
-
-Each redirect is logged once per client and path at information level ("old address used: …"), so an operator can see
-what still calls them before 4.0 removes them.
+- **The app-token check** (2.3.1: everywhere but the console) becomes: only under `/projects/*`.
 
 ## Everything that moves with it
 
 | Where | Change |
 | --- | --- |
-| Winche Server | The router (`/projects/<id>` and `/console`), the console mounted once, the admin API under `/console/v1` with project calls forwarded, the redirect table, the issuer alias, the app-token check, health and readiness unchanged. README, Fargate example, upgrading notes. Version 3.0. |
+| Winche Server | The router (`/projects/<id>` and `/console`), the console mounted once, the admin API under `/console/v1` with project calls forwarded, the app-token check; health and readiness unchanged. README, Fargate example, upgrading notes. Version 3.0. |
 | Console web app | One base (`/console`), project routes `/console/projects/<id>/…`, its API calls to `/console/v1/…`; the project switcher shows the new app address (`…/projects/<id>`). |
-| CLI | `winche.json`: `"server": "https://host"` and `"project": "<id>"` (today a console URL per project); an old `"console"` value is still read and rewritten on the next save. Sign-ins kept per server. Calls go to `/console/v1`. Emulator: the same layout. Version 3.0. |
+| CLI | `winche.json`: `"server": "https://host"` and `"project": "<id>"` (today a console URL per project); a config with the old `"console"` value is refused with how to write the new one. Sign-ins kept per server (sign in again once). Calls go to `/console/v1`. Emulator: the same layout. Version 3.0. |
 | VS Code extension | Any console links it opens. |
 | App SDKs (Dart) | No code change: they take the base URL. READMEs and examples: `…/projects/<id>`. |
 | Functions | `ctx` addresses are internal; nothing to change. Console pages' iframe address moves with `pages/…`. |
@@ -134,19 +120,17 @@ what still calls them before 4.0 removes them.
 
 ## Steps
 
-1. **Server routing:** `/projects/<id>` beside `/p/<id>` (both served), `/console` beside `/_console`, the admin API at
-   `/console/v1` with the project forwarding, the issuer alias. Tests: every path in the tables answers on its new
-   address; old addresses still answer.
-2. **Redirects:** old addresses become 308s to the new ones (the socket stays served at both); the once-per-client log
-   line. Tests: each row of the redirect table.
-3. **Console web app** on the new layout.
-4. **CLI** on `server` + `project`, reading old configs; the emulator on the new layout.
-5. **Docs, samples, extension;** the console's settings pages show both callback URLs.
-6. **Release:** Server 3.0 (ghcr), CLI 3.0, the extension; SDK README updates. Upgrading notes: re-register callback
-   URLs at providers; update app base URLs at the next app release (old ones keep working through 3.x).
+1. **Server routing:** the router on `/projects/<id>` and `/console` (the old ones removed), the admin API at
+   `/console/v1` with the project forwarding, the issuer and callbacks on the new paths. Tests: every path in the
+   tables answers on its address; the old ones answer 404.
+2. **Console web app** on the new layout.
+3. **CLI** on `server` + `project`; the emulator on the new layout.
+4. **Docs, samples, extension;** the console's settings pages show the callback URLs to register.
+5. **Release:** Server 3.0 (ghcr), CLI 3.0, the extension; SDK README updates. Upgrading notes: everyone signs in again,
+   callback URLs are registered again at providers, apps' base URLs change (`…/projects/<id>`), links sent before stop
+   working.
 
 ## Open questions
 
-- 4.0 removes the redirects and the old issuer alias: on a schedule, or when the server's log shows nothing uses them?
 - Should `/projects/<id>` (no product) answer apps with something useful (the project's name and products, like
   `.well-known/winche`) instead of redirecting to the console?
