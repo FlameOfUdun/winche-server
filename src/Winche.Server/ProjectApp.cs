@@ -235,7 +235,9 @@ internal static class ProjectApp
         app.UseWhen(http => Compressible(http.Request.Path, server.ConsolePath), branch => branch.UseResponseCompression());
         app.UseWebSockets();
         app.UseWincheWsQueryToken();
-        app.UseAuthentication();
+        // Apps' tokens are checked on the apps' routes only. The console's routes sign in with the console's own schemes
+        // (its policies name them): checking a console token as an app's would only fail, and log that it did.
+        app.UseWhen(http => ChecksAppTokens(http.Request.Path, server.ConsolePath), branch => branch.UseAuthentication());
         app.UseAuthorization();
         app.UseWincheCaller();
         Winche.Console.Project.ProjectEndpoints.UseWincheProjectGate(app);   // a product's API answers once it's started
@@ -256,7 +258,9 @@ internal static class ProjectApp
         return (app, inProcess);
     }
 
-    /// <summary>The JSON reader's message in plain words, without .NET type names.</summary>
+    /// <summary>Whether a request on <paramref name="path"/> is checked for an app's token: everywhere but the console.</summary>
+    internal static bool ChecksAppTokens(PathString path, string consolePath) => !path.StartsWithSegments(consolePath);
+
     /// <summary>Whether answers on <paramref name="path"/> may be compressed (see the pipeline).</summary>
     internal static bool Compressible(PathString path, string consolePath) =>
         Api(path, "/documents/v1") || Api(path, "/files/v1") || Api(path, "/functions/v1") || Api(path, "/assets/v1")
@@ -266,6 +270,7 @@ internal static class ProjectApp
     private static bool Api(PathString path, string prefix) =>
         path.StartsWithSegments(prefix) || (path.Value?.StartsWith(prefix + ":", StringComparison.OrdinalIgnoreCase) ?? false);
 
+    /// <summary>The JSON reader's message in plain words, without .NET type names.</summary>
     internal static string Plain(string message)
     {
         // "JSON deserialization for type 'X' was missing required properties including: 'fields'."

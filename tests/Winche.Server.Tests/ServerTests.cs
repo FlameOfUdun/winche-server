@@ -195,6 +195,17 @@ public class ServerTests(PostgresFixture pg)
     }
 
     [Fact]
+    public void Apps_tokens_are_checked_on_the_apps_routes_not_the_consoles()
+    {
+        Assert.True(ProjectApp.ChecksAppTokens("/documents/v1/notes", "/_console"));
+        Assert.True(ProjectApp.ChecksAppTokens("/functions/v1/call/hello", "/_console"));
+        Assert.True(ProjectApp.ChecksAppTokens("/_consoles", "/_console"));   // another segment, not the console
+        Assert.False(ProjectApp.ChecksAppTokens("/_console", "/_console"));
+        Assert.False(ProjectApp.ChecksAppTokens("/_console/api/database/query", "/_console"));
+        Assert.False(ProjectApp.ChecksAppTokens("/admin/api/project", "/admin"));   // where the console is served
+    }
+
+    [Fact]
     public async Task Each_project_has_its_own_browser_origins_besides_its_registered_web_apps()
     {
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
