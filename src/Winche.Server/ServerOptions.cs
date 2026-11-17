@@ -53,6 +53,18 @@ public sealed class ServerOptions
     /// <summary>The longest any function may run, in minutes (default 9, at most 60): where the server setting starts.</summary>
     public int FunctionsMaxMinutes { get; set; } = 9;
 
+    /// <summary>The most memory a function may ask for, in MB (default 1024): where the server setting starts.</summary>
+    public int FunctionsMaxMemoryMb { get; set; } = 1024;
+
+    /// <summary>How many functions of a project may run at once (default 16): where the server setting starts.</summary>
+    public int FunctionsMaxConcurrency { get; set; } = 16;
+
+    /// <summary>Each worker's heap limit in a project's shared functions process, in MB (default 1024).</summary>
+    public int FunctionsSharedProcessMb { get; set; } = 1024;
+
+    /// <summary>The most functions processes per project (default 4: the shared one and isolated functions' own).</summary>
+    public int FunctionsMaxProcesses { get; set; } = 4;
+
     /// <summary>
     /// The deno program that runs functions, only when running the server outside its image (the image installs deno
     /// and has it on the PATH). Not a console setting.

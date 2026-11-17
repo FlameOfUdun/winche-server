@@ -1727,6 +1727,24 @@ public class ServerEmailTests(PostgresFixture pg)
         await Json(await admin.PutAsJsonAsync("/p/clinic/_console/api/settings/functions", new { settings, reason = "Longer backfill" }));
         for (var i = 0; i < 100 && (await Times()).Quick != 120; i++) await Task.Delay(100);
         Assert.Equal((2700, 120, 1800), await Times());
+
+        // Runs at once and memory: the server's limits reach the project at once; the functions memory is reported.
+        Assert.True(page.GetProperty("functionsMemory").GetProperty("totalMb").GetInt32() > 0);
+        server1["functionsMaxConcurrency"] = 0;
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = server1, reason = "x" })).StatusCode);
+        server1["functionsMaxConcurrency"] = 8;
+        server1["functionsMaxMemoryMb"] = 512;
+        await Json(await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = server1, reason = "Smaller tasks" }));
+        for (var i = 0; i < 100 && (await Json(await admin.GetAsync("/p/clinic/_console/api/functions"))).GetProperty("maxConcurrency").GetInt32() != 8; i++) await Task.Delay(100);
+        var limits = await Json(await admin.GetAsync("/p/clinic/_console/api/functions"));
+        Assert.Equal((8, 512), (limits.GetProperty("maxConcurrency").GetInt32(), limits.GetProperty("maxMemoryMb").GetInt32()));
+
+        // quick's instances on this server: a callable keeps one loaded.
+        var instances = await Json(await admin.GetAsync("/p/clinic/_console/api/functions/quick/instances"));
+        Assert.Equal(1, instances.GetProperty("limits").GetProperty("minInstances").GetInt32());
+        Assert.Equal(8, instances.GetProperty("limits").GetProperty("maxInstances").GetInt32());   // the default 10, held to the server's 8
+        Assert.False(instances.GetProperty("process").GetProperty("own").GetBoolean());
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/p/clinic/_console/api/functions/nothing/instances")).StatusCode);
         Directory.Delete(files, recursive: true);
     }
 }

@@ -80,6 +80,35 @@ public static class ConsoleFunctionsEndpoints
             });
         }).WithMetadata(ci);
 
+        // A function's instances on this server now, its process, and what happened to them lately.
+        group.MapGet("/{name}/instances", async (string name, WincheFunctions functions, DenoRuntime runtime, FunctionsOptions options, CancellationToken ct) =>
+        {
+            await functions.RefreshAsync(ct);
+            if (functions.Current?.Functions.FirstOrDefault(f => f.Name == name) is not { } fn)
+                return Results.Json(new { error = $"There's no function {name}." }, statusCode: StatusCodes.Status404NotFound);
+            var processes = await runtime.StatsAsync(ct);
+            var own = processes.FirstOrDefault(p => p.Function == name);
+            var process = own ?? processes.FirstOrDefault(p => p.Function is null);
+            var limits = fn.Trigger.Kind == "before" ? null : functions.LimitsFor(fn);
+            return Results.Json(new
+            {
+                server = Environment.MachineName,
+                limits = limits is null ? null : Limits(limits),
+                process = process is null ? null : new
+                {
+                    own = own is not null, running = process.Running, pid = process.Pid, heapMb = process.HeapMb, startedAt = process.StartedAt,
+                    restarts = Math.Max(0, process.Starts - 1),
+                },
+                // Asked for its own process but runs in the shared one (the budget or the process count).
+                refused = limits is { } l && (l.Isolate || l.MemoryMb > options.SharedProcessMemoryMb) && own is null && runtime.Refused(name),
+                instances = processes.SelectMany(p => p.Instances).Where(i => i.Function == name)
+                    .Select(i => new { state = i.State, heapMb = i.HeapMb, runs = i.Runs, ageSeconds = i.AgeSeconds, busySeconds = i.BusySeconds }),
+                events = runtime.Events.Where(e => e.Function == name || (e.Process is null && e.Function is null && own is null)).Take(50)
+                    .Select(e => new { at = e.At, kind = e.Kind, message = e.Message }),
+                budget = new { totalMb = runtime.Budget.TotalMb, usedMb = runtime.Budget.UsedMb },
+            });
+        });
+
         group.MapGet("/versions", async (FunctionStore store, CancellationToken ct) =>
             Results.Json(new { versions = (await store.ListAsync(50, ct)).Select(v => Version(v)) })).WithMetadata(ci);
 

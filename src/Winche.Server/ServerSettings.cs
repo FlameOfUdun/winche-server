@@ -26,6 +26,21 @@ public sealed record ServerSettings
     /// </summary>
     public int FunctionsMaxMinutes { get; init; } = 9;
 
+    /// <summary>The most memory a project's function may ask for, in MB (default 1024). Changes apply from the next run.</summary>
+    public int FunctionsMaxMemoryMb { get; init; } = 1024;
+
+    /// <summary>How many functions of a project may run at once on this server (default 16); more wait their turn.</summary>
+    public int FunctionsMaxConcurrency { get; init; } = 16;
+
+    /// <summary>
+    /// Each worker's heap limit in a project's shared functions process, in MB (default 1024): a run past it stops that
+    /// process. A function asking for more runs in a process of its own. Applies when the process next starts.
+    /// </summary>
+    public int FunctionsSharedProcessMb { get; init; } = 1024;
+
+    /// <summary>The most functions processes per project (default 4: the shared one and isolated functions' own).</summary>
+    public int FunctionsMaxProcesses { get; init; } = 4;
+
     /// <summary>
     /// The identity providers people can sign in to the console with, besides email and password (always there). Each
     /// one's client secret is the secret <see cref="Winche.Console.Identity.ConsoleOidcSettings.SecretFor"/> its id.
@@ -57,6 +72,10 @@ public sealed record ServerSettings
         PublicUrl = o.PublicUrl.TrimEnd('/'),
         RequireTwoFactorForSettings = o.RequireTwoFactorForSettings,
         FunctionsMaxMinutes = o.FunctionsMaxMinutes,
+        FunctionsMaxMemoryMb = o.FunctionsMaxMemoryMb,
+        FunctionsMaxConcurrency = o.FunctionsMaxConcurrency,
+        FunctionsSharedProcessMb = o.FunctionsSharedProcessMb,
+        FunctionsMaxProcesses = o.FunctionsMaxProcesses,
         ConsoleProviders = o.ConsoleSignIn is { Issuer.Length: > 0 } c
             ?
             [
@@ -77,6 +96,13 @@ public sealed record ServerSettings
         if (!Uri.TryCreate(PublicUrl, UriKind.Absolute, out var u) || u.Scheme is not ("https" or "http") || !string.IsNullOrEmpty(u.Query))
             problems.Add("The public address is an http(s) address, like https://api.example.com.");
         if (FunctionsMaxMinutes is < 1 or > 60) problems.Add("Functions may run 1 to 60 minutes at most.");
+        var budget = Winche.Functions.FunctionsMemoryBudget.FromContainer().TotalMb;
+        if (FunctionsMaxMemoryMb < 64 || FunctionsMaxMemoryMb > budget)
+            problems.Add($"A function's memory is 64 MB to {budget} MB at most (this server's functions memory).");
+        if (FunctionsSharedProcessMb < 128 || FunctionsSharedProcessMb > budget)
+            problems.Add($"The shared process's limit is 128 MB to {budget} MB (this server's functions memory).");
+        if (FunctionsMaxConcurrency is < 1 or > 256) problems.Add("Functions running at once is 1 to 256 per project.");
+        if (FunctionsMaxProcesses is < 1 or > 16) problems.Add("Functions processes per project are 1 to 16.");
         problems.AddRange(Winche.Console.Identity.ConsoleOidcSettings.Problems(ConsoleProviders));
         return problems;
     }

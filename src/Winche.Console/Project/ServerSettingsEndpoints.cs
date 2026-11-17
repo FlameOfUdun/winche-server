@@ -87,6 +87,8 @@ public static class ServerSettingsEndpoints
                 version = s.Area.Version is { } v ? new { number = v.Number, at = v.At, by = v.By, reason = v.Reason } : null,
                 secrets,
                 consoleSignIn = new { callbackUrl = s.ConsoleSignInCallbackUrl, logoutUrl = s.ConsoleSignInLogoutUrl },
+                functionsMemory = Winche.Functions.FunctionsMemoryBudget.FromContainer() is var b
+                    ? new { totalMb = b.TotalMb, usedMb = b.UsedMb, source = b.Source } : null,
             }, SettingsArea.Json);
         });
 
