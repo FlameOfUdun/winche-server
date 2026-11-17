@@ -92,7 +92,9 @@ public static class ConsoleFunctionsEndpoints
             var limits = fn.Trigger.Kind == "before" ? null : functions.LimitsFor(fn);
             return Results.Json(new
             {
-                server = Environment.MachineName,
+                server = functions.ServerName,
+                // Other servers running the project: their instances aren't in this view (see their logs).
+                otherServers = await functions.OtherServersAsync(ct),
                 limits = limits is null ? null : Limits(limits),
                 process = process is null ? null : new
                 {

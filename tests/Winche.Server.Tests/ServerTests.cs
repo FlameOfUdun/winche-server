@@ -1747,6 +1747,7 @@ public class ServerEmailTests(PostgresFixture pg)
         Assert.Equal(1, instances.GetProperty("limits").GetProperty("minInstances").GetInt32());
         Assert.Equal(8, instances.GetProperty("limits").GetProperty("maxInstances").GetInt32());   // the default 10, held to the server's 8
         Assert.False(instances.GetProperty("process").GetProperty("own").GetBoolean());
+        Assert.Equal(0, instances.GetProperty("otherServers").GetArrayLength());   // one server
         Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/p/clinic/_console/api/functions/nothing/instances")).StatusCode);
         Directory.Delete(files, recursive: true);
     }
