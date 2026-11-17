@@ -200,6 +200,10 @@ PostgreSQL server is backed up there.
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
 
+**2.1:** functions answer in a couple of milliseconds: runs reuse warm workers (Winche.Functions 2.1; a module's
+top-level state lasts between runs, so it must never hold one caller's data), and the server warms each project up
+when it starts.
+
 **From 1.x to 2.0:** a 2.x server has no project at its root: every project is under `/p/<id>`, and the server runs
 with none until one is added. 2.0 doesn't carry a 1.x server's root project over, so set 2.0 up on new databases.
 
