@@ -38,6 +38,16 @@ builder.Services.AddWincheStorage(opts =>
     opts.UseHooks(h => h.PublishChanges());
 });
 builder.Services.AddSingleton<IArchive, NoOpArchive>();
+// Assets (the Assets page, the apps' /assets/v1, functions' ctx.assets), their contents in memory; apps read
+// everything under public/ and, signed in, everything else.
+Winche.Assets.AssetsServiceCollectionExtensions.AddWincheAssets(builder.Services, o =>
+{
+    o.ConnectionString = wincheConn;
+    o.UseArchive(_ => new MemoryContentArchive());
+    o.UseRulesText("match public/{rest=**} { allow read; } match {path=**} { allow read: if request.auth != null; }");
+    o.UseSettings();   // Assets → Settings
+});
+Winche.Functions.Assets.AssetsFunctionsExtensions.AddWincheFunctionsForAssets(builder.Services);
 
 {
     var authConn = builder.Configuration["Console:ConnectionString"]
@@ -114,6 +124,7 @@ builder.Services.AddSingleton<IArchive, NoOpArchive>();
 
         o.AddDatabaseTab(b => { b.UseRulesEditor(); b.UseLogs(); b.UseHistory(); });   // Database tab + Rules, Logs, History
         o.AddStorageTab(b => { b.UseRulesEditor(); b.UseLogs(); });     // Storage tab + its Rules and Logs sub-tabs
+        o.AddAssetsTab(b => b.UseRulesEditor());                         // Assets: releases, channels, rules, settings
         o.AddLogsTab(l =>   // the app's logs (tests: written and synced quickly)
         {
             l.FlushInterval = TimeSpan.FromMilliseconds(100);
@@ -133,6 +144,7 @@ if (app.Services.GetService<IServiceProviderIsService>()?.IsService(typeof(Winch
 
 Winche.Functions.FunctionsEndpoints.MapWincheFunctions(app);   // callables and CLI deploys
 app.MapWincheConsole("/_console");
+Winche.Assets.AspNetCore.AssetsEndpoints.MapWincheAssets(app);   // apps read channels and files at /assets/v1
 app.MapWincheAppSetup();
 
 app.Run();
