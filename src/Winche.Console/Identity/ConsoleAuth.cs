@@ -9,7 +9,7 @@ internal static class ConsoleAuth
 {
     /// <summary>
     /// Registers the console's sign-in: its accounts (a Winche Auth of their own, <see cref="ConsoleOptions.Accounts"/>), its
-    /// tables (<see cref="ConsoleStore"/>), the console's cookie (named "WincheConsole") WITHOUT changing the host's default
+    /// tables (<see cref="ConsoleStore"/>), the console's cookie (named "WincheConsoleSession") WITHOUT changing the host's default
     /// scheme, and the three role policies. The host's own auth is untouched.
     /// </summary>
     public static IServiceCollection AddConsoleIdentity(this IServiceCollection services, ConsoleOptions options)
@@ -22,7 +22,8 @@ internal static class ConsoleAuth
         services.AddAuthentication()
             .AddCookie(ConsoleSession.Scheme, o =>
             {
-                o.Cookie.Name = "WincheConsole";
+                // A name of its own since 3.0: a cookie of an earlier server (path /) can't be taken for it.
+                o.Cookie.Name = "WincheConsoleSession";
                 if (options.SignInCookiePath is { } path) o.Cookie.Path = path;
                 o.Cookie.HttpOnly = true;
                 o.Cookie.SameSite = SameSiteMode.Lax;

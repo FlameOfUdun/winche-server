@@ -1,3 +1,4 @@
+using static Winche.Console.Email.ConsoleLinks;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Claims;
@@ -200,7 +201,7 @@ internal static class ConsoleOidc
             var flow = new Flow(B64Url(RandomNumberGenerator.GetBytes(24)), B64Url(RandomNumberGenerator.GetBytes(24)),
                 B64Url(RandomNumberGenerator.GetBytes(32)), back, test is not null, settings, secret);
             http.Response.Cookies.Append(FlowCookie, Protector(http.RequestServices).ToTimeLimitedDataProtector().Protect(JsonSerializer.Serialize(flow), TimeSpan.FromMinutes(10)),
-                new CookieOptions { Path = "/", HttpOnly = true, SameSite = SameSiteMode.Lax, Secure = http.Request.IsHttps, MaxAge = TimeSpan.FromMinutes(10) });
+                new CookieOptions { Path = CookiePath(http), HttpOnly = true, SameSite = SameSiteMode.Lax, Secure = http.Request.IsHttps, MaxAge = TimeSpan.FromMinutes(10) });
             var query = new Dictionary<string, string>
             {
                 ["response_type"] = "code", ["client_id"] = settings.ClientId!, ["redirect_uri"] = options.ServerSettings!.ConsoleSignInCallbackUrl,
@@ -219,7 +220,7 @@ internal static class ConsoleOidc
             if (http.Request.Cookies.TryGetValue(FlowCookie, out var raw))
                 try { flow = JsonSerializer.Deserialize<Flow>(Protector(http.RequestServices).ToTimeLimitedDataProtector().Unprotect(raw)); }
                 catch (CryptographicException) { }
-            http.Response.Cookies.Delete(FlowCookie, new CookieOptions { Path = "/" });
+            http.Response.Cookies.Delete(FlowCookie, new CookieOptions { Path = CookiePath(http) });
             var fallback = options.ServerSettings?.ConsoleSignInReturnPath ?? "/";
             if (flow is null || state != flow.State) return Finish(http, false, fallback, Fail("The sign-in took too long or came back to another browser: try again."));
             if (error is not null) return Finish(http, flow.Test, flow.ReturnUrl, Fail($"The provider said: {error_description ?? error}"));

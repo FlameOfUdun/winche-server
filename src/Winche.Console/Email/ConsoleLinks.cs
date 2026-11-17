@@ -14,6 +14,10 @@ internal sealed class ConsolePrefix
 
 internal static class ConsoleLinks
 {
+    /// <summary>The path the console's cookies are limited to: its pages (and API under them).</summary>
+    public static string CookiePath(HttpContext http) =>
+        Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetService<ConsolePrefix>(http.RequestServices)?.Value ?? "/console";
+
     /// <summary>Builds an absolute reset/invite link to the SPA's reset-password page (the console's pages, from the host's root).</summary>
     public static string ResetPasswordLink(HttpContext http, string prefix, string email, string token) =>
         $"{http.Request.Scheme}://{http.Request.Host}{prefix}/reset-password" +

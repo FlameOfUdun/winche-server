@@ -188,6 +188,13 @@ public class ServerTests(PostgresFixture pg)
             using var answer = await http.SendAsync(query);
             Assert.Equal("br", answer.Content.Headers.ContentEncoding.FirstOrDefault());   // the colon verbs too
         }
+        // A console cookie of a server before 3.0 (path /) beside this one doesn't sign anyone out.
+        using (var stale = new HttpRequestMessage(HttpMethod.Get, "/console/v1/session/state"))
+        {
+            stale.Headers.Add("Cookie", "WincheConsole=CfDJ8stale-session-of-2x");
+            using var answer = await http.SendAsync(stale);
+            Assert.Equal(JsonValueKind.Object, (await Json(answer)).GetProperty("user").ValueKind);
+        }
         // The console's API and sign-in (cookies): never, so an answer's size can't give away what it holds.
         Assert.Null(await Encoding("/console/v1/session/state"));
         Assert.Null(await Encoding("/console/v1/projects/clinic/project"));

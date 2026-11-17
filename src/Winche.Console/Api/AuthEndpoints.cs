@@ -1,3 +1,4 @@
+using static Winche.Console.Email.ConsoleLinks;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -68,7 +69,7 @@ public static class AuthEndpoints
     /// <summary>Keeps a sign-in's second-step token for /login/2fa or /login/recovery (a short-lived cookie).</summary>
     internal static void AwaitSecondStep(HttpContext http, string mfaToken) =>
         http.Response.Cookies.Append(SecondStepCookie, Microsoft.AspNetCore.DataProtection.DataProtectionAdvancedExtensions.Protect(SecondStep(http), mfaToken, TimeSpan.FromMinutes(5)),
-            new CookieOptions { Path = "/", HttpOnly = true, SameSite = SameSiteMode.Lax, Secure = http.Request.IsHttps, MaxAge = TimeSpan.FromMinutes(5) });
+            new CookieOptions { Path = CookiePath(http), HttpOnly = true, SameSite = SameSiteMode.Lax, Secure = http.Request.IsHttps, MaxAge = TimeSpan.FromMinutes(5) });
 
     /// <summary>What a refused sign-in answers: the status the console's pages expect, and a sentence.</summary>
     private static IResult Refused(Winche.Auth.AuthException ex) => ex.Code switch
@@ -281,7 +282,7 @@ public static class AuthEndpoints
             try
             {
                 var tokens = await accounts.UseAsync(a => a.SignInWithMfaAsync(token, (code ?? "").Replace(" ", "").Replace("-", ""), Info(http), http.RequestAborted));
-                http.Response.Cookies.Delete(SecondStepCookie, new CookieOptions { Path = "/" });
+                http.Response.Cookies.Delete(SecondStepCookie, new CookieOptions { Path = CookiePath(http) });
                 await ConsoleSession.SignInAsync(http, tokens);
                 var user = ConsoleAccounts.From(tokens.User);
                 return Results.Ok(new { user = new { id = user.Id, email = user.Email, role = user.Role } });
