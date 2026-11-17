@@ -6,7 +6,7 @@ namespace Winche.Server.Tests;
 /// <summary>Amazon SES (v2 API) on localhost: keeps each SendEmail request, answers with a message id.</summary>
 public sealed class FakeSes : IDisposable
 {
-    private readonly HttpListener _listener = new();
+    private readonly HttpListener _listener;
     public string Url { get; }
     public List<JsonObject> Sent { get; } = [];
     public List<string?> Authorizations { get; } = [];
@@ -14,10 +14,13 @@ public sealed class FakeSes : IDisposable
     public FakeSes()
     {
         var port = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners().Max(e => e.Port) % 20000 + 40000;
+        // A listener that fails to start is disposed (on Linux), so each port gets a new one.
         for (; ; port++)
         {
-            try { _listener.Prefixes.Clear(); _listener.Prefixes.Add($"http://127.0.0.1:{port}/"); _listener.Start(); break; }
-            catch (HttpListenerException) { }
+            var listener = new HttpListener();
+            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            try { listener.Start(); _listener = listener; break; }
+            catch (HttpListenerException) { listener.Close(); }
         }
         Url = $"http://127.0.0.1:{port}";
         _ = Task.Run(LoopAsync);
