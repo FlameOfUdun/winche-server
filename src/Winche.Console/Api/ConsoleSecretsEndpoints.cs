@@ -63,9 +63,47 @@ internal static class ConsoleSecretsEndpoints
         string.IsNullOrWhiteSpace(reference) ? Task.FromResult<IResult?>(null)
             : SetAsync(sp.GetRequiredService<SecretStore>(), secretName, null, reference, http, ct);
 
+    private static Dictionary<string, string> Locations(IEnumerable<Winche.Storage.Locations.ArchiveLocation?> list) =>
+        list.OfType<Winche.Storage.Locations.ArchiveLocation>().Where(l => l.Kind != "code").DistinctBy(l => l.SecretName).ToDictionary(l => l.SecretName, l => l.Describe());
+
+    /// <summary>A kept secret as the Secrets page lists it: its product, what it is, and the console page that changes it.</summary>
+    private static object Describe(SecretInfo i, Dictionary<string, string> storage, Dictionary<string, string> assets)
+    {
+        var parts = i.Name.Split('.');
+        (string Product, string Title, string? Link) what = i.Name switch
+        {
+            Winche.Auth.Email.SmtpEmailSender.SecretName => ("Authentication", "SMTP password (emails to users)", "/authentication/settings"),
+            _ when parts is ["auth", "provider", var provider, "keycloakSync", "clientSecret"] => ("Authentication", $"Keycloak sync client secret of {provider}", "/authentication/methods"),
+            _ when storage.TryGetValue(i.Name, out var where) => ("Storage", $"Secret key of {where}", "/storage/settings"),
+            _ when assets.TryGetValue(i.Name, out var where) => ("Assets", $"Secret key of {where}", "/assets/settings"),
+            _ when parts is ["storage", "location", _, "secretKey"] => ("Storage", "Secret key of a location no longer used", null),
+            _ when parts is ["hooks", var hook, "signingSecret"] => ("Webhooks", $"Signing secret of the webhook {hook} (made by Winche)", null),
+            _ => ("Other", i.Name, null),
+        };
+        return new { name = i.Name, product = what.Product, title = what.Title, link = what.Link, setAt = i.SetAt, setBy = i.SetBy, reference = ReferenceOf(i) };
+    }
+
     internal static RouteGroupBuilder MapConsoleSecretsEndpoints(this RouteGroupBuilder app)
     {
         var group = app.MapGroup("/api/secrets").RequireAuthorization(ConsoleRoles.AdminPolicy);
+
+        // Every secret the project keeps, but functions' own and sources' keys (those have their own lists): which
+        // product it belongs to, what it is, where it's changed, and whether it's a value or read from elsewhere.
+        group.MapGet("", async (IServiceProvider sp, CancellationToken ct) =>
+        {
+            var secrets = sp.GetService<SecretStore>();
+            var all = secrets is { Available: true } ? await secrets.ListAsync("", ct) : [];
+            var storage = Locations(sp.GetService<SettingsArea<Winche.Storage.Locations.StorageLocationSettings>>()?.Current is { } st
+                ? [st.Active, st.Move?.To, st.Move?.From] : []);
+            var assets = Locations(sp.GetService<SettingsArea<Winche.Assets.AssetLocationSettings>>()?.Current is { } at
+                ? [at.Active, at.Move?.To] : []);
+            return Results.Json(new
+            {
+                available = secrets?.Available ?? false,
+                secrets = all.Where(i => !i.Name.StartsWith("functions.secret.", StringComparison.Ordinal) && !i.Name.StartsWith(SecretStore.SourcePrefix, StringComparison.Ordinal))
+                    .Select(i => Describe(i, storage, assets)),
+            });
+        });
 
         group.MapGet("/sources", async (HttpContext http, IServiceProvider sp, CancellationToken ct) =>
         {

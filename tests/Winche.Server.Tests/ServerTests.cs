@@ -1676,6 +1676,10 @@ public class ServerEmailTests(PostgresFixture pg)
         Assert.False(tried.GetProperty("ok").GetBoolean());
         Assert.Contains("isn't a Secrets Manager ARN", tried.GetProperty("problem").GetString());
         Assert.Equal(HttpStatusCode.NoContent, (await bob.PutAsJsonAsync("/p/wards/_console/api/functions/secrets/OTHER", new { value = "plain" })).StatusCode);
+        // The Secrets page's list of what the products keep: functions' own and the source keys are listed elsewhere.
+        var kept = await Json(await bob.GetAsync("/p/wards/_console/api/secrets"));
+        Assert.True(kept.GetProperty("available").GetBoolean());
+        Assert.DoesNotContain(kept.GetProperty("secrets").EnumerateArray(), x => x.GetProperty("name").GetString()!.StartsWith("functions.secret.") || x.GetProperty("name").GetString()!.StartsWith("secrets.source."));
         Assert.Equal(HttpStatusCode.NoContent, (await bob.DeleteAsync("/p/wards/_console/api/secrets/keys/secrets.source.aws")).StatusCode);
         Directory.Delete(files, recursive: true);
     }
