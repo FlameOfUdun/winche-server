@@ -24,7 +24,7 @@ public static class ConsoleAssetsEndpoints
     public sealed record HashesRequest(List<string>? Hashes);
     public sealed record PublishRequest(Dictionary<string, AssetFile>? Files, string? Note, string? Channel);
     public sealed record ChannelRequest(int? Release);
-    public sealed record LocationRequest(ArchiveLocation? Location, string? SecretKey, string? Reason);
+    public sealed record LocationRequest(ArchiveLocation? Location, string? SecretKey, string? Reason, string? SecretKeyReference = null);
 
     internal static bool Capability(ConsoleOptions options, ConsoleRole? role) => options.AssetsTab is { } t && role is { } r && r >= t.MinRole;
 
@@ -131,10 +131,12 @@ public static class ConsoleAssetsEndpoints
             secretsAvailable = sp.GetService<SecretStore>()?.Available ?? false,
         }, SettingsArea.Json));
 
-        admin.MapPost("/location/test", (LocationRequest body, AssetMoves moves, CancellationToken ct) => Run(async () =>
+        admin.MapPost("/location/test", (LocationRequest body, HttpContext http, AssetMoves moves, CancellationToken ct) => Run(async () =>
         {
             if (body.Location is null) return Problem("Fill in the location.");
-            var steps = await moves.TestAsync(WithId(body.Location), string.IsNullOrEmpty(body.SecretKey) ? null : body.SecretKey, ct);
+            var (key, unreadable) = await ConsoleSecretsEndpoints.KeyFromAsync(http.RequestServices, body.SecretKey, body.SecretKeyReference, http, ct);
+            if (unreadable is not null) return unreadable;
+            var steps = await moves.TestAsync(WithId(body.Location), key, ct);
             return Results.Json(new { ok = steps.All(s => s.Error is null), steps = steps.Select(s => new { name = s.Step, ok = s.Error is null, error = s.Error }) });
         }));
 
@@ -145,10 +147,13 @@ public static class ConsoleAssetsEndpoints
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're moving the assets: it goes in the history.");
             var location = WithId(body.Location);
             if (await ServerCredentialsRefusedAsync(location, http) is { } noKey) return noKey;
-            var secret = string.IsNullOrEmpty(body.SecretKey) ? null : body.SecretKey;
+            var (secret, unreadable) = await ConsoleSecretsEndpoints.KeyFromAsync(http.RequestServices, body.SecretKey, body.SecretKeyReference, http, ct);
+            if (unreadable is not null) return unreadable;
             if (location.Kind != "code" && (await moves.TestAsync(location, secret, ct)).FirstOrDefault(s => s.Error is not null) is { Step: not null } failed && failed.Error is not null)
                 return Problem($"The new location didn't pass its test: {failed.Step}: {failed.Error}");
             await moves.StartAsync(location, secret, Who(http.User), body.Reason.Trim(), ct);
+            // A key read from elsewhere is kept as its reference (replacing the value just saved): rotations there are followed.
+            if (await ConsoleSecretsEndpoints.KeepKeyReferenceAsync(http.RequestServices, location.SecretName, body.SecretKeyReference, http, ct) is { } notKept) return notKept;
             return Results.NoContent();
         }));
 

@@ -1627,7 +1627,7 @@ public class ServerEmailTests(PostgresFixture pg)
         var admin = server.CreateClient();
         await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
         await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
-        await TestProjects.CreateAsync(admin, "wards", "Wards", "functions");
+        await TestProjects.CreateAsync(admin, "wards", "Wards", "functions", "storage");
         var added = await Json(await admin.PostAsJsonAsync("/p/wards/_console/api/members", new { email = "bob@example.com", role = "Admin" }));
         var code = System.Web.HttpUtility.ParseQueryString(new Uri(added.GetProperty("link").GetString()!).Query)["code"];
         await admin.PostAsJsonAsync("/p/wards/_console/api/auth/reset-password", new { code, newPassword = "Bob-Passw0rd!long" });
@@ -1649,6 +1649,13 @@ public class ServerEmailTests(PostgresFixture pg)
         Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/p/wards/_console/api/functions/secrets/MAIL_KEY", reference)).StatusCode);
         var listed = (await Json(await bob.GetAsync("/p/wards/_console/api/functions/secrets"))).GetProperty("secrets").EnumerateArray().Single(x => x.GetProperty("name").GetString() == "MAIL_KEY");
         Assert.Equal("aws-ssm:/wards/mail-key", listed.GetProperty("reference").GetString());
+
+        // A bucket's secret key may be a reference too: the same rule.
+        var bucket = new { kind = "s3", s3 = new { bucket = "wards-bucket", region = "eu-west-1", serviceUrl = "http://127.0.0.1:9", accessKey = "AKIDWARDS", forcePathStyle = true } };
+        Assert.Equal(HttpStatusCode.Forbidden, (await bob.PostAsJsonAsync("/p/wards/_console/api/settings/storage/location/test",
+            new { location = bucket, secretKeyReference = "aws-ssm:/wards/bucket-key" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await bob.PostAsJsonAsync("/p/wards/_console/api/settings/storage/location/test",
+            new { location = bucket, secretKey = "s", secretKeyReference = "aws-ssm:/wards/bucket-key" })).StatusCode);
 
         // With the project's own AWS key, its admins may (and the key is never shown).
         Assert.Equal(HttpStatusCode.BadRequest, (await bob.PutAsJsonAsync("/p/wards/_console/api/secrets/keys/secrets.source.aws",

@@ -16,8 +16,8 @@ namespace Winche.Console.Api;
 /// </summary>
 public static class ConsoleStorageLocationEndpoints
 {
-    public sealed record TestRequest(ArchiveLocation? Location, string? SecretKey);
-    public sealed record MoveRequest(ArchiveLocation? Location, string? SecretKey, string? Reason);
+    public sealed record TestRequest(ArchiveLocation? Location, string? SecretKey, string? SecretKeyReference = null);
+    public sealed record MoveRequest(ArchiveLocation? Location, string? SecretKey, string? Reason, string? SecretKeyReference = null);
     public sealed record StepRequest(string? Reason);
 
     private static string? Who(ClaimsPrincipal user) => user.FindFirstValue(ClaimTypes.Email) ?? user.FindFirstValue("email") ?? user.Identity?.Name;
@@ -85,7 +85,9 @@ public static class ConsoleStorageLocationEndpoints
         {
             if (body.Location is null) return Problem("Fill in the location.");
             if (await ServerCredentialsRefusedAsync(body.Location, http) is { } refused) return refused;
-            return Results.Json(await moves.TestAsync(WithId(body.Location), string.IsNullOrEmpty(body.SecretKey) ? null : body.SecretKey, ct), SettingsArea.Json);
+            var (key, unreadable) = await ConsoleSecretsEndpoints.KeyFromAsync(http.RequestServices, body.SecretKey, body.SecretKeyReference, http, ct);
+            if (unreadable is not null) return unreadable;
+            return Results.Json(await moves.TestAsync(WithId(body.Location), key, ct), SettingsArea.Json);
         });
 
         group.MapPost("/move", async (MoveRequest body, HttpContext http, StorageMoves moves, CancellationToken ct) =>
@@ -95,12 +97,16 @@ public static class ConsoleStorageLocationEndpoints
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're moving the files: it goes in the history.");
             var location = WithId(body.Location);
             if (await ServerCredentialsRefusedAsync(location, http) is { } noKey) return noKey;
+            var (key, unreadable) = await ConsoleSecretsEndpoints.KeyFromAsync(http.RequestServices, body.SecretKey, body.SecretKeyReference, http, ct);
+            if (unreadable is not null) return unreadable;
             if (location.Kind != "code")
             {
-                var test = await moves.TestAsync(location, string.IsNullOrEmpty(body.SecretKey) ? null : body.SecretKey, ct);
+                var test = await moves.TestAsync(location, key, ct);
                 if (!test.Ok) return Problem($"The new location didn't pass its test: {string.Join(" ", test.Steps.Where(s => !s.Ok).Select(s => $"{s.Name}: {s.Error}"))}");
             }
-            try { return Results.Json(await moves.StartAsync(location, body.SecretKey, Who(http.User), body.Reason, ct), SettingsArea.Json); }
+            // A key read from elsewhere is kept as its reference: rotations there are followed.
+            if (await ConsoleSecretsEndpoints.KeepKeyReferenceAsync(http.RequestServices, location.SecretName, body.SecretKeyReference, http, ct) is { } notKept) return notKept;
+            try { return Results.Json(await moves.StartAsync(location, string.IsNullOrWhiteSpace(body.SecretKeyReference) ? body.SecretKey : null, Who(http.User), body.Reason, ct), SettingsArea.Json); }
             catch (StorageMoveException ex) { return Problem(ex.Message); }
         });
 

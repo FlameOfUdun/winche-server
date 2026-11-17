@@ -43,6 +43,26 @@ internal static class ConsoleSecretsEndpoints
         catch (SecretReferenceException e) { return Problem(e.Message); }
     }
 
+    /// <summary>
+    /// A bucket's secret key from a form: typed (<paramref name="value"/>) or read now through
+    /// <paramref name="reference"/>, to test the location before saving. The problem to answer with when it can't be read.
+    /// </summary>
+    public static async Task<(string? Value, IResult? Problem)> KeyFromAsync(IServiceProvider sp, string? value, string? reference, HttpContext http, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(reference)) return (string.IsNullOrEmpty(value) ? null : value, null);
+        if (!string.IsNullOrEmpty(value)) return (null, Problem("Send the secret key or where to read it from, not both."));
+        if (sp.GetService<SecretStore>() is not { Available: true } secrets) return (null, Problem("Secrets need the master key."));
+        if (SecretReference.Parse(reference, out var bad) is not { } r) return (null, Problem(bad!));
+        try { return (await secrets.ReadReferenceAsync(r, MayUseAppCredentials(http), ct), null); }
+        catch (SecretReferenceException e) when (e.Code == "permission-denied") { return (null, new WincheError(WincheErrorCode.PermissionDenied, e.Message, "secrets").ToResult()); }
+        catch (SecretReferenceException e) { return (null, Problem(e.Message)); }
+    }
+
+    /// <summary>Keeps a location's secret key as <paramref name="reference"/> (before its move starts). Null when kept.</summary>
+    public static Task<IResult?> KeepKeyReferenceAsync(IServiceProvider sp, string secretName, string? reference, HttpContext http, CancellationToken ct) =>
+        string.IsNullOrWhiteSpace(reference) ? Task.FromResult<IResult?>(null)
+            : SetAsync(sp.GetRequiredService<SecretStore>(), secretName, null, reference, http, ct);
+
     internal static RouteGroupBuilder MapConsoleSecretsEndpoints(this RouteGroupBuilder app)
     {
         var group = app.MapGroup("/api/secrets").RequireAuthorization(ConsoleRoles.AdminPolicy);
