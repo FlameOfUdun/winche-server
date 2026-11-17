@@ -8,8 +8,8 @@
   <ItemGroup>
     <PackageReference Include="Winche.Database" Version="12.1.0" />
     <PackageReference Include="Winche.Storage" Version="11.0.0" />
-    <PackageReference Include="Winche.Functions.Database" Version="2.1.0" />
-    <PackageReference Include="Winche.Functions.Assets" Version="2.1.0" />
+    <PackageReference Include="Winche.Functions.Database" Version="2.2.0" />
+    <PackageReference Include="Winche.Functions.Assets" Version="2.2.0" />
     <PackageReference Include="Winche.Assets.AspNetCore" Version="1.0.0" />
     <PackageReference Include="Winche.Auth.AspNetCore" Version="2.0.0" />
     <PackageReference Include="Winche.Core" Version="2.0.0" />

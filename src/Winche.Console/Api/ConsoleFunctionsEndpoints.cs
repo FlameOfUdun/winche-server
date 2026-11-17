@@ -39,6 +39,16 @@ public static class ConsoleFunctionsEndpoints
         description = f.Trigger.Describe(), timeoutSeconds = functions?.TimeoutFor(f) ?? f.TimeoutSeconds, codeTimeoutSeconds = f.CodeTimeoutSeconds,
         secrets = f.Secrets ?? [],
         about = f.About, input = f.Input?.DeepClone(), output = f.Output?.DeepClone(), example = f.ExampleInput,
+        // Its instances: what's in force (and from where: setting, code, default), and what its code says.
+        limits = functions is null || f.Trigger.Kind == "before" ? null : Limits(functions.LimitsFor(f)),
+        codeLimits = new { memoryMb = f.Limits.MemoryMb, minInstances = f.Limits.MinInstances, maxInstances = f.Limits.MaxInstances,
+            reservedInstances = f.Limits.ReservedInstances, isolate = f.Limits.Isolate },
+    };
+
+    private static object Limits(FunctionLimitsInForce l) => new
+    {
+        memoryMb = l.MemoryMb, minInstances = l.MinInstances, maxInstances = l.MaxInstances, reservedInstances = l.ReservedInstances,
+        isolate = l.Isolate, from = l.From,
     };
 
     private static object Version(Deployment d, WincheFunctions? functions = null) => new
@@ -62,6 +72,8 @@ public static class ConsoleFunctionsEndpoints
             {
                 current = current is null ? null : Version(current, functions),   // times as they apply now
                 maxTimeoutSeconds = (int)options.MaxTimeout.TotalSeconds,
+                maxMemoryMb = options.MaxMemoryMb,
+                maxConcurrency = options.MaxConcurrency,
                 files = current?.Files.Keys.Order(StringComparer.Ordinal) ?? Enumerable.Empty<string>(),   // names only: the code is in the repository
                 resources = current?.ResourceFiles.OrderBy(a => a.Key, StringComparer.Ordinal).Select(a => new { path = a.Key, size = a.Value.Size }) ?? [],
                 runtimeProblem,
