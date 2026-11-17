@@ -21,6 +21,8 @@ if (server.Problems() is { Count: > 0 } problems)
 }
 
 builder.Services.AddSingleton(server);
+// A stop (SIGTERM) waits this long for requests and function runs going on.
+builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(server.StopTimeoutSeconds));
 builder.Services.Configure<ForwardedHeadersOptions>(o =>
 {
     // Behind a proxy or load balancer (the usual way to run it): trust its X-Forwarded-* headers.
@@ -58,11 +60,26 @@ var app = builder.Build();
 app.UseForwardedHeaders();
 var projects = app.Services.GetRequiredService<ProjectHosts>();
 var console = app.Services.GetRequiredService<ServerConsoleApp>();
+var ready = false;      // projects started and warm: their first callers won't wait
+var stopping = false;   // a stop began: load balancers should send nothing new
+app.Lifetime.ApplicationStopping.Register(() => stopping = true);
 app.Run(async http =>
 {
-    // For load balancers and orchestrators: 200 once the database answers.
+    // For the container's own check: the process runs.
+    if (http.Request.Path == "/livez")
+    {
+        await Results.Ok(new { status = "ok" }).ExecuteAsync(http);
+        return;
+    }
+    // For load balancers: 200 once projects are started and warm (functions' kept instances loaded) and the database
+    // answers; 503 while starting or stopping.
     if (http.Request.Path == "/healthz")
     {
+        if (stopping || !ready)
+        {
+            await Results.Json(new { status = stopping ? "stopping" : "starting" }, statusCode: 503).ExecuteAsync(http);
+            return;
+        }
         try
         {
             await using var db = new NpgsqlConnection(server.ConnectionString);
@@ -79,20 +96,35 @@ app.Run(async http =>
 });
 
 // Warm-up: once the server listens, each project answers one request of its own (a process's first request compiles
-// code and opens database connections), so the first caller after a start or restart isn't the one who waits. Best
-// effort; skipped where there's no network address (tests).
+// code and opens database connections) and its functions' kept instances load, so the first caller after a start or
+// restart isn't the one who waits; /healthz says ready after. Best effort (a minute at most); skipped where there's no
+// network address (tests).
 app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(async () =>
 {
-    var address = app.Services.GetRequiredService<Microsoft.AspNetCore.Hosting.Server.IServer>().Features
-        .Get<Microsoft.AspNetCore.Hosting.Server.Features.IServerAddressesFeature>()?.Addresses.FirstOrDefault();
-    if (address is null || !Uri.TryCreate(address.Replace("://+", "://localhost").Replace("://*", "://localhost")
-            .Replace("://[::]", "://localhost").Replace("://0.0.0.0", "://localhost"), UriKind.Absolute, out var local)) return;
-    using var http = new HttpClient { BaseAddress = local, Timeout = TimeSpan.FromSeconds(30) };
-    foreach (var host in projects.All)
+    try
     {
-        try { (await http.GetAsync($"/p/{host.Project.Id}/.well-known/winche")).Dispose(); }
-        catch (Exception ex) { app.Logger.LogDebug(ex, "Warming project {Project} up didn't work; its first request does it.", host.Project.Id); }
+        var address = app.Services.GetRequiredService<Microsoft.AspNetCore.Hosting.Server.IServer>().Features
+            .Get<Microsoft.AspNetCore.Hosting.Server.Features.IServerAddressesFeature>()?.Addresses.FirstOrDefault();
+        if (address is null || !Uri.TryCreate(address.Replace("://+", "://localhost").Replace("://*", "://localhost")
+                .Replace("://[::]", "://localhost").Replace("://0.0.0.0", "://localhost"), UriKind.Absolute, out var local)) return;
+        using var http = new HttpClient { BaseAddress = local, Timeout = TimeSpan.FromSeconds(30) };
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        foreach (var host in projects.All)
+        {
+            try
+            {
+                (await http.GetAsync($"/p/{host.Project.Id}/.well-known/winche")).Dispose();
+                if (host.App.Services.GetService<Winche.Functions.WincheFunctions>() is { } functions)
+                {
+                    await functions.RefreshAsync();
+                    await functions.Warmed.WaitAsync(TimeSpan.FromSeconds(Math.Max(1, 60 - watch.Elapsed.TotalSeconds)));
+                }
+            }
+            catch (Exception ex) { app.Logger.LogDebug(ex, "Warming project {Project} up didn't work; its first request does it.", host.Project.Id); }
+        }
+        app.Logger.LogInformation("Ready: {Projects} projects warm in {Ms} ms.", projects.All.Count, (int)watch.ElapsedMilliseconds);
     }
+    finally { ready = true; }
 }));
 
 await app.RunAsync();

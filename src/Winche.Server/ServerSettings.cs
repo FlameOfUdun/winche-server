@@ -30,7 +30,7 @@ public sealed record ServerSettings
     public int FunctionsMaxMemoryMb { get; init; } = 1024;
 
     /// <summary>How many functions of a project may run at once on this server (default 16); more wait their turn.</summary>
-    public int FunctionsMaxConcurrency { get; init; } = 16;
+    public int FunctionsMaxConcurrency { get; init; } = ServerOptions.DefaultConcurrency;
 
     /// <summary>
     /// Each worker's heap limit in a project's shared functions process, in MB (default 1024): a run past it stops that

@@ -85,12 +85,59 @@ Environment variables (or `appsettings.json`, section `Winche`):
 | `Winche__ConsoleSignIn__Issuer`, `__ClientId`, `__ClientSecret` | Optional: console sign-in through an OpenID Connect provider from the start (also `__ButtonLabel`, `__RoleClaim`, `__AdminValues__0` (the groups that make server admins), `__PasswordsOnlyForAdmins`). It becomes the first of the console's identity providers; more are added in **Server settings → Authentication → Sign-in method**. Register `<PublicUrl>/_console/api/auth/oidc/callback` at each provider, and optionally `<PublicUrl>/_console/api/auth/oidc/backchannel-logout` as its back-channel logout URL. |
 | `Winche__RequireTwoFactorForSettings` | Default `true`: changing settings needs two-step sign-in (a trusted provider's own second step counts). Set `false` only to try the server out. Also in **Server settings → Authentication → Sign-in method**. |
 | `Winche__FunctionsMaxMinutes` | Optional: the longest any function may run, in minutes (default 9, at most 60). Also in **Server settings → General**; projects set their default and each function's own time up to it (**Functions → Settings**). |
+| `Winche__FunctionsMaxMemoryMb`, `__FunctionsMaxConcurrency`, `__FunctionsSharedProcessMb`, `__FunctionsMaxProcesses` | Optional: the most memory a function may ask for (default 1024 MB), runs at once per project (default 8 per CPU, at least 8), each run's heap limit in a project's shared functions process (default 1024 MB), and functions processes per project (default 4). Also in **Server settings → General**. |
+| `WINCHE_FUNCTIONS_MEMORY_MB` | Optional: what functions' processes may hold in all (default 60% of the container's memory, or the machine's). An isolated function that wouldn't fit runs in the shared process. |
+| `Winche__StopTimeoutSeconds` | How long a stop (SIGTERM) waits for requests and function runs going on to end (default 30). Give the container at least as long. |
 | `Winche__ProjectsPath` | Projects' files on disk, each under `<id>/files`, until they're moved to a bucket (default `/data/projects`: mount a volume). |
 | `Winche__ConsolePath` | Where the console is served (default `/_console`). |
 | `Winche__Email__Provider`, `__Region`, `__FromAddress` | Optional: the server's own email, `ses` (Amazon SES), e.g. region `eu-west-1`, from `no-reply@example.com` (verified in SES); `__FromName` sets the name, else each project's app name. **No keys are kept**: the AWS credentials of the server's environment are used (`AWS_*` variables, the ECS task's role, the instance's profile). Console emails go through it with nothing to set up, and projects can choose it for their sign-in emails (**Authentication → Settings → Emails to users → The server's email**). |
 
 Several servers can share one database: settings, rules and webhooks follow within seconds, and console sign-ins
-carry over (their keys are kept in the database). `GET /healthz` answers 200 once the database does.
+carry over (their keys are kept in the database).
+
+- `GET /livez`: 200 while the process runs (the container's own check).
+- `GET /healthz`: 200 once projects are started and warm (their functions' kept instances loaded) and the database
+  answers; 503 `starting` before, and `stopping` once a stop began (for the load balancer).
+
+### On AWS Fargate (or any container platform)
+
+A task is one machine: the server, its projects and their functions share its CPU and memory, and past its memory the
+whole task stops. Functions keep to 60% of it (`WINCHE_FUNCTIONS_MEMORY_MB` to choose); runs at once follow its vCPUs.
+Run two or more tasks behind a load balancer: each runs every project, triggers and schedules run once across them,
+and a deploy reaches every task within seconds.
+
+```jsonc
+// Task definition (excerpt): 2 vCPU, 4 GB
+{
+  "cpu": "2048", "memory": "4096",
+  "containerDefinitions": [{
+    "name": "winche", "image": "ghcr.io/flameofudun/winche-server:2",
+    "portMappings": [{ "containerPort": 8080 }],
+    "stopTimeout": 60,                                     // ≥ Winche__StopTimeoutSeconds
+    "environment": [
+      { "name": "Winche__PublicUrl", "value": "https://api.example.com" },
+      { "name": "Winche__StopTimeoutSeconds", "value": "45" }
+    ],
+    "secrets": [
+      { "name": "Winche__ConnectionString", "valueFrom": "arn:aws:secretsmanager:…:winche-db" },
+      { "name": "Winche__MasterKey", "valueFrom": "arn:aws:secretsmanager:…:winche-master-key" }
+    ],
+    "healthCheck": { "command": ["CMD-SHELL", "curl -fs localhost:8080/livez || exit 1"], "interval": 15, "startPeriod": 60 }
+  }]
+}
+```
+
+- **Target group**: health check path `/healthz` (a new task gets traffic once warm), deregistration delay ≥ the
+  stop timeout.
+- **Stopping** (a deploy, scale-in, Spot): the task is taken out of the load balancer, then gets SIGTERM; it takes no
+  new function runs (`unavailable`, which apps retry), lets those going on end within the stop timeout, and stops.
+  Triggered runs cut off are delivered again on another task. Longer work saves its progress as it goes.
+- **Scaling**: ECS service auto scaling on CPU or the load balancer's requests per target; keep a minimum of two
+  tasks. A new task takes tens of seconds to be ready, so functions that must answer at once keep `minInstances`.
+- **Files**: put projects' files in S3 (**Project settings → Storage**) rather than on the task's disk; bundles and
+  Deno's cache live on the task's own storage and are made again on a new task.
+- **Isolation**: projects on one server share the task (separate processes and workers, not separate machines).
+  Tenants that must not share a machine get servers of their own.
 
 ## The console
 
@@ -199,6 +246,12 @@ PostgreSQL server is backed up there.
 
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
+
+**2.2:** function instances: each function may set its memory, instances kept loaded, most at once, reserved runs,
+and a process of its own (in code or in its **Settings** tab; nothing changes for functions that don't), with an
+**Instances** tab to watch them. The server's limits are in **Server settings → General**. `/healthz` now answers 503
+until the server is warm and while it stops; point container health checks at the new `/livez`. A stop waits for
+function runs going on (`Winche__StopTimeoutSeconds`, default 30).
 
 **2.1:** functions answer in a couple of milliseconds: runs reuse warm workers (Winche.Functions 2.1; a module's
 top-level state lasts between runs, so it must never hold one caller's data), and the server warms each project up

@@ -97,7 +97,10 @@ public class ServerTests(PostgresFixture pg)
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files);
         var app = server.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-        Assert.Equal(HttpStatusCode.OK, (await app.GetAsync("/healthz")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await app.GetAsync("/livez")).StatusCode);
+        HttpResponseMessage health = null!;
+        for (var i = 0; i < 50 && (health = await app.GetAsync("/healthz")).StatusCode != HttpStatusCode.OK; i++) await Task.Delay(100);   // ready once warm
+        Assert.Equal(HttpStatusCode.OK, health.StatusCode);
         Assert.Equal("/_console", (await app.GetAsync("/")).Headers.Location?.ToString());
         // The server runs with no project at all: apps' APIs are a project's, at /p/<id>; the root says so.
         var none = await app.PostAsJsonAsync("/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" });

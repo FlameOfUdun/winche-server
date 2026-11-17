@@ -77,6 +77,8 @@ internal static class ProjectApp
             ApplicationName = environment.ApplicationName,
         });
         builder.Configuration.AddConfiguration(configuration);   // logging levels and the like, as the server has them
+        // A stop lets runs going on end (functions stop taking new ones first), as long as the server's stop allows.
+        builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(server.StopTimeoutSeconds));
         var inProcess = new InProcessServer();
         builder.Services.AddSingleton<IServer>(inProcess);
         builder.Services.AddWincheProductSetupOnDemand();   // each product's tables only once it's started in the console

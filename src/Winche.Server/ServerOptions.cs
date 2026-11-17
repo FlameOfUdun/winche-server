@@ -56,8 +56,19 @@ public sealed class ServerOptions
     /// <summary>The most memory a function may ask for, in MB (default 1024): where the server setting starts.</summary>
     public int FunctionsMaxMemoryMb { get; set; } = 1024;
 
-    /// <summary>How many functions of a project may run at once (default 16): where the server setting starts.</summary>
-    public int FunctionsMaxConcurrency { get; set; } = 16;
+    /// <summary>
+    /// How many functions of a project may run at once: where the server setting starts. Default 8 per CPU the server
+    /// has (its container's, e.g. 16 on a 2 vCPU Fargate task), at least 8.
+    /// </summary>
+    public int FunctionsMaxConcurrency { get; set; } = DefaultConcurrency;
+
+    internal static int DefaultConcurrency => Math.Clamp(Environment.ProcessorCount * 8, 8, 256);
+
+    /// <summary>
+    /// How long a stop (SIGTERM: a deploy, a scale-in) waits for requests and function runs going on to end, in seconds
+    /// (default 30). Set the container's stop timeout to this or more (Fargate's <c>stopTimeout</c>, at most 120).
+    /// </summary>
+    public int StopTimeoutSeconds { get; set; } = 30;
 
     /// <summary>Each worker's heap limit in a project's shared functions process, in MB (default 1024).</summary>
     public int FunctionsSharedProcessMb { get; set; } = 1024;
