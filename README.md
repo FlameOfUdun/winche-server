@@ -54,19 +54,25 @@ nothing else) to wherever the server will run.
    ```
 
    Flutter is the only SDK so far. The API is plain HTTP for anything else, under the project's address
-   (`/p/<id>`): documents under `/p/<id>/documents/v1`, files under `…/files/v1`, sign-in under `…/auth/v1`, functions
-   under `…/functions/v1`, assets under `…/assets/v1`. `GET /p/<id>/.well-known/winche` describes it (nothing secret).
+   (`/projects/<id>`): documents under `/projects/<id>/documents/v1`, files under `…/files/v1`, sign-in under
+   `…/auth/v1`, functions under `…/functions/v1`, assets under `…/assets/v1`. `GET /projects/<id>/.well-known/winche`
+   describes it (nothing secret).
 
 Run it behind HTTPS (a proxy or load balancer) for anything but trying it out: it trusts the `X-Forwarded-*` headers.
 
 ## Projects
 
-A server runs any number of projects, none to start with. The server's own console is at the root
-(`https://api.example.com/_console`: its projects, accounts and Server settings); each project is under `/p/<id>`
-(`https://api.example.com/p/wards/_console`, apps at `https://api.example.com/p/wards`). Every project is alike: add one
-on the Projects page. Any project can be **archived**: its apps and console are refused (`410`) until a server admin
-restores it, and nothing is deleted. Archived projects can be **deleted** for good, which removes their database and
-files.
+A server runs any number of projects, none to start with. Two addresses:
+
+| Address | What |
+| --- | --- |
+| `/console` | The console: the projects, accounts and Server settings, and each project's pages at `/console/projects/<id>`. Its API is `/console/v1/…` (a project's at `/console/v1/projects/<id>/…`), which the CLI and CI tokens use too. |
+| `/projects/<id>` | A project's apps: `documents/v1`, `files/v1`, `auth/v1`, `functions/v1`, `assets/v1`, `.well-known/winche`. |
+
+To keep the console private, restrict `/console*` (and `/`, which redirects there) at the proxy or load balancer, and
+leave `/projects/*` open to apps. Every project is alike: add one on the Projects page. Any project can be
+**archived**: its apps and console are refused (`410`) until a server admin restores it, and nothing is deleted.
+Archived projects can be **deleted** for good, which removes their database and files.
 
 Each project has its own members (Project settings → Members). An account is a server admin or not: server admins use
 every project and make projects; everyone else uses the projects they're members of.
@@ -82,14 +88,13 @@ Environment variables (or `appsettings.json`, section `Winche`):
 | `Winche__PreviousMasterKeys__0` | Only while changing the master key: the old one. On start the server moves everything to the new key and logs when it's done ("Remove Winche__PreviousMasterKeys and restart"). |
 | `Winche__PublicUrl` | Where apps reach the server (tokens' issuer, file links), e.g. `https://api.example.com`. Set here only. |
 | `Winche__SetupCode` | Optional: the code first-run setup asks for. Unset, the server makes one and prints it in its log (`Setup code: …`) until someone has set it up. A wrong code takes a second to be refused. |
-| `Winche__ConsoleSignIn__Issuer`, `__ClientId`, `__ClientSecret` | Optional: console sign-in through an OpenID Connect provider from the start (also `__ButtonLabel`, `__RoleClaim`, `__AdminValues__0` (the groups that make server admins), `__PasswordsOnlyForAdmins`). It becomes the first of the console's identity providers; more are added in **Server settings → Authentication → Sign-in method**. Register `<PublicUrl>/_console/api/auth/oidc/callback` at each provider, and optionally `<PublicUrl>/_console/api/auth/oidc/backchannel-logout` as its back-channel logout URL. |
+| `Winche__ConsoleSignIn__Issuer`, `__ClientId`, `__ClientSecret` | Optional: console sign-in through an OpenID Connect provider from the start (also `__ButtonLabel`, `__RoleClaim`, `__AdminValues__0` (the groups that make server admins), `__PasswordsOnlyForAdmins`). It becomes the first of the console's identity providers; more are added in **Server settings → Authentication → Sign-in method**. Register `<PublicUrl>/console/v1/session/oidc/callback` at each provider, and optionally `<PublicUrl>/console/v1/session/oidc/backchannel-logout` as its back-channel logout URL. |
 | `Winche__RequireTwoFactorForSettings` | Default `true`: changing settings needs two-step sign-in (a trusted provider's own second step counts). Set `false` only to try the server out. Also in **Server settings → Authentication → Sign-in method**. |
 | `Winche__FunctionsMaxMinutes` | Optional: the longest any function may run, in minutes (default 9, at most 60). Also in **Server settings → General**; projects set their default and each function's own time up to it (**Functions → Settings**). |
 | `Winche__FunctionsMaxMemoryMb`, `__FunctionsMaxConcurrency`, `__FunctionsSharedProcessMb`, `__FunctionsMaxProcesses` | Optional: the most memory a function may ask for (default 1024 MB), runs at once per project (default 8 per CPU, at least 8), each run's heap limit in a project's shared functions process (default 1024 MB), and functions processes per project (default 4). Also in **Server settings → General**. |
 | `WINCHE_FUNCTIONS_MEMORY_MB` | Optional: what functions' processes may hold in all (default 60% of the container's memory, or the machine's). An isolated function that wouldn't fit runs in the shared process. |
 | `Winche__StopTimeoutSeconds` | How long a stop (SIGTERM) waits for requests and function runs going on to end (default 30). Give the container at least as long. |
 | `Winche__ProjectsPath` | Projects' files on disk, each under `<id>/files`, until they're moved to a bucket (default `/data/projects`: mount a volume). |
-| `Winche__ConsolePath` | Where the console is served (default `/_console`). |
 | `Winche__Email__Provider`, `__Region`, `__FromAddress` | Optional: the server's own email, `ses` (Amazon SES), e.g. region `eu-west-1`, from `no-reply@example.com` (verified in SES); `__FromName` sets the name, else each project's app name. **No keys are kept**: the AWS credentials of the server's environment are used (`AWS_*` variables, the ECS task's role, the instance's profile). Console emails go through it with nothing to set up, and projects can choose it for their sign-in emails (**Authentication → Settings → Emails to users → The server's email**). |
 
 Several servers can share one database: settings, rules and webhooks follow within seconds, and console sign-ins
@@ -246,6 +251,18 @@ PostgreSQL server is backed up there.
 
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
+
+**3.0:** one layout for every address (a clean break: the old addresses don't answer).
+
+- Apps: `/p/<id>/…` became `/projects/<id>/…`. Update apps' base URL (`…/projects/<id>`) and register the new callback
+  URLs at the sign-in providers apps use; links sent before (file links, email action links) stop working, and app users
+  sign in again.
+- The console: `/_console` and each project's `/p/<id>/_console` became one console at `/console` (a project's pages at
+  `/console/projects/<id>`), with its API at `/console/v1/…` (a project's at `/console/v1/projects/<id>/…`), named as
+  the products are (`documents`, `files`, `auth`). Console sign-in through a provider: register
+  `<PublicUrl>/console/v1/session/oidc/callback`. Everyone signs in to the console again; CLI 3.0 is needed.
+- Files kept on the server's disk are served from `/projects/<id>/files/v1/signed/…` (was `/p/<id>/_files/…`).
+- `Winche__ConsolePath` is gone.
 
 **2.2:** function instances: each function may set its memory, instances kept loaded, most at once, reserved runs,
 and a process of its own (in code or in its **Settings** tab; nothing changes for functions that don't), with an

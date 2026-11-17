@@ -52,7 +52,7 @@ public class ConsoleRulesEndpointsTests(PostgresFixture fx) : IAsyncLifetime
         using var app = new ConsoleAppFactory(fx);
         using var anon = app.CreateClient();
 
-        var resp = await anon.GetAsync("/_console/api/rules/subsystems");
+        var resp = await anon.GetAsync("/console/v1/rules/subsystems");
 
         Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
     }
@@ -69,7 +69,7 @@ public class ConsoleRulesEndpointsTests(PostgresFixture fx) : IAsyncLifetime
         using var viewer = app.CreateClient();
         await viewer.LoginAsync("viewer@example.com", "Passw0rd!");
 
-        var resp = await viewer.GetAsync("/_console/api/rules/subsystems");
+        var resp = await viewer.GetAsync("/console/v1/rules/subsystems");
 
         Assert.Equal(HttpStatusCode.Forbidden, resp.StatusCode);
     }
@@ -83,7 +83,7 @@ public class ConsoleRulesEndpointsTests(PostgresFixture fx) : IAsyncLifetime
         await client.SetupAdminAsync();
         await client.LoginAsync();
 
-        var resp = await client.PostAsJsonAsync("/_console/api/rules/database/validate", new { rulesJson = "{ not json" });
+        var resp = await client.PostAsJsonAsync("/console/v1/rules/database/validate", new { rulesJson = "{ not json" });
 
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         var body = await ReadJsonAsync(resp);
@@ -100,7 +100,7 @@ public class ConsoleRulesEndpointsTests(PostgresFixture fx) : IAsyncLifetime
         await client.SetupAdminAsync();
         await client.LoginAsync();
 
-        var resp = await client.PostAsJsonAsync("/_console/api/rules/database/validate", new { rulesJson = "{\"matches\":[]}" });
+        var resp = await client.PostAsJsonAsync("/console/v1/rules/database/validate", new { rulesJson = "{\"matches\":[]}" });
 
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         var body = await ReadJsonAsync(resp);
@@ -119,11 +119,11 @@ public class ConsoleRulesEndpointsTests(PostgresFixture fx) : IAsyncLifetime
         var ruleSet = DocsAllowRead();
         var json = RuleJson.Serialize(ruleSet);
 
-        var save = await client.PostAsJsonAsync("/_console/api/rules/database",
+        var save = await client.PostAsJsonAsync("/console/v1/rules/database",
             new { rulesJson = json, note = (string?)"initial", expectedHeadVersion = (int?)null });
         Assert.Equal(HttpStatusCode.OK, save.StatusCode);
 
-        var live = await client.GetAsync("/_console/api/rules/database/live");
+        var live = await client.GetAsync("/console/v1/rules/database/live");
         Assert.Equal(HttpStatusCode.OK, live.StatusCode);
         var liveRuleSet = RuleJson.DeserializeRuleSet((await ReadJsonAsync(live)).GetProperty("rulesJson").GetString()!);
         Assert.Equal(ruleSet, liveRuleSet);
@@ -142,18 +142,18 @@ public class ConsoleRulesEndpointsTests(PostgresFixture fx) : IAsyncLifetime
         await client.LoginAsync();
 
         var v1Rules = DocsAllowRead();
-        var save1 = await client.PostAsJsonAsync("/_console/api/rules/database",
+        var save1 = await client.PostAsJsonAsync("/console/v1/rules/database",
             new { rulesJson = RuleJson.Serialize(v1Rules), note = (string?)"v1", expectedHeadVersion = (int?)null });
         Assert.Equal(HttpStatusCode.OK, save1.StatusCode);
         var v1Version = (await ReadJsonAsync(save1)).GetProperty("version").GetInt32();
 
         var v2Rules = DocsAllowWrite();
-        var save2 = await client.PostAsJsonAsync("/_console/api/rules/database",
+        var save2 = await client.PostAsJsonAsync("/console/v1/rules/database",
             new { rulesJson = RuleJson.Serialize(v2Rules), note = (string?)"v2", expectedHeadVersion = (int?)v1Version });
         Assert.Equal(HttpStatusCode.OK, save2.StatusCode);
         var v2Version = (await ReadJsonAsync(save2)).GetProperty("version").GetInt32();
 
-        var versionsResp = await client.GetAsync("/_console/api/rules/database/versions");
+        var versionsResp = await client.GetAsync("/console/v1/rules/database/versions");
         Assert.Equal(HttpStatusCode.OK, versionsResp.StatusCode);
         var versions = (await ReadJsonAsync(versionsResp)).EnumerateArray().ToList();
         Assert.Equal(2, versions.Count);
@@ -162,7 +162,7 @@ public class ConsoleRulesEndpointsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Equal(v1Version, versions[1].GetProperty("version").GetInt32());
         Assert.False(versions[1].GetProperty("isActive").GetBoolean());
 
-        var revert = await client.PostAsync($"/_console/api/rules/database/revert/{v1Version}", content: null);
+        var revert = await client.PostAsync($"/console/v1/rules/database/revert/{v1Version}", content: null);
         Assert.Equal(HttpStatusCode.OK, revert.StatusCode);
         var revertBody = await ReadJsonAsync(revert);
         var v3Version = revertBody.GetProperty("version").GetInt32();
@@ -170,7 +170,7 @@ public class ConsoleRulesEndpointsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.True(revertBody.GetProperty("isActive").GetBoolean());
         Assert.Equal(v1Version, revertBody.GetProperty("revertedFromVersion").GetInt32());
 
-        var live = await client.GetAsync("/_console/api/rules/database/live");
+        var live = await client.GetAsync("/console/v1/rules/database/live");
         var liveRuleSet = RuleJson.DeserializeRuleSet((await ReadJsonAsync(live)).GetProperty("rulesJson").GetString()!);
         Assert.Equal(v1Rules, liveRuleSet);
     }
@@ -184,11 +184,11 @@ public class ConsoleRulesEndpointsTests(PostgresFixture fx) : IAsyncLifetime
         await client.SetupAdminAsync();
         await client.LoginAsync();
 
-        var save1 = await client.PostAsJsonAsync("/_console/api/rules/database",
+        var save1 = await client.PostAsJsonAsync("/console/v1/rules/database",
             new { rulesJson = RuleJson.Serialize(DocsAllowRead()), note = (string?)null, expectedHeadVersion = (int?)null });
         Assert.Equal(HttpStatusCode.OK, save1.StatusCode);
 
-        var stale = await client.PostAsJsonAsync("/_console/api/rules/database",
+        var stale = await client.PostAsJsonAsync("/console/v1/rules/database",
             new { rulesJson = RuleJson.Serialize(DocsAllowWrite()), note = (string?)null, expectedHeadVersion = (int?)999 });
 
         Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
@@ -203,12 +203,12 @@ public class ConsoleRulesEndpointsTests(PostgresFixture fx) : IAsyncLifetime
         await client.SetupAdminAsync();
         await client.LoginAsync();
 
-        var validate = await client.PostAsJsonAsync("/_console/api/rules/storage/validate", new { rulesJson = "{\"matches\":[]}" });
+        var validate = await client.PostAsJsonAsync("/console/v1/rules/storage/validate", new { rulesJson = "{\"matches\":[]}" });
         Assert.Equal(HttpStatusCode.OK, validate.StatusCode);
         Assert.True((await ReadJsonAsync(validate)).GetProperty("ok").GetBoolean());
 
         var ruleSet = FilesAllowRead();
-        var save = await client.PostAsJsonAsync("/_console/api/rules/storage",
+        var save = await client.PostAsJsonAsync("/console/v1/rules/storage",
             new { rulesJson = RuleJson.Serialize(ruleSet), note = (string?)null, expectedHeadVersion = (int?)null });
         Assert.Equal(HttpStatusCode.OK, save.StatusCode);
 

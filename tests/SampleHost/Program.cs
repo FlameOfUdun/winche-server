@@ -143,7 +143,7 @@ if (app.Services.GetService<IServiceProviderIsService>()?.IsService(typeof(Winch
     app.MapWincheAuth();   // the app's sign-in API (/auth/v1)
 
 Winche.Functions.FunctionsEndpoints.MapWincheFunctions(app);   // callables and CLI deploys
-app.MapWincheConsole("/_console");
+app.MapWincheConsole("/console");
 Winche.Assets.AspNetCore.AssetsEndpoints.MapWincheAssets(app);   // apps read channels and files at /assets/v1
 app.MapWincheAppSetup();
 
@@ -170,7 +170,7 @@ internal sealed class SampleAccounts(string connectionString) : Winche.Console.I
 
     public async Task StartAsync(CancellationToken ct) =>
         _app = await Winche.Console.Identity.ConsoleAccountsApp.StartAsync(connectionString, "sample-host-master-key-for-tests-only-0123456789", [],
-            "https://sample.test/_console/accounts", "https://sample.test/_console/reset-password", ct: ct);
+            "https://sample.test/console/accounts", "https://sample.test/console/reset-password", ct: ct);
 
     public async Task StopAsync(CancellationToken ct)
     {

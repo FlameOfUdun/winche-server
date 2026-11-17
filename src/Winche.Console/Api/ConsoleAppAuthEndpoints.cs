@@ -16,7 +16,7 @@ using Winche.Console.Users;
 namespace Winche.Console.Api;
 
 /// <summary>
-/// <c>api/app-auth</c> — the Authentication tab: the app's users (Winche Auth), how they sign in, and token settings.
+/// <c>auth</c> — the Authentication tab: the app's users (Winche Auth), how they sign in, and token settings.
 /// Admins only: it's personal data and account control. (The console's own admins are managed in Access.)
 /// </summary>
 public static class ConsoleAppAuthEndpoints
@@ -62,8 +62,8 @@ public static class ConsoleAppAuthEndpoints
         return dir is null ? null : new { kind = dir.Kind, label = dir.Label, capabilities = dir.Capabilities };
     }
 
-    /// <param name="root">Where they're mapped: the project's app users (<c>/api/app-auth</c>), or the console accounts' (<c>/api/server/auth</c>).</param>
-    public static IEndpointRouteBuilder MapConsoleAppAuthEndpoints(this IEndpointRouteBuilder app, bool wincheAuth = true, string root = "/api/app-auth")
+    /// <param name="root">Where they're mapped: the project's app users (<c>/auth</c>), or the console accounts' (<c>/server/auth</c>).</param>
+    public static IEndpointRouteBuilder MapConsoleAppAuthEndpoints(this IEndpointRouteBuilder app, bool wincheAuth = true, string root = "/auth")
     {
         var group = app.MapGroup(root).RequireAuthorization(ConsoleRoles.AdminPolicy).AddEndpointFilter(async (ctx, next) =>
         {

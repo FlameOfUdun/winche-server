@@ -133,7 +133,7 @@ public static class ProjectMemberEndpoints
 
     internal static IEndpointRouteBuilder MapConsoleProjectMemberEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/members").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var group = app.MapGroup("/members").RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         // The members, and the server admins (who are admins here without being listed).
         group.MapGet("", async (ProjectMembers members, ConsoleAccounts accounts, CancellationToken ct) =>

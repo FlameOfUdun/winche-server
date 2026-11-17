@@ -44,7 +44,7 @@ public class ConsoleLogsTests(PostgresFixture fx) : IAsyncLifetime
     {
         for (var i = 0; i < 60; i++)
         {
-            var body = await Json(await client.GetAsync("/_console/api/logs/" + query));
+            var body = await Json(await client.GetAsync("/console/v1/logs/" + query));
             var entries = body.GetProperty("entries").EnumerateArray().ToArray();
             if (entries.Length >= atLeast) return entries;
             await Task.Delay(100);
@@ -93,15 +93,15 @@ public class ConsoleLogsTests(PostgresFixture fx) : IAsyncLifetime
         var newer = await Entries(client, $"app?after={oldest}", 2);
         Assert.True(newer[0].GetProperty("id").GetInt64() < newer[1].GetProperty("id").GetInt64());   // live: oldest first
 
-        var categories = await Json(await client.GetAsync("/_console/api/logs/app/categories"));
+        var categories = await Json(await client.GetAsync("/console/v1/logs/app/categories"));
         Assert.Contains("Clinic.Reports", categories.EnumerateArray().Select(c => c.GetString()));
         Assert.Equal(["Winche.Database.Runtime.Listening"],
-            (await Json(await client.GetAsync("/_console/api/logs/database/categories"))).EnumerateArray().Select(c => c.GetString()!).ToArray());
+            (await Json(await client.GetAsync("/console/v1/logs/database/categories"))).EnumerateArray().Select(c => c.GetString()!).ToArray());
 
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/_console/api/logs/app?level=loud")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/_console/api/logs/nope")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/console/v1/logs/app?level=loud")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/console/v1/logs/nope")).StatusCode);
 
-        var state = await Json(await client.GetAsync("/_console/api/auth/state"));
+        var state = await Json(await client.GetAsync("/console/v1/session/state"));
         var logs = state.GetProperty("capabilities").GetProperty("logs");
         Assert.True(logs.GetProperty("app").GetBoolean() && logs.GetProperty("database").GetBoolean() && logs.GetProperty("storage").GetBoolean());
     }
@@ -134,34 +134,34 @@ public class ConsoleLogsTests(PostgresFixture fx) : IAsyncLifetime
         var notDenied = await Entries(client, "app?f=principal:u2&f=resource!:storage", 1);
         Assert.Equal("database.get", Assert.Single(notDenied).GetProperty("operation").GetString());
         Assert.Equal(2, (await Entries(client, "app?f=outcome!:denied", 2)).Length);   // null outcome counts as "not denied"
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/_console/api/logs/app?f=password:x")).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/_console/api/logs/app?f=nocolon")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/console/v1/logs/app?f=password:x")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/console/v1/logs/app?f=nocolon")).StatusCode);
 
         // Histogram: every entry lands in a bucket, split by severity.
-        var hist = await Json(await client.GetAsync("/_console/api/logs/app/histogram?buckets=10"));
+        var hist = await Json(await client.GetAsync("/console/v1/logs/app/histogram?buckets=10"));
         Assert.Equal(4, hist.GetProperty("total").GetInt64());
         var buckets = hist.GetProperty("buckets").EnumerateArray().ToArray();
         Assert.Equal(10, buckets.Length);
         Assert.Equal((1L, 2L, 1L), (buckets.Sum(b => b.GetProperty("info").GetInt64()), buckets.Sum(b => b.GetProperty("warning").GetInt64()), buckets.Sum(b => b.GetProperty("error").GetInt64())));
-        Assert.Equal(2, (await Json(await client.GetAsync("/_console/api/logs/app/histogram?f=outcome:denied"))).GetProperty("total").GetInt64());
+        Assert.Equal(2, (await Json(await client.GetAsync("/console/v1/logs/app/histogram?f=outcome:denied"))).GetProperty("total").GetInt64());
 
         // Saved queries: built-in ones first, then saved ones (shared), deletable.
-        var saved = await Json(await client.PostAsJsonAsync("/_console/api/logs/queries", new
+        var saved = await Json(await client.PostAsJsonAsync("/console/v1/logs/queries", new
         {
             name = "u2's denials",
             query = new { resource = "database", minimumLevel = "Warning", filters = new[] { new { field = "principal", value = "u2", not = false } }, search = (string?)null },
         }));
         var id = saved.GetProperty("id").GetString()!;
-        var list = (await Json(await client.GetAsync("/_console/api/logs/queries"))).GetProperty("queries").EnumerateArray().ToArray();
+        var list = (await Json(await client.GetAsync("/console/v1/logs/queries"))).GetProperty("queries").EnumerateArray().ToArray();
         Assert.Equal("Denied requests", list[0].GetProperty("name").GetString());
         Assert.Equal(JsonValueKind.Null, list[0].GetProperty("createdBy").ValueKind);
         var mine = list.Single(q => q.GetProperty("id").GetString() == id);
         Assert.Equal("Warning", mine.GetProperty("query").GetProperty("minimumLevel").GetString());
         Assert.Equal("u2", mine.GetProperty("query").GetProperty("filters")[0].GetProperty("value").GetString());
         Assert.False(string.IsNullOrEmpty(mine.GetProperty("createdBy").GetString()));
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/_console/api/logs/queries", new { name = "", query = new { } })).StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync($"/_console/api/logs/queries/{id}")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync("/_console/api/logs/queries/builtin:denied")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/logs/queries", new { name = "", query = new { } })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync($"/console/v1/logs/queries/{id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync("/console/v1/logs/queries/builtin:denied")).StatusCode);
     }
 
     [Fact]
@@ -174,8 +174,8 @@ public class ConsoleLogsTests(PostgresFixture fx) : IAsyncLifetime
         using var client = app.CreateClient();
         await client.LoginAsync("member@example.com", "Passw0rd!");
 
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/_console/api/logs/app")).StatusCode);
-        var logs = (await Json(await client.GetAsync("/_console/api/auth/state"))).GetProperty("capabilities").GetProperty("logs");
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/console/v1/logs/app")).StatusCode);
+        var logs = (await Json(await client.GetAsync("/console/v1/session/state"))).GetProperty("capabilities").GetProperty("logs");
         Assert.False(logs.GetProperty("app").GetBoolean());
         Assert.False(logs.GetProperty("database").GetBoolean());
     }
@@ -192,25 +192,25 @@ public class ConsoleLogsTests(PostgresFixture fx) : IAsyncLifetime
         var reports = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Clinic.Reports.ReportEmailService");
         var otherReports = other.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Clinic.Reports.ReportEmailService");
 
-        var levels = await Json(await client.GetAsync("/_console/api/logs/levels"));
+        var levels = await Json(await client.GetAsync("/console/v1/logs/levels"));
         Assert.Equal("code", levels.GetProperty("source").GetString());
         Assert.Equal("Warning", levels.GetProperty("defaultLevel").GetString());
 
         reports.LogDebug("before: not kept");
-        var bad = await client.PutAsJsonAsync("/_console/api/logs/levels",
+        var bad = await client.PutAsJsonAsync("/console/v1/logs/levels",
             new { defaultLevel = "Warning", overrides = new[] { new { category = "Clinic.Reports", level = "Loud", until = (DateTimeOffset?)null } } });
         Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
-        var past = await client.PutAsJsonAsync("/_console/api/logs/levels",
+        var past = await client.PutAsJsonAsync("/console/v1/logs/levels",
             new { defaultLevel = "Warning", overrides = new[] { new { category = "X", level = "Debug", until = (DateTimeOffset?)DateTimeOffset.UtcNow.AddMinutes(-1) } } });
         Assert.Contains("already ended", await past.Content.ReadAsStringAsync());
 
-        var put = await client.PutAsJsonAsync("/_console/api/logs/levels", new
+        var put = await client.PutAsJsonAsync("/console/v1/logs/levels", new
         {
             defaultLevel = "Warning",
             overrides = new[] { new { category = "Clinic.Reports", level = "Debug", until = (DateTimeOffset?)DateTimeOffset.UtcNow.AddHours(1) } },
         });
         Assert.True(put.IsSuccessStatusCode, await put.Content.ReadAsStringAsync());
-        levels = await Json(await client.GetAsync("/_console/api/logs/levels"));
+        levels = await Json(await client.GetAsync("/console/v1/logs/levels"));
         Assert.Equal("console", levels.GetProperty("source").GetString());
         Assert.Equal("admin@example.com", levels.GetProperty("updatedBy").GetString());
         Assert.Equal("Debug", levels.GetProperty("overrides")[0].GetProperty("level").GetString());
@@ -222,7 +222,7 @@ public class ConsoleLogsTests(PostgresFixture fx) : IAsyncLifetime
         for (var i = 0; i < 50; i++)
         {
             otherReports.LogDebug("after: kept on the other instance {Attempt}", i);
-            var found = (await Json(await client.GetAsync("/_console/api/logs/app?q=other%20instance"))).GetProperty("entries").GetArrayLength();
+            var found = (await Json(await client.GetAsync("/console/v1/logs/app?q=other%20instance"))).GetProperty("entries").GetArrayLength();
             if (found > 0) break;
             await Task.Delay(100);
         }
@@ -233,8 +233,8 @@ public class ConsoleLogsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.DoesNotContain("other source: not kept", messages);
 
         // Reset: back to the code's levels.
-        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/_console/api/logs/levels")).StatusCode);
-        Assert.Equal("code", (await Json(await client.GetAsync("/_console/api/logs/levels"))).GetProperty("source").GetString());
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/console/v1/logs/levels")).StatusCode);
+        Assert.Equal("code", (await Json(await client.GetAsync("/console/v1/logs/levels"))).GetProperty("source").GetString());
         reports.LogDebug("after reset: not kept");
         reports.LogWarning("marker");
         await Entries(client, "app?q=marker", 1);

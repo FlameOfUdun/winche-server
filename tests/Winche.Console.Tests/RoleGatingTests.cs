@@ -32,10 +32,10 @@ public class RoleGatingTests(PostgresFixture fx) : IAsyncLifetime
         using var viewer = app.CreateClient();
         await viewer.LoginAsync("viewer@example.com", "Passw0rd!");
 
-        var read = await viewer.GetAsync("/_console/api/database/collections");
+        var read = await viewer.GetAsync("/console/v1/documents/collections");
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
 
-        var write = await viewer.PutAsJsonAsync($"/_console/api/database/documents/{B64("users/alice")}",
+        var write = await viewer.PutAsJsonAsync($"/console/v1/documents/documents/{B64("users/alice")}",
             new { fields = new { name = new { stringValue = "Alice" } } });
         Assert.Equal(HttpStatusCode.Forbidden, write.StatusCode);
     }
@@ -52,7 +52,7 @@ public class RoleGatingTests(PostgresFixture fx) : IAsyncLifetime
 
         using var member = app.CreateClient();
         await member.LoginAsync("member@example.com", "Passw0rd!");
-        var write = await member.PutAsJsonAsync($"/_console/api/database/documents/{B64("users/bob")}",
+        var write = await member.PutAsJsonAsync($"/console/v1/documents/documents/{B64("users/bob")}",
             new { fields = new { name = new { stringValue = "Bob" } } });
         Assert.Equal(HttpStatusCode.OK, write.StatusCode);
     }
@@ -63,7 +63,7 @@ public class RoleGatingTests(PostgresFixture fx) : IAsyncLifetime
         await fx.ResetAuthAsync();
         using var app = new ConsoleAppFactory(fx);
         using var anon = app.CreateClient();
-        var resp = await anon.GetAsync("/_console/api/database/collections");
+        var resp = await anon.GetAsync("/console/v1/documents/collections");
         Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
     }
 }

@@ -42,7 +42,7 @@ public static class ConsoleHooksEndpoints
 
     public static IEndpointRouteBuilder MapConsoleHooksEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/hooks").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var group = app.MapGroup("/hooks").RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         group.MapGet("", async (IServiceProvider sp, HookCatalog catalog, HookOutbox outbox, CancellationToken ct) =>
         {

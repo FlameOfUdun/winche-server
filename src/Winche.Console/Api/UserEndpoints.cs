@@ -7,7 +7,7 @@ using Winche.Console.Identity;
 
 namespace Winche.Console.Api;
 
-/// <summary>Admin-only account management under <c>/api/users</c>.</summary>
+/// <summary>Admin-only account management under <c>/accounts</c>.</summary>
 public static class UserEndpoints
 {
     public sealed record CreateUserRequest(string Email, string? FirstName, string? LastName, string Role, string? Password);
@@ -25,7 +25,7 @@ public static class UserEndpoints
 
     public static IEndpointRouteBuilder MapUserEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/users").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var group = app.MapGroup("/accounts").RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         group.MapGet("/", async (ConsoleAccounts accounts, CancellationToken ct) => Results.Json((await accounts.ListAsync(ct)).Select(u => new
         {

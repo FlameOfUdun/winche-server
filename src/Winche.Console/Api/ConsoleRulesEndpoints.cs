@@ -18,7 +18,7 @@ namespace Winche.Console.Api;
 
 public static class ConsoleRulesEndpoints
 {
-    /// <summary>Subsystem status row for the SPA's per-subsystem gating (see <c>api/rules/subsystems</c>).</summary>
+    /// <summary>Subsystem status row for the SPA's per-subsystem gating (see <c>rules/subsystems</c>).</summary>
     public sealed record RuleSubsystemStatus(string Id, bool Available, bool ApplyOnStartup, bool LiveMatchesHead);
 
     /// <summary>Version metadata without the (potentially large) rules JSON payload.</summary>
@@ -78,7 +78,7 @@ public static class ConsoleRulesEndpoints
     public sealed record RuleValidationError(string? Path, string Message);
 
     /// <summary>
-    /// Maps the <c>api/rules</c> endpoint group: per-subsystem live rules, version history, save
+    /// Maps the <c>rules</c> endpoint group: per-subsystem live rules, version history, save
     /// (with optimistic concurrency + hot-swap), revert, drift reconciliation, validate-only, and
     /// simulate (dry-run a draft ruleset against one request, without touching the live repository).
     /// Every route requires <see cref="ConsoleRoles.AdminPolicy"/>. A subsystem whose
@@ -87,7 +87,7 @@ public static class ConsoleRulesEndpoints
     /// </summary>
     public static IEndpointRouteBuilder MapConsoleRulesEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/rules").WithMetadata(new ConsoleCiScope(ConsoleCiScope.Rules));   // CI tokens may deploy rules
+        var group = app.MapGroup("/rules").WithMetadata(new ConsoleCiScope(ConsoleCiScope.Rules));   // CI tokens may deploy rules
 
         group.MapGet("/subsystems", async (
             [FromServices] IEnumerable<RuleSubsystemRegistration> registrations,

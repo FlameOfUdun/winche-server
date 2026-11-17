@@ -44,7 +44,7 @@ public static class DataLocationEndpoints
 
     internal static IEndpointRouteBuilder MapConsoleDataLocationEndpoints(this IEndpointRouteBuilder app, Options.ConsoleOptions options)
     {
-        var group = app.MapGroup("/api/data-location").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var group = app.MapGroup("/settings/location/database").RequireAuthorization(ConsoleRoles.AdminPolicy);
         IResult? Refuse(HttpContext http) => options.DataLocation is null ? Results.NotFound()
             : !WincheProjectsCaller.Of(http.User).ServerAdmin
                 ? Results.Json(new { error = "Only server admins see where data is kept." }, statusCode: StatusCodes.Status403Forbidden)

@@ -106,9 +106,34 @@ public static class AuthEndpoints
     private static bool ResetEnabled(IServiceProvider sp, ConsoleOptions options) =>
         ConsoleEmail.Sender(sp) is not null && options.AllowSelfServicePasswordReset;
 
+    /// <summary>
+    /// <c>access</c>: the signed-in person's role in this project and what its console has (a project's part of what
+    /// <c>session/state</c> says for the server). The person is the console's (<c>session/…</c>, the server's).
+    /// </summary>
+    public static IEndpointRouteBuilder MapProjectAccessEndpoint(this IEndpointRouteBuilder app)
+    {
+        app.MapGet("/access", async (HttpContext http, ConsoleAccounts accounts, IServiceProvider sp, ConsoleOptions options) =>
+        {
+            var signedIn = await http.AuthenticateAsync(ConsoleSession.Scheme);
+            if (!signedIn.Succeeded) signedIn = await http.AuthenticateAsync(ConsoleTokenHandler.Scheme);
+            var user = signedIn.Succeeded ? await accounts.CurrentAsync(signedIn.Principal!, http.RequestAborted) : null;
+            if (user is null) return Results.Json(new { error = "Sign in first." }, statusCode: StatusCodes.Status401Unauthorized);
+            var role = await RoleHereAsync(user, options, sp);
+            ConsoleRole? consoleRole = role switch
+            {
+                ConsoleRoles.Admin => ConsoleRole.Admin,
+                ConsoleRoles.Member => ConsoleRole.Member,
+                ConsoleRoles.Viewer => ConsoleRole.Viewer,
+                _ => null,   // not a member of this project: nothing here
+            };
+            return Results.Json(new { role, member = role is not null, capabilities = CapabilitiesFor(consoleRole, options, sp) });
+        });
+        return app;
+    }
+
     public static IEndpointRouteBuilder MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
-        var auth = app.MapGroup("/api/auth");
+        var auth = app.MapGroup("/session");
 
         // Anonymous: current session + whether the console has been initialized.
         auth.MapGet("/state", async (HttpContext http, ConsoleAccounts accounts, IServiceProvider sp, ConsoleOptions options) =>

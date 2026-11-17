@@ -69,9 +69,9 @@ public class ConsoleHooksTests(PostgresFixture fx) : IAsyncLifetime
         await client.SetupAdminAsync();
         await client.LoginAsync();
 
-        var state = await Json(await client.GetAsync("/_console/api/auth/state"));
+        var state = await Json(await client.GetAsync("/console/v1/session/state"));
         Assert.True(state.GetProperty("capabilities").GetProperty("hooks").GetBoolean());
-        var page = await Json(await client.GetAsync("/_console/api/hooks"));
+        var page = await Json(await client.GetAsync("/console/v1/hooks"));
         Assert.Equal(["database", "storage", "assets", "auth"], page.GetProperty("sources").EnumerateArray().Select(s => s.GetProperty("name").GetString()));
         Assert.False(page.TryGetProperty("actions", out var none));   // webhooks only: anything else is a function
 
@@ -83,15 +83,15 @@ public class ConsoleHooksTests(PostgresFixture fx) : IAsyncLifetime
         };
         var bad = new { id = "x", name = "Bad", enabled = true, when = new { source = "auth", events = Array.Empty<string>(), path = (string?)null },
             @do = new { kind = "storage.deleteFiles", options = new Dictionary<string, string> { ["folder"] = "patients/{patientId}/" } } };
-        var refused = await client.PutAsJsonAsync("/_console/api/hooks", new { settings = new { hooks = new object[] { webhook, bad } }, reason = "x" });
+        var refused = await client.PutAsJsonAsync("/console/v1/hooks", new { settings = new { hooks = new object[] { webhook, bad } }, reason = "x" });
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
         Assert.Contains("hooks call webhooks", await refused.Content.ReadAsStringAsync());
 
-        await Json(await client.PutAsJsonAsync("/_console/api/hooks", new { settings = new { hooks = new object[] { webhook } }, reason = "Tell the ward system" }));
-        var secret = (await Json(await client.GetAsync("/_console/api/hooks/visits/secret"))).GetProperty("secret").GetString()!;
+        await Json(await client.PutAsJsonAsync("/console/v1/hooks", new { settings = new { hooks = new object[] { webhook } }, reason = "Tell the ward system" }));
+        var secret = (await Json(await client.GetAsync("/console/v1/hooks/visits/secret"))).GetProperty("secret").GetString()!;
         Assert.StartsWith("whsec_", secret);
 
-        var test = await Json(await client.PostAsJsonAsync("/_console/api/hooks/test", new { hook = webhook }));
+        var test = await Json(await client.PostAsJsonAsync("/console/v1/hooks/test", new { hook = webhook }));
         Assert.True(test.GetProperty("ok").GetBoolean());
         Assert.Equal(200, test.GetProperty("status").GetInt32());
         Assert.Equal("example-patientId", test.GetProperty("sample").GetProperty("vars").GetProperty("patientId").GetString());
@@ -104,11 +104,11 @@ public class ConsoleHooksTests(PostgresFixture fx) : IAsyncLifetime
         JsonElement deliveries = default;
         for (var i = 0; i < 100; i++)
         {
-            deliveries = (await Json(await client.GetAsync("/_console/api/hooks/deliveries?hookId=visits"))).GetProperty("deliveries");
+            deliveries = (await Json(await client.GetAsync("/console/v1/hooks/deliveries?hookId=visits"))).GetProperty("deliveries");
             if (deliveries.GetArrayLength() > 0 && deliveries[0].GetProperty("status").GetString() == "delivered") break;
             await Task.Delay(100);
         }
         Assert.Equal(("delivered", "p1"), (deliveries[0].GetProperty("status").GetString(), deliveries[0].GetProperty("event").GetProperty("vars").GetProperty("patientId").GetString()));
-        Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsync($"/_console/api/hooks/deliveries/{deliveries[0].GetProperty("id").GetString()}/retry", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsync($"/console/v1/hooks/deliveries/{deliveries[0].GetProperty("id").GetString()}/retry", null)).StatusCode);
     }
 }

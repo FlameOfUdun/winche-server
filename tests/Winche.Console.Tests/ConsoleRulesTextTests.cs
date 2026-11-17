@@ -45,7 +45,7 @@ public class ConsoleRulesTextTests(PostgresFixture fx) : IAsyncLifetime
         var (app, client) = await AdminAsync();
         using var _ = app;
 
-        var body = await Json(await client.PostAsJsonAsync("/_console/api/rules/text/parse", new { text = File }));
+        var body = await Json(await client.PostAsJsonAsync("/console/v1/rules/text/parse", new { text = File }));
 
         Assert.True(body.GetProperty("ok").GetBoolean());
         Assert.Equal(RuleText.ParseRuleSet(File), RuleJson.DeserializeRuleSet(body.GetProperty("rulesJson").GetString()!));
@@ -69,12 +69,12 @@ public class ConsoleRulesTextTests(PostgresFixture fx) : IAsyncLifetime
 
             """;
 
-        var body = await Json(await client.PostAsJsonAsync("/_console/api/rules/text/parse", new { text }));
+        var body = await Json(await client.PostAsJsonAsync("/console/v1/rules/text/parse", new { text }));
         Assert.True(body.GetProperty("ok").GetBoolean());
         var warning = Assert.Single(body.GetProperty("warnings").EnumerateArray());   // the file's own function isn't one
         Assert.Contains("'typo'", warning.GetString());
 
-        var formatted = await Json(await client.PostAsJsonAsync("/_console/api/rules/text/format",
+        var formatted = await Json(await client.PostAsJsonAsync("/console/v1/rules/text/format",
             new { rulesJson = body.GetProperty("rulesJson").GetString() }));
         Assert.Equal(text.Replace("\r\n", "\n"), formatted.GetProperty("text").GetString());
     }
@@ -85,7 +85,7 @@ public class ConsoleRulesTextTests(PostgresFixture fx) : IAsyncLifetime
         var (app, client) = await AdminAsync();
         using var _ = app;
 
-        var body = await Json(await client.PostAsJsonAsync("/_console/api/rules/text/parse",
+        var body = await Json(await client.PostAsJsonAsync("/console/v1/rules/text/parse",
             new { text = "match users/{uid} {\n  allow read: if request.auth = null;\n}" }));
 
         Assert.False(body.GetProperty("ok").GetBoolean());
@@ -100,7 +100,7 @@ public class ConsoleRulesTextTests(PostgresFixture fx) : IAsyncLifetime
         var (app, client) = await AdminAsync();
         using var _ = app;
 
-        var body = await Json(await client.PostAsJsonAsync("/_console/api/rules/text/parse",
+        var body = await Json(await client.PostAsJsonAsync("/console/v1/rules/text/parse",
             new { text = "match a/{b} {\n  allow create: if request.resource.data.keys().hasonly(['a']);\n}" }));
 
         Assert.True(body.GetProperty("ok").GetBoolean());
@@ -113,7 +113,7 @@ public class ConsoleRulesTextTests(PostgresFixture fx) : IAsyncLifetime
         var (app, client) = await AdminAsync();
         using var _ = app;
 
-        var body = await Json(await client.PostAsJsonAsync("/_console/api/rules/text/parse", new
+        var body = await Json(await client.PostAsJsonAsync("/console/v1/rules/text/parse", new
         {
             text = "match a/{id} {\n  allow read: if resource.data.owner == request.auth.uid;\n  allow update: if resource.data.owner == request.auth.uid;\n}\n" +
                    "match b/{id} {\n  allow get: if resource.data.x == 1;\n}",
@@ -131,10 +131,10 @@ public class ConsoleRulesTextTests(PostgresFixture fx) : IAsyncLifetime
         using var _ = app;
         var rulesJson = RuleJson.Serialize(RuleText.ParseRuleSet(File));
 
-        var body = await Json(await client.PostAsJsonAsync("/_console/api/rules/text/format", new { rulesJson }));
+        var body = await Json(await client.PostAsJsonAsync("/console/v1/rules/text/format", new { rulesJson }));
 
         Assert.Equal(RuleText.ParseRuleSet(File), RuleText.ParseRuleSet(body.GetProperty("text").GetString()!));
-        var bad = await client.PostAsJsonAsync("/_console/api/rules/text/format", new { rulesJson = "{ nope" });
+        var bad = await client.PostAsJsonAsync("/console/v1/rules/text/format", new { rulesJson = "{ nope" });
         Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
     }
 
@@ -153,7 +153,7 @@ public class ConsoleRulesTextTests(PostgresFixture fx) : IAsyncLifetime
                 ["auth"] = new MapValue(new Dictionary<string, Value> { ["uid"] = new StringValue("u1") }),
                 ["resource"] = new MapValue(new Dictionary<string, Value> { ["data"] = data }),
             });
-            var body = await Json(await client.PostAsJsonAsync("/_console/api/rules/database/simulate", new
+            var body = await Json(await client.PostAsJsonAsync("/console/v1/rules/database/simulate", new
             {
                 rulesJson = RuleJson.Serialize(rules),
                 operation = "Create",
@@ -182,7 +182,7 @@ public class ConsoleRulesTextTests(PostgresFixture fx) : IAsyncLifetime
 
         async Task<bool> Allowed(object? auth, object? existing, object? incoming)
         {
-            var body = await Json(await client.PostAsJsonAsync("/_console/api/rules/database/simulate", new
+            var body = await Json(await client.PostAsJsonAsync("/console/v1/rules/database/simulate", new
             {
                 rulesJson = RuleJson.Serialize(rules), operation = "Update", documentPath = "posts/p1", structured = true,
                 auth, existing, incoming,
@@ -206,7 +206,7 @@ public class ConsoleRulesTextTests(PostgresFixture fx) : IAsyncLifetime
     {
         using var app = new ConsoleAppFactory(fx);
         using var client = app.CreateClient();
-        var resp = await client.PostAsJsonAsync("/_console/api/rules/text/parse", new { text = "true" });
+        var resp = await client.PostAsJsonAsync("/console/v1/rules/text/parse", new { text = "true" });
         Assert.True(resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden);
     }
 }

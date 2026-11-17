@@ -23,7 +23,7 @@ public static class ConsoleOverviewEndpoints
 
     public static IEndpointRouteBuilder MapConsoleOverviewEndpoints(this IEndpointRouteBuilder app, ConsoleOptions options)
     {
-        app.MapGet("/api/overview", async (HttpContext http, CancellationToken ct) =>
+        app.MapGet("/overview", async (HttpContext http, CancellationToken ct) =>
         {
             var sp = http.RequestServices;
             var role = ConsoleRolePolicy.Highest(http.User, options);

@@ -85,7 +85,7 @@ internal static class ConsoleSecretsEndpoints
 
     internal static RouteGroupBuilder MapConsoleSecretsEndpoints(this RouteGroupBuilder app)
     {
-        var group = app.MapGroup("/api/secrets").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var group = app.MapGroup("/secrets").RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         // Every secret the project keeps, but functions' own and sources' keys (those have their own lists): which
         // product it belongs to, what it is, where it's changed, and whether it's a value or read from elsewhere.

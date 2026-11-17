@@ -57,7 +57,7 @@ public static class ConsoleStorageLocationEndpoints
 
     public static IEndpointRouteBuilder MapConsoleStorageLocationEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/settings/storage/location").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var group = app.MapGroup("/settings/location/files").RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         group.MapGet("", async (StorageMoves moves, ArchiveLocations locations, IServiceProvider sp, CancellationToken ct) =>
         {

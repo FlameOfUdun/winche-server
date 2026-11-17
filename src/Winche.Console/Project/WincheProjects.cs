@@ -24,7 +24,7 @@ public sealed record WincheProjectsCaller(string? UserId, bool ServerAdmin)
 }
 
 /// <summary>A project on the server, for the console's project switcher.</summary>
-/// <param name="ConsolePath">Its console under the server's root, e.g. <c>/p/wards/_console</c>.</param>
+/// <param name="ConsolePath">Its console from the host's root, e.g. <c>/console/projects/wards</c>.</param>
 public sealed record WincheProjectInfo(string Id, string Name, string ConsolePath, DateTimeOffset? ImageVersion)
 {
     /// <summary>The products started in it (database, storage, authentication, functions); null: the host doesn't say.</summary>
@@ -40,9 +40,6 @@ public sealed record WincheArchivedProject(string Id, string Name, DateTimeOffse
 /// </summary>
 public interface IWincheProjects
 {
-    /// <summary>This console's path under the server's root: <c>/p/&lt;id&gt;</c> for a project's, empty for the server's own.</summary>
-    string CurrentPrefix { get; }
-
     /// <summary>The projects <paramref name="caller"/> may use.</summary>
     Task<IReadOnlyList<WincheProjectInfo>> ListAsync(WincheProjectsCaller caller, CancellationToken ct);
 
@@ -76,22 +73,13 @@ public static class WincheProjectEndpoints
 
     private static string? Who(ClaimsPrincipal user) => user.FindFirstValue(ClaimTypes.Email) ?? user.FindFirstValue("email") ?? user.Identity?.Name;
 
-    /// <summary>The server's root as seen from this request: the path base without this project's own part.</summary>
-    private static string Root(HttpRequest request, IWincheProjects projects)
-    {
-        var pathBase = request.PathBase.Value ?? "";
-        var prefix = projects.CurrentPrefix;
-        return prefix.Length > 0 && pathBase.EndsWith(prefix, StringComparison.Ordinal) ? pathBase[..^prefix.Length] : pathBase;
-    }
-
     internal static IEndpointRouteBuilder MapConsoleWincheProjectEndpoints(this IEndpointRouteBuilder app, Options.ConsoleOptions options)
     {
-        app.MapGet("/api/projects", async (HttpContext http, ProjectSetup setup, CancellationToken ct) =>
+        app.MapGet("/projects", async (HttpContext http, ProjectSetup setup, CancellationToken ct) =>
         {
             var projects = http.RequestServices.GetService<IWincheProjects>();
             var caller = WincheProjectsCaller.Of(http.User);
             if (projects is null) return Results.Json(new { available = false, canCreate = false, current = setup.Current.Id, projects = Array.Empty<object>() });
-            var root = Root(http.Request, projects);
             var list = await projects.ListAsync(caller, ct);
             return Results.Json(new
             {
@@ -100,7 +88,7 @@ public static class WincheProjectEndpoints
                 current = options.ServerConsole ? null : setup.Current.Id,   // the server's console is in none
                 projects = list.Select(p => new
                 {
-                    id = p.Id, name = p.Name, consoleUrl = root + p.ConsolePath,
+                    id = p.Id, name = p.Name, consoleUrl = p.ConsolePath,
                     imageVersion = p.ImageVersion?.ToUnixTimeMilliseconds().ToString(), products = p.Products,
                 }),
                 archived = caller.ServerAdmin
@@ -109,7 +97,7 @@ public static class WincheProjectEndpoints
             });
         }).RequireAuthorization(ConsoleRoles.SignedInPolicy);   // the CLI signs in at the root: a project's member lists their projects there
 
-        app.MapPost("/api/projects", async (CreateRequest body, HttpContext http, CancellationToken ct) =>
+        app.MapPost("/projects", async (CreateRequest body, HttpContext http, CancellationToken ct) =>
         {
             if (http.RequestServices.GetService<IWincheProjects>() is not { } projects)
                 return ConsoleErrors.Problem("projects", "This console runs one project only.", null);
@@ -121,7 +109,7 @@ public static class WincheProjectEndpoints
             try
             {
                 var created = await projects.CreateAsync(body.Name.Trim(), body.Id!, body.Database, Who(http.User), ct);
-                return Results.Json(new { id = created.Id, name = created.Name, consoleUrl = Root(http.Request, projects) + created.ConsolePath });
+                return Results.Json(new { id = created.Id, name = created.Name, consoleUrl = created.ConsolePath });
             }
             catch (ArgumentException ex)
             {
@@ -129,7 +117,7 @@ public static class WincheProjectEndpoints
             }
         }).RequireAuthorization(ConsoleRoles.AdminPolicy);
         // Before creating: whether its data can go where the form says.
-        app.MapPost("/api/projects/check-database", async (CheckDatabaseRequest body, HttpContext http, CancellationToken ct) =>
+        app.MapPost("/projects/check-database", async (CheckDatabaseRequest body, HttpContext http, CancellationToken ct) =>
         {
             if (http.RequestServices.GetService<IWincheProjects>() is not { } projects)
                 return ConsoleErrors.Problem("projects", "This console runs one project only.", null);
@@ -149,11 +137,11 @@ public static class WincheProjectEndpoints
             try { return await work(projects); }
             catch (ArgumentException ex) { return ConsoleErrors.Problem("projects", ex.Message, null); }
         }
-        app.MapPost("/api/projects/{id}/archive", (string id, HttpContext http, CancellationToken ct) =>
+        app.MapPost("/projects/{id}/archive", (string id, HttpContext http, CancellationToken ct) =>
             AsServerAdmin(http, async p => { await p.ArchiveAsync(id, Who(http.User), ct); return Results.NoContent(); })).RequireAuthorization(ConsoleRoles.AdminPolicy);
-        app.MapPost("/api/projects/{id}/restore", (string id, HttpContext http, CancellationToken ct) =>
+        app.MapPost("/projects/{id}/restore", (string id, HttpContext http, CancellationToken ct) =>
             AsServerAdmin(http, async p => { await p.RestoreAsync(id, ct); return Results.NoContent(); })).RequireAuthorization(ConsoleRoles.AdminPolicy);
-        app.MapDelete("/api/projects/{id}", (string id, HttpContext http, CancellationToken ct) =>
+        app.MapDelete("/projects/{id}", (string id, HttpContext http, CancellationToken ct) =>
             AsServerAdmin(http, async p => { await p.DeleteAsync(id, ct); return Results.NoContent(); })).RequireAuthorization(ConsoleRoles.AdminPolicy);
         return app;
     }

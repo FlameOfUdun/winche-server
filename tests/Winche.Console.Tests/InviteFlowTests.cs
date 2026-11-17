@@ -48,14 +48,14 @@ public class InviteFlowTests(PostgresFixture fx)
         await admin.SetupAdminAsync();
         await admin.LoginAsync();
 
-        var create = await admin.PostAsJsonAsync("/_console/api/invites", InviteBody("invitee@example.com"));
+        var create = await admin.PostAsJsonAsync("/console/v1/invites", InviteBody("invitee@example.com"));
         Assert.Equal(HttpStatusCode.OK, create.StatusCode);
         Assert.NotNull(fake.LastInviteLink);
         var created = await create.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("pending", created.GetProperty("status").GetString());
         Assert.False(string.IsNullOrEmpty(created.GetProperty("link").GetString()));
 
-        var list = await admin.GetFromJsonAsync<JsonElement>("/_console/api/invites");
+        var list = await admin.GetFromJsonAsync<JsonElement>("/console/v1/invites");
         Assert.Equal(1, list.GetArrayLength());
         Assert.Equal("invitee@example.com", list[0].GetProperty("email").GetString());
     }
@@ -69,7 +69,7 @@ public class InviteFlowTests(PostgresFixture fx)
         await admin.SetupAdminAsync();
         await admin.LoginAsync();
 
-        var create = await admin.PostAsJsonAsync("/_console/api/invites", InviteBody("x@example.com"));
+        var create = await admin.PostAsJsonAsync("/console/v1/invites", InviteBody("x@example.com"));
         Assert.Equal(HttpStatusCode.OK, create.StatusCode);
         var body = System.Text.Json.JsonDocument.Parse(await create.Content.ReadAsStringAsync()).RootElement;
         Assert.False(body.GetProperty("emailed").GetBoolean());
@@ -86,7 +86,7 @@ public class InviteFlowTests(PostgresFixture fx)
         using var anon = emailApp.CreateClient();
         await anon.SetupAdminAsync();   // creates the admin but does NOT log this client in
 
-        var create = await anon.PostAsJsonAsync("/_console/api/invites", InviteBody("x@example.com"));
+        var create = await anon.PostAsJsonAsync("/console/v1/invites", InviteBody("x@example.com"));
         Assert.Equal(HttpStatusCode.Unauthorized, create.StatusCode);
     }
 
@@ -99,13 +99,13 @@ public class InviteFlowTests(PostgresFixture fx)
         using var admin = emailApp.CreateClient();
         await admin.SetupAdminAsync();
         await admin.LoginAsync();
-        var created = await admin.PostAsJsonAsync("/_console/api/users",
+        var created = await admin.PostAsJsonAsync("/console/v1/accounts",
             new { email = "viewer@example.com", role = "Viewer", password = "View3red!" });
         Assert.Equal(HttpStatusCode.OK, created.StatusCode);
 
         using var viewer = emailApp.CreateClient();
         await viewer.LoginAsync("viewer@example.com", "View3red!");
-        var create = await viewer.PostAsJsonAsync("/_console/api/invites", InviteBody("x@example.com"));
+        var create = await viewer.PostAsJsonAsync("/console/v1/invites", InviteBody("x@example.com"));
         Assert.Equal(HttpStatusCode.Forbidden, create.StatusCode);
     }
 
@@ -119,9 +119,9 @@ public class InviteFlowTests(PostgresFixture fx)
         await admin.SetupAdminAsync();
         await admin.LoginAsync();
 
-        var first = await admin.PostAsJsonAsync("/_console/api/invites", InviteBody("dup@example.com"));
+        var first = await admin.PostAsJsonAsync("/console/v1/invites", InviteBody("dup@example.com"));
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
-        var second = await admin.PostAsJsonAsync("/_console/api/invites", InviteBody("dup@example.com"));
+        var second = await admin.PostAsJsonAsync("/console/v1/invites", InviteBody("dup@example.com"));
         Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
     }
 
@@ -136,15 +136,15 @@ public class InviteFlowTests(PostgresFixture fx)
         await admin.SetupAdminAsync();
         await admin.LoginAsync();
 
-        await admin.PostAsJsonAsync("/_console/api/invites", InviteBody("invitee@example.com"));
+        await admin.PostAsJsonAsync("/console/v1/invites", InviteBody("invitee@example.com"));
         var token = QueryParam(fake.LastInviteLink!, "token");
 
         using var anon = emailApp.CreateClient();
-        var preview = await anon.GetFromJsonAsync<JsonElement>($"/_console/api/invites/accept?token={Uri.EscapeDataString(token)}");
+        var preview = await anon.GetFromJsonAsync<JsonElement>($"/console/v1/invites/accept?token={Uri.EscapeDataString(token)}");
         Assert.Equal("invitee@example.com", preview.GetProperty("email").GetString());
         Assert.Equal("Root Admin", preview.GetProperty("invitedBy").GetString());   // who sent it
 
-        var accept = await anon.PostAsJsonAsync("/_console/api/invites/accept",
+        var accept = await anon.PostAsJsonAsync("/console/v1/invites/accept",
             new { token, password = "Inv1ted!" });
         Assert.Equal(HttpStatusCode.OK, accept.StatusCode);
 
@@ -152,7 +152,7 @@ public class InviteFlowTests(PostgresFixture fx)
         await invitee.LoginAsync("invitee@example.com", "Inv1ted!");
 
         // Accepted invite drops off the admin list.
-        var list = await admin.GetFromJsonAsync<JsonElement>("/_console/api/invites");
+        var list = await admin.GetFromJsonAsync<JsonElement>("/console/v1/invites");
         Assert.Equal(0, list.GetArrayLength());
     }
 
@@ -167,14 +167,14 @@ public class InviteFlowTests(PostgresFixture fx)
         await admin.SetupAdminAsync();
         await admin.LoginAsync();
 
-        await admin.PostAsJsonAsync("/_console/api/invites", InviteBody("named@example.com", requireName: true));
+        await admin.PostAsJsonAsync("/console/v1/invites", InviteBody("named@example.com", requireName: true));
         var token = QueryParam(fake.LastInviteLink!, "token");
 
         using var anon = emailApp.CreateClient();
-        var missing = await anon.PostAsJsonAsync("/_console/api/invites/accept", new { token, password = "Inv1ted!" });
+        var missing = await anon.PostAsJsonAsync("/console/v1/invites/accept", new { token, password = "Inv1ted!" });
         Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);
 
-        var ok = await anon.PostAsJsonAsync("/_console/api/invites/accept",
+        var ok = await anon.PostAsJsonAsync("/console/v1/invites/accept",
             new { token, password = "Inv1ted!", firstName = "Ann", lastName = "Vee" });
         Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
     }
@@ -190,20 +190,20 @@ public class InviteFlowTests(PostgresFixture fx)
         await admin.SetupAdminAsync();
         await admin.LoginAsync();
 
-        await admin.PostAsJsonAsync("/_console/api/invites", InviteBody("tf@example.com", requireTwoFactor: true));
+        await admin.PostAsJsonAsync("/console/v1/invites", InviteBody("tf@example.com", requireTwoFactor: true));
         var token = QueryParam(fake.LastInviteLink!, "token");
 
         using var invitee = emailApp.CreateClient();
-        await invitee.PostAsJsonAsync("/_console/api/invites/accept", new { token, password = "Inv1ted!" });
+        await invitee.PostAsJsonAsync("/console/v1/invites/accept", new { token, password = "Inv1ted!" });
         await invitee.LoginAsync("tf@example.com", "Inv1ted!");
 
-        var state = await invitee.GetFromJsonAsync<JsonElement>("/_console/api/auth/state");
+        var state = await invitee.GetFromJsonAsync<JsonElement>("/console/v1/session/state");
         Assert.True(state.GetProperty("user").GetProperty("mustSetupTwoFactor").GetBoolean());
     }
 
     private static async Task<Guid> CreateInviteAsync(HttpClient admin, string email)
     {
-        var resp = await admin.PostAsJsonAsync("/_console/api/invites", InviteBody(email));
+        var resp = await admin.PostAsJsonAsync("/console/v1/invites", InviteBody(email));
         var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
         return json.GetProperty("id").GetGuid();
     }
@@ -220,11 +220,11 @@ public class InviteFlowTests(PostgresFixture fx)
         await admin.LoginAsync();
         var id = await CreateInviteAsync(admin, "copy@example.com");
 
-        var link = await admin.GetFromJsonAsync<JsonElement>($"/_console/api/invites/{id}/link");
+        var link = await admin.GetFromJsonAsync<JsonElement>($"/console/v1/invites/{id}/link");
         var token = QueryParam(link.GetProperty("link").GetString()!, "token");
 
         using var anon = emailApp.CreateClient();
-        var preview = await anon.GetAsync($"/_console/api/invites/accept?token={Uri.EscapeDataString(token)}");
+        var preview = await anon.GetAsync($"/console/v1/invites/accept?token={Uri.EscapeDataString(token)}");
         Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
     }
 
@@ -238,16 +238,16 @@ public class InviteFlowTests(PostgresFixture fx)
         using var admin = emailApp.CreateClient();
         await admin.SetupAdminAsync();
         await admin.LoginAsync();
-        await admin.PostAsJsonAsync("/_console/api/invites", InviteBody("revoke@example.com"));
+        await admin.PostAsJsonAsync("/console/v1/invites", InviteBody("revoke@example.com"));
         var token = QueryParam(fake.LastInviteLink!, "token");
-        var list = await admin.GetFromJsonAsync<JsonElement>("/_console/api/invites");
+        var list = await admin.GetFromJsonAsync<JsonElement>("/console/v1/invites");
         var id = list[0].GetProperty("id").GetGuid();
 
-        var revoke = await admin.DeleteAsync($"/_console/api/invites/{id}");
+        var revoke = await admin.DeleteAsync($"/console/v1/invites/{id}");
         Assert.Equal(HttpStatusCode.NoContent, revoke.StatusCode);
 
         using var anon = emailApp.CreateClient();
-        var accept = await anon.PostAsJsonAsync("/_console/api/invites/accept", new { token, password = "Inv1ted!" });
+        var accept = await anon.PostAsJsonAsync("/console/v1/invites/accept", new { token, password = "Inv1ted!" });
         Assert.Equal(HttpStatusCode.Gone, accept.StatusCode);
     }
 
@@ -263,12 +263,12 @@ public class InviteFlowTests(PostgresFixture fx)
         await admin.LoginAsync();
         var id = await CreateInviteAsync(admin, "resend@example.com");
 
-        var resend = await admin.PostAsJsonAsync($"/_console/api/invites/{id}/resend", new { });
+        var resend = await admin.PostAsJsonAsync($"/console/v1/invites/{id}/resend", new { });
         Assert.Equal(HttpStatusCode.OK, resend.StatusCode);
         var token = QueryParam(fake.LastInviteLink!, "token");
 
         using var anon = emailApp.CreateClient();
-        var accept = await anon.PostAsJsonAsync("/_console/api/invites/accept", new { token, password = "Inv1ted!" });
+        var accept = await anon.PostAsJsonAsync("/console/v1/invites/accept", new { token, password = "Inv1ted!" });
         Assert.Equal(HttpStatusCode.OK, accept.StatusCode);
     }
 }

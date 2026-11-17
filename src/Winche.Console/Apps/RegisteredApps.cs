@@ -283,13 +283,13 @@ public static class RegisteredAppEndpoints
 
     internal static IEndpointRouteBuilder MapConsoleRegisteredAppEndpoints(this IEndpointRouteBuilder app, Options.ConsoleOptions options)
     {
-        app.MapGet("/api/apps/registered", async (HttpContext http, RegisteredApps apps, AppUsage usage, CancellationToken ct) =>
+        app.MapGet("/apps/registered", async (HttpContext http, RegisteredApps apps, AppUsage usage, CancellationToken ct) =>
         {
             var admin = Tabs.ConsoleRolePolicy.Highest(http.User, options) >= Tabs.ConsoleRole.Admin;
             return Results.Json(Body(apps.Current, apps.Available ? await usage.ReadAsync(ct) : new Dictionary<string, AppUsage.Usage>(), apps.Available, apps.Available && admin));
         }).RequireAuthorization(ConsoleRoles.ViewerPolicy);
 
-        var admin = app.MapGroup("/api/apps/registered").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var admin = app.MapGroup("/apps/registered").RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         admin.MapPost("", async (AppRequest body, HttpContext http, RegisteredApps apps, CancellationToken ct) =>
         {
@@ -325,7 +325,7 @@ public static class RegisteredAppEndpoints
             return Results.NoContent();
         });
 
-        app.MapPut("/api/apps/policy", async (PolicyRequest body, HttpContext http, RegisteredApps apps, CancellationToken ct) =>
+        app.MapPut("/apps/policy", async (PolicyRequest body, HttpContext http, RegisteredApps apps, CancellationToken ct) =>
         {
             if (!apps.Available) return Problem("Apps can be registered once the console runs project setup (UseProjectSetup).");
             var current = apps.Current;
@@ -336,7 +336,7 @@ public static class RegisteredAppEndpoints
         }).RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         // Browser origins (CORS) besides the registered web apps', saved with a reason.
-        app.MapPut("/api/apps/browser-origins", async (OriginsRequest body, HttpContext http, RegisteredApps apps, CancellationToken ct) =>
+        app.MapPut("/apps/browser-origins", async (OriginsRequest body, HttpContext http, RegisteredApps apps, CancellationToken ct) =>
         {
             if (!apps.Available) return Problem("Browser origins are kept once the console runs project setup (UseProjectSetup).");
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're making this change: it goes in the history.");

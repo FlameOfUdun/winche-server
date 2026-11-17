@@ -25,11 +25,11 @@ public class TwoFactorTests(PostgresFixture fx) : IAsyncLifetime
     /// <summary>Enrolls 2FA on an already-logged-in client and returns the authenticator base32 key.</summary>
     private static async Task<string> EnrollAsync(HttpClient client)
     {
-        var setup = await client.PostAsync("/_console/api/auth/2fa/setup", null);
+        var setup = await client.PostAsync("/console/v1/session/2fa/setup", null);
         Assert.Equal(HttpStatusCode.OK, setup.StatusCode);
         var dto = await setup.Content.ReadFromJsonAsync<SetupDto>();
         var key = dto!.SharedKey.Replace(" ", "").ToUpperInvariant();
-        var enable = await client.PostAsJsonAsync("/_console/api/auth/2fa/enable", new { code = Totp(key) });
+        var enable = await client.PostAsJsonAsync("/console/v1/session/2fa/enable", new { code = Totp(key) });
         Assert.Equal(HttpStatusCode.OK, enable.StatusCode);
         return key;
     }
@@ -44,14 +44,14 @@ public class TwoFactorTests(PostgresFixture fx) : IAsyncLifetime
 
         // A fresh login now requires the second factor.
         using var fresh = app.CreateClient();
-        var login = await fresh.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!" });
+        var login = await fresh.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!" });
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         Assert.Contains("requiresTwoFactor", await login.Content.ReadAsStringAsync());
 
         // Completing the challenge signs in fully.
-        var two = await fresh.PostAsJsonAsync("/_console/api/auth/login/2fa", new { code = Totp(key, step: 1) });   // not the one just used
+        var two = await fresh.PostAsJsonAsync("/console/v1/session/login/2fa", new { code = Totp(key, step: 1) });   // not the one just used
         Assert.Equal(HttpStatusCode.OK, two.StatusCode);
-        var protectedRead = await fresh.GetAsync("/_console/api/database/collections");
+        var protectedRead = await fresh.GetAsync("/console/v1/documents/collections");
         Assert.Equal(HttpStatusCode.OK, protectedRead.StatusCode);
     }
 
@@ -63,25 +63,25 @@ public class TwoFactorTests(PostgresFixture fx) : IAsyncLifetime
         using var admin = await AdminClient(app);
 
         // Create a Member and mark them as 2FA-required.
-        await admin.PostAsJsonAsync("/_console/api/users",
+        await admin.PostAsJsonAsync("/console/v1/accounts",
             new { email = "m@example.com", role = "Member", password = "Passw0rd!" });
-        var users = await admin.GetFromJsonAsync<List<UserItem>>("/_console/api/users");
+        var users = await admin.GetFromJsonAsync<List<UserItem>>("/console/v1/accounts");
         var member = users!.Single(u => u.Email == "m@example.com");
-        await admin.PutAsJsonAsync($"/_console/api/users/{member.Id}", new { twoFactorRequired = true });
+        await admin.PutAsJsonAsync($"/console/v1/accounts/{member.Id}", new { twoFactorRequired = true });
 
         // The member can log in (no authenticator yet) but is gated from everything but enrollment.
         using var mc = app.CreateClient();
         await mc.LoginAsync("m@example.com", "Passw0rd!");
-        var gated = await mc.GetAsync("/_console/api/database/collections");
+        var gated = await mc.GetAsync("/console/v1/documents/collections");
         Assert.Equal(HttpStatusCode.Forbidden, gated.StatusCode);
         Assert.Contains("two_factor_setup_required", await gated.Content.ReadAsStringAsync());
 
-        var state = await mc.GetFromJsonAsync<System.Text.Json.JsonElement>("/_console/api/auth/state");
+        var state = await mc.GetFromJsonAsync<System.Text.Json.JsonElement>("/console/v1/session/state");
         Assert.True(state.GetProperty("user").GetProperty("mustSetupTwoFactor").GetBoolean());
 
         // Enrolling lifts the gate.
         await EnrollAsync(mc);
-        var ok = await mc.GetAsync("/_console/api/database/collections");
+        var ok = await mc.GetAsync("/console/v1/documents/collections");
         Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
     }
 
@@ -91,9 +91,9 @@ public class TwoFactorTests(PostgresFixture fx) : IAsyncLifetime
         await fx.ResetAuthAsync();
         using var app = new ConsoleAppFactory(fx);
         using var admin = await AdminClient(app);
-        await admin.PostAsJsonAsync("/_console/api/users",
+        await admin.PostAsJsonAsync("/console/v1/accounts",
             new { email = "m@example.com", role = "Member", password = "Passw0rd!" });
-        var users = await admin.GetFromJsonAsync<List<UserItem>>("/_console/api/users");
+        var users = await admin.GetFromJsonAsync<List<UserItem>>("/console/v1/accounts");
         var member = users!.Single(u => u.Email == "m@example.com");
 
         using var mc = app.CreateClient();
@@ -101,8 +101,8 @@ public class TwoFactorTests(PostgresFixture fx) : IAsyncLifetime
         await EnrollAsync(mc);   // enroll while not yet required
 
         // Admin now requires 2FA; the member can no longer disable it.
-        await admin.PutAsJsonAsync($"/_console/api/users/{member.Id}", new { twoFactorRequired = true });
-        var disable = await mc.PostAsync("/_console/api/auth/2fa/disable", null);
+        await admin.PutAsJsonAsync($"/console/v1/accounts/{member.Id}", new { twoFactorRequired = true });
+        var disable = await mc.PostAsync("/console/v1/session/2fa/disable", null);
         Assert.Equal(HttpStatusCode.Forbidden, disable.StatusCode);
     }
 

@@ -22,7 +22,7 @@ public class UserManagementTests(PostgresFixture fx) : IAsyncLifetime
 
     private static async Task<UserItem> Find(HttpClient admin, string email)
     {
-        var users = await admin.GetFromJsonAsync<List<UserItem>>("/_console/api/users");
+        var users = await admin.GetFromJsonAsync<List<UserItem>>("/console/v1/accounts");
         return users!.Single(u => u.Email == email);
     }
 
@@ -34,7 +34,7 @@ public class UserManagementTests(PostgresFixture fx) : IAsyncLifetime
         using var admin = await AdminClient(app);
 
         // Create a Member.
-        var create = await admin.PostAsJsonAsync("/_console/api/users",
+        var create = await admin.PostAsJsonAsync("/console/v1/accounts",
             new { email = "m@example.com", firstName = "Mem", lastName = "Ber", role = "Member", password = "Passw0rd!" });
         Assert.Equal(HttpStatusCode.OK, create.StatusCode);
 
@@ -47,7 +47,7 @@ public class UserManagementTests(PostgresFixture fx) : IAsyncLifetime
             await mc.LoginAsync("m@example.com", "Passw0rd!");
 
         // Update: demote to Viewer + deactivate + require 2FA.
-        var upd = await admin.PutAsJsonAsync($"/_console/api/users/{member.Id}",
+        var upd = await admin.PutAsJsonAsync($"/console/v1/accounts/{member.Id}",
             new { role = "Viewer", active = false, twoFactorRequired = true, firstName = "Renamed" });
         Assert.Equal(HttpStatusCode.OK, upd.StatusCode);
         var after = await Find(admin, "m@example.com");
@@ -58,21 +58,21 @@ public class UserManagementTests(PostgresFixture fx) : IAsyncLifetime
         // Deactivated account cannot log in.
         using (var mc = app.CreateClient())
         {
-            var login = await mc.PostAsJsonAsync("/_console/api/auth/login", new { email = "m@example.com", password = "Passw0rd!" });
+            var login = await mc.PostAsJsonAsync("/console/v1/session/login", new { email = "m@example.com", password = "Passw0rd!" });
             Assert.Equal(HttpStatusCode.Forbidden, login.StatusCode);
         }
 
         // Reset password, reactivate, then the member logs in with the new password.
-        await admin.PutAsJsonAsync($"/_console/api/users/{member.Id}", new { active = true });
-        var reset = await admin.PostAsJsonAsync($"/_console/api/users/{member.Id}/reset-password", new { newPassword = "N3wPass!" });
+        await admin.PutAsJsonAsync($"/console/v1/accounts/{member.Id}", new { active = true });
+        var reset = await admin.PostAsJsonAsync($"/console/v1/accounts/{member.Id}/reset-password", new { newPassword = "N3wPass!" });
         Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
         using (var mc = app.CreateClient())
             await mc.LoginAsync("m@example.com", "N3wPass!");
 
         // Delete.
-        var del = await admin.DeleteAsync($"/_console/api/users/{member.Id}");
+        var del = await admin.DeleteAsync($"/console/v1/accounts/{member.Id}");
         Assert.Equal(HttpStatusCode.NoContent, del.StatusCode);
-        var list = await admin.GetFromJsonAsync<List<UserItem>>("/_console/api/users");
+        var list = await admin.GetFromJsonAsync<List<UserItem>>("/console/v1/accounts");
         Assert.DoesNotContain(list!, u => u.Email == "m@example.com");
     }
 
@@ -82,11 +82,11 @@ public class UserManagementTests(PostgresFixture fx) : IAsyncLifetime
         await fx.ResetAuthAsync();
         using var app = new ConsoleAppFactory(fx);
         using var admin = await AdminClient(app);
-        await admin.PostAsJsonAsync("/_console/api/users", new { email = "m@example.com", role = "Member", password = "Passw0rd!" });
-        await admin.PostAsJsonAsync("/_console/api/users", new { email = "other@example.com", role = "Member", password = "Passw0rd!" });
+        await admin.PostAsJsonAsync("/console/v1/accounts", new { email = "m@example.com", role = "Member", password = "Passw0rd!" });
+        await admin.PostAsJsonAsync("/console/v1/accounts", new { email = "other@example.com", role = "Member", password = "Passw0rd!" });
         var member = await Find(admin, "m@example.com");
-        Assert.Equal(HttpStatusCode.Conflict, (await admin.PutAsJsonAsync($"/_console/api/users/{member.Id}", new { email = "other@example.com" })).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync($"/_console/api/users/{member.Id}", new { email = "new@example.com" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await admin.PutAsJsonAsync($"/console/v1/accounts/{member.Id}", new { email = "other@example.com" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync($"/console/v1/accounts/{member.Id}", new { email = "new@example.com" })).StatusCode);
         Assert.Equal("new@example.com", (await Find(admin, "new@example.com")).Email);
 
         // (Its sessions end with the change: Winche Auth's SetEmailAsync.)
@@ -102,10 +102,10 @@ public class UserManagementTests(PostgresFixture fx) : IAsyncLifetime
         using var admin = await AdminClient(app);
         var self = await Find(admin, "admin@example.com");
 
-        var demote = await admin.PutAsJsonAsync($"/_console/api/users/{self.Id}", new { role = "Viewer" });
+        var demote = await admin.PutAsJsonAsync($"/console/v1/accounts/{self.Id}", new { role = "Viewer" });
         Assert.Equal(HttpStatusCode.BadRequest, demote.StatusCode);
 
-        var del = await admin.DeleteAsync($"/_console/api/users/{self.Id}");
+        var del = await admin.DeleteAsync($"/console/v1/accounts/{self.Id}");
         Assert.Equal(HttpStatusCode.BadRequest, del.StatusCode);
     }
 
@@ -116,16 +116,16 @@ public class UserManagementTests(PostgresFixture fx) : IAsyncLifetime
         using var app = new ConsoleAppFactory(fx);
         using var admin = await AdminClient(app);
         // A second admin exists, so the last-admin guard would NOT fire — only the self-delete guard applies.
-        await admin.PostAsJsonAsync("/_console/api/users",
+        await admin.PostAsJsonAsync("/console/v1/accounts",
             new { email = "admin2@example.com", role = "Admin", password = "Passw0rd!" });
 
         var self = await Find(admin, "admin@example.com");
-        var deleteSelf = await admin.DeleteAsync($"/_console/api/users/{self.Id}");
+        var deleteSelf = await admin.DeleteAsync($"/console/v1/accounts/{self.Id}");
         Assert.Equal(HttpStatusCode.BadRequest, deleteSelf.StatusCode);
 
         // The current admin can still delete the other admin.
         var other = await Find(admin, "admin2@example.com");
-        var deleteOther = await admin.DeleteAsync($"/_console/api/users/{other.Id}");
+        var deleteOther = await admin.DeleteAsync($"/console/v1/accounts/{other.Id}");
         Assert.Equal(HttpStatusCode.NoContent, deleteOther.StatusCode);
     }
 
@@ -135,12 +135,12 @@ public class UserManagementTests(PostgresFixture fx) : IAsyncLifetime
         await fx.ResetAuthAsync();
         using var app = new ConsoleAppFactory(fx);
         using var admin = await AdminClient(app);
-        await admin.PostAsJsonAsync("/_console/api/users",
+        await admin.PostAsJsonAsync("/console/v1/accounts",
             new { email = "v@example.com", role = "Viewer", password = "Passw0rd!" });
 
         using var viewer = app.CreateClient();
         await viewer.LoginAsync("v@example.com", "Passw0rd!");
-        var resp = await viewer.GetAsync("/_console/api/users");
+        var resp = await viewer.GetAsync("/console/v1/accounts");
         Assert.Equal(HttpStatusCode.Forbidden, resp.StatusCode);
     }
 
@@ -151,10 +151,10 @@ public class UserManagementTests(PostgresFixture fx) : IAsyncLifetime
         using var app = new ConsoleAppFactory(fx);
         using var admin = await AdminClient(app);
 
-        var prof = await admin.PutAsJsonAsync("/_console/api/auth/profile", new { firstName = "New", lastName = "Name" });
+        var prof = await admin.PutAsJsonAsync("/console/v1/session/profile", new { firstName = "New", lastName = "Name" });
         Assert.Equal(HttpStatusCode.OK, prof.StatusCode);
 
-        var pwd = await admin.PostAsJsonAsync("/_console/api/auth/password",
+        var pwd = await admin.PostAsJsonAsync("/console/v1/session/password",
             new { currentPassword = "Passw0rd!", newPassword = "Ch4nged!" });
         Assert.Equal(HttpStatusCode.OK, pwd.StatusCode);
 

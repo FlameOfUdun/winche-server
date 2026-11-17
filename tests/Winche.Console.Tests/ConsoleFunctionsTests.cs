@@ -41,9 +41,9 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         using var client = app.CreateClient();
         await client.SetupAdminAsync();
         await client.LoginAsync();
-        var state = await Json(await client.GetAsync("/_console/api/auth/state"));
+        var state = await Json(await client.GetAsync("/console/v1/session/state"));
         Assert.True(state.GetProperty("capabilities").GetProperty("functions").GetBoolean());
-        var page = await Json(await client.GetAsync("/_console/api/functions"));
+        var page = await Json(await client.GetAsync("/console/v1/functions"));
         Assert.Equal(JsonValueKind.Null, page.GetProperty("current").ValueKind);
         // Deno comes from WINCHE_DENO, else PATH. Set WINCHE_DENO to require it; without Deno, it's said plainly.
         var problem = page.GetProperty("runtimeProblem");
@@ -55,7 +55,7 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
             return;
         }
 
-        var refused = await client.PostAsJsonAsync("/_console/api/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = "export const = ;" }, note = "Broken" });
+        var refused = await client.PostAsJsonAsync("/console/v1/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = "export const = ;" }, note = "Broken" });
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
         Assert.Contains("doesn't build", await refused.Content.ReadAsStringAsync());
 
@@ -67,28 +67,28 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
               return `{{greeting}} ${data.name} (${ctx.caller?.uid ?? "server"})`;
             });
             """;
-        var v1 = await Json(await client.PostAsJsonAsync("/_console/api/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = Code("Hello") }, note = "First" }));
+        var v1 = await Json(await client.PostAsJsonAsync("/console/v1/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = Code("Hello") }, note = "First" }));
         Assert.Equal((1, "hello"), (v1.GetProperty("version").GetInt32(), v1.GetProperty("functions")[0].GetProperty("name").GetString()));
-        await Json(await client.PostAsJsonAsync("/_console/api/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = Code("Hi") }, note = "Second" }));
+        await Json(await client.PostAsJsonAsync("/console/v1/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = Code("Hi") }, note = "Second" }));
 
-        var run = await Json(await client.PostAsJsonAsync("/_console/api/functions/run", new { name = "hello", data = new { name = "Ann" }, asUid = "u1" }));
+        var run = await Json(await client.PostAsJsonAsync("/console/v1/functions/run", new { name = "hello", data = new { name = "Ann" }, asUid = "u1" }));
         Assert.Equal(("Hi Ann (u1)", "people: 0"), (run.GetProperty("result").GetString(), run.GetProperty("logs")[0].GetProperty("message").GetString()));
 
-        await Json(await client.PostAsJsonAsync("/_console/api/functions/versions/1/rollback", new { note = (string?)null }));
-        run = await Json(await client.PostAsJsonAsync("/_console/api/functions/run", new { name = "hello", data = new { name = "Ann" } }));
+        await Json(await client.PostAsJsonAsync("/console/v1/functions/versions/1/rollback", new { note = (string?)null }));
+        run = await Json(await client.PostAsJsonAsync("/console/v1/functions/run", new { name = "hello", data = new { name = "Ann" } }));
         Assert.Equal("Hello Ann (server)", run.GetProperty("result").GetString());
-        var versions = await Json(await client.GetAsync("/_console/api/functions/versions"));
+        var versions = await Json(await client.GetAsync("/console/v1/functions/versions"));
         Assert.Equal([3, 2, 1], versions.GetProperty("versions").EnumerateArray().Select(v => v.GetProperty("version").GetInt32()));
 
         // CI: a token with the functions scope deploys (named in the versions); it can't run functions or do anything else.
-        var made = await Json(await client.PostAsJsonAsync("/_console/api/tokens", new { name = "gitlab-main", scopes = new[] { "functions" }, days = 30 }));
+        var made = await Json(await client.PostAsJsonAsync("/console/v1/tokens", new { name = "gitlab-main", scopes = new[] { "functions" }, days = 30 }));
         using var ci = app.CreateClient();
         ci.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", made.GetProperty("secret").GetString());
-        var deployed = await Json(await ci.PostAsJsonAsync("/_console/api/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = Code("Hey") }, note = "From CI" }));
+        var deployed = await Json(await ci.PostAsJsonAsync("/console/v1/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = Code("Hey") }, note = "From CI" }));
         Assert.Equal((4, "gitlab-main (CI token by admin@example.com)"), (deployed.GetProperty("version").GetInt32(), deployed.GetProperty("by").GetString()));
-        Assert.Equal(HttpStatusCode.Unauthorized, (await ci.PostAsJsonAsync("/_console/api/functions/run", new { name = "hello" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await ci.PostAsJsonAsync("/console/v1/functions/run", new { name = "hello" })).StatusCode);
         // Deploy keys are gone (nothing answers there: the SPA's fallback only serves GET).
-        Assert.Contains((await client.PostAsync("/_console/api/functions/deploy-key", null)).StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
+        Assert.Contains((await client.PostAsync("/console/v1/functions/deploy-key", null)).StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
         Assert.Contains((await ci.PostAsJsonAsync("/functions/v1/deploy", new { files = new Dictionary<string, string>() })).StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
     }
     [Fact]
@@ -100,27 +100,27 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         await client.LoginAsync();
         if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 }) return;   // deploying needs Deno
 
-        await Json(await client.PostAsJsonAsync("/_console/api/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = """
+        await Json(await client.PostAsJsonAsync("/console/v1/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = """
             import { callable } from "@winche/functions";
             export const keyLength = callable(async (_d, ctx) => ctx.secrets.get("MAIL_KEY").length, { secrets: ["MAIL_KEY"] });
             """ }, note = "Secrets" }));
-        var list = await Json(await client.GetAsync("/_console/api/functions/secrets"));
+        var list = await Json(await client.GetAsync("/console/v1/functions/secrets"));
         Assert.True(list.GetProperty("available").GetBoolean());
         var only = Assert.Single(list.GetProperty("secrets").EnumerateArray());
         Assert.Equal(("MAIL_KEY", false, "keyLength"), (only.GetProperty("name").GetString(), only.GetProperty("isSet").GetBoolean(), only.GetProperty("usedBy")[0].GetString()));
 
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/_console/api/functions/secrets/mail-key", new { value = "x" })).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/_console/api/functions/secrets/MAIL_KEY", new { value = "" })).StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, (await client.PutAsJsonAsync("/_console/api/functions/secrets/MAIL_KEY", new { value = "k-123456" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/console/v1/functions/secrets/mail-key", new { value = "x" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/console/v1/functions/secrets/MAIL_KEY", new { value = "" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PutAsJsonAsync("/console/v1/functions/secrets/MAIL_KEY", new { value = "k-123456" })).StatusCode);
 
-        var text = await (await client.GetAsync("/_console/api/functions/secrets")).Content.ReadAsStringAsync();
+        var text = await (await client.GetAsync("/console/v1/functions/secrets")).Content.ReadAsStringAsync();
         Assert.DoesNotContain("k-123456", text);   // values never come back
         Assert.Contains("\"isSet\":true", text);
-        var run = await Json(await client.PostAsJsonAsync("/_console/api/functions/run", new { name = "keyLength" }));
+        var run = await Json(await client.PostAsJsonAsync("/console/v1/functions/run", new { name = "keyLength" }));
         Assert.Equal(8, run.GetProperty("result").GetInt32());
 
-        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/_console/api/functions/secrets/MAIL_KEY")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync("/_console/api/functions/secrets/MAIL_KEY")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/console/v1/functions/secrets/MAIL_KEY")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync("/console/v1/functions/secrets/MAIL_KEY")).StatusCode);
     }
 
     [Fact]
@@ -132,7 +132,7 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         await admin.LoginAsync();
         if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 }) return;   // deploying needs Deno
 
-        await Json(await admin.PostAsJsonAsync("/_console/api/functions/deploy", new { note = "Pages", files = new Dictionary<string, string>
+        await Json(await admin.PostAsJsonAsync("/console/v1/functions/deploy", new { note = "Pages", files = new Dictionary<string, string>
         {
             ["index.ts"] = """
                 import { consolePage, consoleAction } from "@winche/functions";
@@ -147,19 +147,19 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
             ["console/reports/sub/more.html"] = "<html><head></head><body>more</body></html>",
             ["console/tools/index.html"] = "<p>tools</p>",
         } }));
-        var state = await Json(await admin.GetAsync("/_console/api/auth/state"));
+        var state = await Json(await admin.GetAsync("/console/v1/session/state"));
         Assert.True(state.GetProperty("capabilities").GetProperty("consolePages").GetBoolean());
-        var pages = await Json(await admin.GetAsync("/_console/api/console-pages"));
+        var pages = await Json(await admin.GetAsync("/console/v1/pages"));
         Assert.Equal(["reports", "tools"], pages.GetProperty("pages").EnumerateArray().Select(p => p.GetProperty("name").GetString()));
 
-        await admin.PostAsJsonAsync("/_console/api/users", new { email = "v@example.com", role = "Viewer", password = "Passw0rd!" });
+        await admin.PostAsJsonAsync("/console/v1/accounts", new { email = "v@example.com", role = "Viewer", password = "Passw0rd!" });
         using var viewer = app.CreateClient();
         await viewer.LoginAsync("v@example.com", "Passw0rd!");
-        pages = await Json(await viewer.GetAsync("/_console/api/console-pages"));
+        pages = await Json(await viewer.GetAsync("/console/v1/pages"));
         Assert.Equal(["reports"], pages.GetProperty("pages").EnumerateArray().Select(p => p.GetProperty("name").GetString()));
-        Assert.Equal(HttpStatusCode.NotFound, (await viewer.PostAsync("/_console/api/console-pages/tools/open", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await viewer.PostAsync("/console/v1/pages/tools/open", null)).StatusCode);
 
-        var opened = await Json(await viewer.PostAsync("/_console/api/console-pages/reports/open", null));
+        var opened = await Json(await viewer.PostAsync("/console/v1/pages/reports/open", null));
         var url = opened.GetProperty("url").GetString()!;
         Assert.Equal(("v@example.com", "viewer"), (opened.GetProperty("user").GetProperty("email").GetString(), opened.GetProperty("user").GetProperty("role").GetString()));
 
@@ -179,17 +179,17 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, (await frame.GetAsync(url + "..%2F..%2Ftools%2Findex.html")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await frame.GetAsync(url.Replace("/reports/", "/reports/x").TrimEnd('/') + "/")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await frame.GetAsync(url.Replace("/reports/", "/tools/"))).StatusCode);   // a link is for one page
-        Assert.Equal(HttpStatusCode.Unauthorized, (await frame.PostAsJsonAsync("/_console/api/console-pages/actions/summary", new { data = (object?)null })).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await frame.PostAsJsonAsync("/console/v1/pages/actions/summary", new { data = (object?)null })).StatusCode);
 
-        var ran = await Json(await viewer.PostAsJsonAsync("/_console/api/console-pages/actions/summary", new { data = (object?)null }));
+        var ran = await Json(await viewer.PostAsJsonAsync("/console/v1/pages/actions/summary", new { data = (object?)null }));
         Assert.Equal(("v@example.com", "viewer"), (ran.GetProperty("data").GetProperty("by").GetString(), ran.GetProperty("data").GetProperty("role").GetString()));
-        var refused = await viewer.PostAsJsonAsync("/_console/api/console-pages/actions/wipe", new { data = (object?)null });
+        var refused = await viewer.PostAsJsonAsync("/console/v1/pages/actions/wipe", new { data = (object?)null });
         Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
         Assert.Contains("needs the admin role", await refused.Content.ReadAsStringAsync());
-        Assert.Equal("wiped", (await Json(await admin.PostAsJsonAsync("/_console/api/console-pages/actions/wipe", new { data = (object?)null }))).GetProperty("data").GetString());
+        Assert.Equal("wiped", (await Json(await admin.PostAsJsonAsync("/console/v1/pages/actions/wipe", new { data = (object?)null }))).GetProperty("data").GetString());
 
         // A failure says why to the console's people (apps get "The function failed.").
-        var broken = await viewer.PostAsJsonAsync("/_console/api/console-pages/actions/broken", new { data = (object?)null });
+        var broken = await viewer.PostAsJsonAsync("/console/v1/pages/actions/broken", new { data = (object?)null });
         Assert.False(broken.IsSuccessStatusCode);
         Assert.Contains("The mail server refused the key.", await broken.Content.ReadAsStringAsync());
     }

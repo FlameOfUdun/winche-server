@@ -12,8 +12,11 @@ namespace Winche.Console.Spa;
 /// route, with a <c>&lt;base href&gt;</c> injected so the SPA's relative asset + API URLs resolve
 /// under the consumer-chosen prefix.
 /// </summary>
-internal static class ConsoleSpa
+internal static partial class ConsoleSpa
 {
+    [GeneratedRegex("^v[0-9]+(/|$)")]
+    private static partial Regex ApiPath();
+
     private static readonly IFileProvider Files =
         new ManifestEmbeddedFileProvider(typeof(ConsoleSpa).Assembly, "wwwroot");
 
@@ -23,8 +26,8 @@ internal static class ConsoleSpa
         // Catch-all under the group: specific API routes win; everything else is an asset or index.
         group.MapGet("/{**path}", async (HttpContext ctx, string? path) =>
         {
-            // An API address that matched nothing is a 404, not the console's page.
-            if (path is not null && (path == "api" || path.StartsWith("api/", StringComparison.Ordinal)))
+            // An API address (v1/…, a later v2/…) that matched nothing is a 404, not the console's page.
+            if (path is not null && ApiPath().IsMatch(path))
             {
                 ctx.Response.StatusCode = StatusCodes.Status404NotFound;
                 return;

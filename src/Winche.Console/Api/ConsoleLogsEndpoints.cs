@@ -12,7 +12,7 @@ using Winche.Console.Tabs;
 namespace Winche.Console.Api;
 
 /// <summary>
-/// <c>api/logs/{scope}</c> — the Logs tab (<c>app</c>: everything) and the Database / Storage tabs' Logs sub-tabs
+/// <c>logs/{scope}</c> — the Logs tab (<c>app</c>: everything) and the Database / Storage tabs' Logs sub-tabs
 /// (<c>database</c>, <c>storage</c>: that library's categories). Admins only: logs can hold personal data.
 /// </summary>
 public static class ConsoleLogsEndpoints
@@ -119,7 +119,7 @@ public static class ConsoleLogsEndpoints
 
     public static IEndpointRouteBuilder MapConsoleLogsEndpoints(this IEndpointRouteBuilder app, ConsoleOptions options)
     {
-        var group = app.MapGroup("/api/logs");
+        var group = app.MapGroup("/logs");
 
         // The levels kept: from code (LogsOptions.MinimumLevel / SetLevel) until an Admin saves them here; saved levels
         // apply on every instance within LogsOptions.LevelSyncInterval, and Reset goes back to the code's.
