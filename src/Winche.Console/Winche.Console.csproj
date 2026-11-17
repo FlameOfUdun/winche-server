@@ -27,7 +27,7 @@
     <PackageReference Include="Winche.Storage" Version="11.0.0" />
     <PackageReference Include="Winche.Auth.AspNetCore" Version="2.0.0" />
     <PackageReference Include="Winche.Core" Version="2.0.0" />
-    <PackageReference Include="Winche.Secrets" Version="1.0.0" />
+    <PackageReference Include="Winche.Secrets" Version="2.0.0" />
     <PackageReference Include="Winche.Core.AspNetCore" Version="2.0.0" />
     <PackageReference Include="Winche.Webhooks" Version="2.0.0" />
     <PackageReference Include="Winche.Functions" Version="2.0.0" />
