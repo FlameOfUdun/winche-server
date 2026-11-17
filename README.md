@@ -7,8 +7,8 @@ rules, sign-in methods, identity providers, indexes, where files are kept, webho
 
 ## Quickstart
 
-You need Docker. The image is `ghcr.io/flameofudun/winche-server` (amd64 and arm64), tagged by version: `1` follows the
-latest 1.x, `1.0` the latest 1.0.x, `1.0.0` stays put. The compose file in this repository uses `1`; copy it (with
+You need Docker. The image is `ghcr.io/flameofudun/winche-server` (amd64 and arm64), tagged by version: `2` follows the
+latest 2.x, `2.0` the latest 2.0.x, `2.0.0` stays put. The compose file in this repository uses `2`; copy it (with
 nothing else) to wherever the server will run.
 
 1. **Configure.** Create a `.env` file beside `docker-compose.yml`:
@@ -101,14 +101,15 @@ carry over (their keys are kept in the database). `GET /healthz` answers 200 onc
 - **Database:** a data browser that refreshes as apps write, plus rules (an editor with a simulator), indexes and
   expiry (a table or text), change history, webhooks, logs and settings.
 - **Storage:** files, rules, webhooks, logs and settings (size limit, a disk or an S3-compatible bucket).
-- **Functions:** TypeScript functions run by Deno: callables apps call, and triggers on documents, files and users.
-  You write them in your editor and deploy them with the CLI (`winche functions deploy`, or a CI token). The console
-  lists them, runs callables and shows each trigger's runs and versions, and keeps their secrets (API keys and
-  passwords they read with `ctx.secrets.get`, encrypted, never shown again).
-- **Secrets:** every secret (function secrets, the SMTP password, sync and client secrets) is a value kept encrypted
-  or a reference read from AWS Secrets Manager or Parameter Store (`aws-ssm:/app/key`). A project keeps its own AWS
-  key in Settings → Secrets; without one, references use the server's AWS credentials, which only server admins may
-  choose.
+- **Functions:** TypeScript functions run by Deno: callables apps call, HTTP functions, schedules, and triggers on
+  documents, files, users and assets. You write them in your editor and deploy them with the CLI (`winche functions
+  deploy`, or a CI token). The console shows each one with what it does, runs callables, lists each trigger's runs, sets
+  each function's run time, and keeps every deploy in its change history (Settings → Change history) to roll back to.
+- **Secrets:** the API keys and passwords functions read (`ctx.secrets.get`), and those the products keep (the SMTP
+  password, a sync's or provider's client secret, a bucket's key), on one page. Each is a value kept encrypted and never
+  shown again, or a reference read from AWS Secrets Manager or Parameter Store (`aws-ssm:/app/key`, with Test). A
+  project can keep an AWS access key of its own for those (optional); without one, references use the server's AWS
+  credentials and region (`AWS_REGION`, the task's role), which only server admins may choose.
 - **Assets:** versioned content apps read (translations, pages, media): numbered releases published from the CLI
   (`winche assets deploy`, or a CI token with the `assets` scope), channels apps follow (moving one back is a
   rollback), and rules per path. Kept in the project's files folder unless the console moves them to a bucket.
@@ -198,6 +199,9 @@ PostgreSQL server is backed up there.
 
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
+
+**From 1.x to 2.0:** a 2.x server has no project at its root: every project is under `/p/<id>`, and the server runs
+with none until one is added. 2.0 doesn't carry a 1.x server's root project over, so set 2.0 up on new databases.
 
 ## Working on it
 
