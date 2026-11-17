@@ -78,6 +78,23 @@ app.Run(async http =>
     await ProjectRouter.RouteAsync(http, projects, console);
 });
 
+// Warm-up: once the server listens, each project answers one request of its own (a process's first request compiles
+// code and opens database connections), so the first caller after a start or restart isn't the one who waits. Best
+// effort; skipped where there's no network address (tests).
+app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(async () =>
+{
+    var address = app.Services.GetRequiredService<Microsoft.AspNetCore.Hosting.Server.IServer>().Features
+        .Get<Microsoft.AspNetCore.Hosting.Server.Features.IServerAddressesFeature>()?.Addresses.FirstOrDefault();
+    if (address is null || !Uri.TryCreate(address.Replace("://+", "://localhost").Replace("://*", "://localhost")
+            .Replace("://[::]", "://localhost").Replace("://0.0.0.0", "://localhost"), UriKind.Absolute, out var local)) return;
+    using var http = new HttpClient { BaseAddress = local, Timeout = TimeSpan.FromSeconds(30) };
+    foreach (var host in projects.All)
+    {
+        try { (await http.GetAsync($"/p/{host.Project.Id}/.well-known/winche")).Dispose(); }
+        catch (Exception ex) { app.Logger.LogDebug(ex, "Warming project {Project} up didn't work; its first request does it.", host.Project.Id); }
+    }
+}));
+
 await app.RunAsync();
 return 0;
 
