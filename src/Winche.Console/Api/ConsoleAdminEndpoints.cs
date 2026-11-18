@@ -26,6 +26,9 @@ public static class ConsoleAdminEndpoints
     /// <summary>Set by the console's web app on the calls it relays for a page.</summary>
     public const string PageHeader = "X-Winche-Page";
 
+    /// <summary>The protocol the calling @winche/admin speaks (refused unless this server's).</summary>
+    public const string ProtocolHeader = "X-Winche-Protocol";
+
     /// <summary>The least role <paramref name="op"/> needs.</summary>
     public static ConsoleRole RoleFor(string op) =>
         AdminOps.IsRead(op) ? ConsoleRole.Viewer : AdminOps.IsDataWrite(op) ? ConsoleRole.Member : ConsoleRole.Admin;
@@ -34,6 +37,9 @@ public static class ConsoleAdminEndpoints
     {
         app.MapPost("/admin", async (AdminRequest body, HttpContext http, ConsoleOptions options, CancellationToken ct) =>
         {
+            if (http.Request.Headers[ProtocolHeader].FirstOrDefault() is { Length: > 0 } spoken && spoken != FunctionsSdk.Protocol.ToString())
+                return new WincheError(WincheErrorCode.FailedPrecondition,
+                    $"This @winche/admin speaks protocol {spoken}; this server speaks {FunctionsSdk.Protocol} (@winche/admin {FunctionsSdk.Major}.x).").ToResult();
             var op = body.Op?.Trim() ?? "";
             if (op.Length == 0 || !op.Contains('.'))
                 return new WincheError(WincheErrorCode.InvalidArgument, "Give an operation, e.g. db.get.").ToResult();

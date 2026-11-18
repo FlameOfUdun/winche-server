@@ -85,6 +85,13 @@ public sealed class ServerOptions
     /// </summary>
     public string? DenoPath { get; set; }
 
+    /// <summary>
+    /// A folder of npm packages this server provides to functions that import them without naming them in deno.json
+    /// (<c>@winche/functions/</c>, <c>@winche/admin/</c>: each a package.json and its built files), for servers that
+    /// can't reach npm (<c>Winche__FunctionPackagesPath</c>). Unset: projects name their packages themselves.
+    /// </summary>
+    public string? FunctionPackagesPath { get; set; }
+
 
     /// <summary>
     /// Console sign-in through an OpenID Connect provider, as it starts (<c>Winche__ConsoleSignIn__Issuer</c>, …);

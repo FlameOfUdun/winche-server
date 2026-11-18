@@ -124,6 +124,10 @@ internal static class ProjectApp
         {
             o.ConnectionString = config;   // deployments and schedules are configuration
             o.DenoPath = string.IsNullOrWhiteSpace(server.DenoPath) ? null : server.DenoPath;   // the image has deno on the PATH
+            if (server.FunctionPackagesPath is { Length: > 0 } packages && Directory.Exists(packages))
+                foreach (var dir in Directory.EnumerateDirectories(packages, "*", SearchOption.AllDirectories))
+                    if (File.Exists(Path.Combine(dir, "package.json")))
+                        o.ProvidedPackages[Path.GetRelativePath(packages, dir).Replace('\\', '/')] = dir;   // e.g. @winche/admin
             FunctionsLongestRun.Apply(o, settings.Current);   // the server's limits; followed below
             o.UseSettings();   // Functions → Settings: the project's default and each function's own time
         });

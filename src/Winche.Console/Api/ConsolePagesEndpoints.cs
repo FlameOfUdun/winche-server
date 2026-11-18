@@ -23,9 +23,9 @@ namespace Winche.Console.Api;
 /// <remarks>
 /// A page is opened through a short-lived signed address (<c>pages/{name}/view/{token}/</c>): the frame has no cookies
 /// of the console's and runs in an opaque origin (the sandbox CSP), so it can't call the console's API or read its
-/// session. Its pages import <c>@winche/admin</c> (an import map the console adds points it at the SDK, served beside
-/// the page), whose calls go over a channel to the console, which sends them to the admin API (<c>admin</c>) with the
-/// person's own session, so their role limits them.
+/// session. A page brings its own <c>@winche/admin</c> (bundled, or a file in its folder); the SDK finds the channel
+/// the console's bridge script opens, and its calls go over it to the console, which sends them to the admin API
+/// (<c>admin</c>) with the person's own session, so their role limits them.
 /// </remarks>
 public static class ConsolePagesEndpoints
 {
@@ -90,8 +90,6 @@ public static class ConsolePagesEndpoints
             // anyone may read them (whoever has the signed address may anyway).
             http.Response.Headers.AccessControlAllowOrigin = "*";
             if (path == BridgePath) return Results.Text(Bridge, "text/javascript; charset=utf-8");
-            if (path == AdminPath)
-                return Results.Text(await http.RequestServices.GetRequiredService<FunctionBundler>().AdminForBrowserAsync(ct), "text/javascript; charset=utf-8");
             await functions.RefreshAsync(ct);
             var page = functions.Current?.Functions.FirstOrDefault(f => f.Name == name && f.Trigger.Kind == "consolePage");
             if (page is null || ConsolePages.File(functions.Current!, page, path ?? "") is not { } file) return Results.NotFound();
@@ -104,19 +102,13 @@ public static class ConsolePagesEndpoints
     }
 
     internal const string BridgePath = "_winche/console.js";
-    internal const string AdminPath = "_winche/admin.js";
 
     private static int Depth(string? path) => (path ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries).Length - ((path ?? "").EndsWith('/') || path is null or "" ? 0 : 1);
 
-    /// <summary>
-    /// The page's HTML with, first in its head (or at the top, without one), an import map that resolves
-    /// <c>@winche/admin</c> to the SDK served beside the page, and the bridge script.
-    /// </summary>
+    /// <summary>The page's HTML with the bridge script first in its head (or at the top, without one).</summary>
     internal static string WithBridge(string html, int depth)
     {
-        var up = string.Concat(Enumerable.Repeat("../", Math.Max(0, depth)));
-        // An import map's addresses start with ./, ../ or / (a bare one is ignored).
-        var tag = $"<script type=\"importmap\">{{\"imports\":{{\"@winche/admin\":\"{(up.Length == 0 ? "./" : up)}{AdminPath}\"}}}}</script><script src=\"{up}{BridgePath}\"></script>";
+        var tag = $"<script src=\"{string.Concat(Enumerable.Repeat("../", Math.Max(0, depth)))}{BridgePath}\"></script>";
         var head = html.IndexOf("<head", StringComparison.OrdinalIgnoreCase);
         var end = head < 0 ? -1 : html.IndexOf('>', head);
         return end < 0 ? tag + html : html.Insert(end + 1, tag);
@@ -133,10 +125,10 @@ public static class ConsolePagesEndpoints
           let port = null, next = 1, connected;
           const pending = new Map();
           const ready = new Promise((r) => (connected = r));
-          globalThis[key] = (op, args) => ready.then(() => new Promise((resolve, reject) => {
+          globalThis[key] = (op, args, protocol) => ready.then(() => new Promise((resolve, reject) => {
             const id = next++;
             pending.set(id, { resolve, reject });
-            port.postMessage({ op: "admin", id, call: op, args });
+            port.postMessage({ op: "admin", id, call: op, args, protocol });
           }));
           window.addEventListener("message", (e) => {
             if (port || e.source !== window.parent || e.data?.winche !== 1 || e.data.op !== "connect" || !e.ports[0]) return;

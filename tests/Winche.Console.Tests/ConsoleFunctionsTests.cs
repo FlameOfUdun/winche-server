@@ -170,13 +170,11 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.StartsWith("sandbox allow-scripts", csp);
         Assert.Contains("connect-src 'none'", csp);
         var html = await index.Content.ReadAsStringAsync();
-        // @winche/admin resolves to the SDK served beside the page; the bridge carries its calls to the console.
-        Assert.Contains("<head><script type=\"importmap\">{\"imports\":{\"@winche/admin\":\"./_winche/admin.js\"}}</script><script src=\"_winche/console.js\"></script><title>R</title>", html);
-        var sub = await frame.GetStringAsync(url + "sub/more.html");
-        Assert.Contains("\"@winche/admin\":\"../_winche/admin.js\"", sub);
-        Assert.Contains("../_winche/console.js", sub);
+        // The page brings its own @winche/admin; the console adds only the bridge that carries its calls.
+        Assert.Contains("<head><script src=\"_winche/console.js\"></script><title>R</title>", html);
+        Assert.Contains("../_winche/console.js", await frame.GetStringAsync(url + "sub/more.html"));
         Assert.Contains("Symbol.for(\"winche.page\")", await frame.GetStringAsync(url + "_winche/console.js"));
-        Assert.Contains("initializeAdmin", await frame.GetStringAsync(url + "_winche/admin.js"));
+        Assert.Equal(HttpStatusCode.NotFound, (await frame.GetAsync(url + "_winche/admin.js")).StatusCode);
         Assert.Equal("text/javascript; charset=utf-8", (await frame.GetAsync(url + "app.js")).Content.Headers.ContentType!.ToString());
         // A sandboxed frame's origin is "null": its module scripts (type="module", import) load in CORS mode.
         using (var module = new HttpRequestMessage(HttpMethod.Get, url + "app.js") { Headers = { { "Origin", "null" } } })
@@ -208,6 +206,12 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Equal("nobody", (await Json(await admin.PostAsJsonAsync("/console/v1/admin", Call()))).GetProperty("result").GetString());
         using (var fromPage = new HttpRequestMessage(HttpMethod.Post, "/console/v1/admin") { Content = JsonContent.Create(Call()), Headers = { { "X-Winche-Page", "reports" } } })
             Assert.Equal(HttpStatusCode.Forbidden, (await admin.SendAsync(fromPage)).StatusCode);
+        using (var later = new HttpRequestMessage(HttpMethod.Post, "/console/v1/admin") { Content = JsonContent.Create(new { op = "db.get", args = new { path = path } }), Headers = { { "X-Winche-Protocol", "2" } } })
+        {
+            var refusedSdk = await viewer.SendAsync(later);
+            Assert.Equal(HttpStatusCode.BadRequest, refusedSdk.StatusCode);
+            Assert.Contains("This @winche/admin speaks protocol 2; this server speaks 1 (@winche/admin 3.x).", await refusedSdk.Content.ReadAsStringAsync());
+        }
         var missing = await viewer.PostAsJsonAsync("/console/v1/admin", new { op = "db.get", args = new { path = "notes" } });
         Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);   // the binding's own refusal, with its code
     }

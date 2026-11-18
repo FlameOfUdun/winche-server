@@ -21,4 +21,8 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The TypeScript SDKs, built (scripts/update-test-packages.sh): the test hosts provide them to deployments. -->
+    <None Include="..\SdkPackages\**" LinkBase="SdkPackages" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

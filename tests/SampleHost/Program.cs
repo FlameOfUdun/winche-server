@@ -28,6 +28,9 @@ Winche.Functions.ServiceCollectionExtensions.AddWincheFunctions(builder.Services
 {
     o.ConnectionString = wincheConn;
     o.DenoPath = Environment.GetEnvironmentVariable("WINCHE_DENO") is { Length: > 0 } deno ? deno : null;
+    // The TypeScript SDKs the tests carry (tests/SdkPackages), for code that doesn't name them in deno.json.
+    foreach (var name in new[] { "functions", "admin" })
+        if (Path.Combine(AppContext.BaseDirectory, "SdkPackages", "@winche", name) is var dir && Directory.Exists(dir)) o.ProvidedPackages[$"@winche/{name}"] = dir;
 });
 Winche.Functions.Database.DatabaseFunctionsExtensions.AddWincheFunctionsForDatabase(builder.Services);
 builder.Services.AddWincheStorage(opts =>

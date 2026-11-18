@@ -46,6 +46,7 @@ public sealed class ServerFactory(string connection, string? files, params (stri
         builder.UseSetting("Winche:ConnectionString", connection);
         if (!extra.Any(e => e.Key == "Winche:MasterKey")) builder.UseSetting("Winche:MasterKey", "server-tests-master-key-0123456789abcdefghij");
         builder.UseSetting("Winche:PublicUrl", "http://localhost");
+        builder.UseSetting("Winche:FunctionPackagesPath", Path.Combine(AppContext.BaseDirectory, "SdkPackages"));   // the SDKs the tests carry
         if (!extra.Any(e => e.Key == "Winche:SetupCode")) builder.UseSetting("Winche:SetupCode", SetupCode);
         if (files is not null) builder.UseSetting("Winche:ProjectsPath", files);   // projects' files under this folder
     }
