@@ -100,12 +100,13 @@ renamed to read as events and never clash with them:
 
 | Today | Renamed |
 | --- | --- |
-| `documents.onCreated / onUpdated / onDeleted / onWritten / beforeWrite` | `onDocument.created / updated / deleted / written / beforeWrite` |
-| `files.onUploaded / onDeleted / onMetadataUpdated / beforeWrite` | `onFile.uploaded / deleted / metadataUpdated / beforeWrite` |
-| `users.onCreated / onDeleted / onSignedIn / onDisabled / beforeCreate / beforeSignIn` | `onUser.created / deleted / signedIn / disabled / beforeCreate / beforeSignIn` |
+| `documents.onCreated / onUpdated / onDeleted / onWritten / beforeWrite` | `onDocument.created / updated / deleted / written / willBeWritten` |
+| `files.onUploaded / onDeleted / onMetadataUpdated / beforeWrite` | `onFile.uploaded / deleted / metadataUpdated / willBeWritten` |
+| `users.onCreated / onDeleted / onSignedIn / onDisabled / beforeCreate / beforeSignIn` | `onUser.created / deleted / signedIn / disabled / willBeCreated / willSignIn` |
 | `assets.onReleased / onChannelMoved` | `onAssets.released / channelMoved` |
 
-`callable`, `http.onRequest`, `schedule` and `pages` keep their names. Part of the same clean break: the deploy refuses
+Events that already happened are in the past tense; the ones that can still change or refuse what's about to happen
+say `will…`. `callable`, `http.onRequest`, `schedule` and `pages` keep their names. Part of the same clean break: the deploy refuses
 the old names, naming the new one.
 
 ### Console pages
