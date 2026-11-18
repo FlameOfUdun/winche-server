@@ -53,6 +53,12 @@ public sealed class ServerOptions
     /// </summary>
     public bool RequireTwoFactorForSettings { get; set; } = true;
 
+    /// <summary>The longest a service account's key may last, in days (<c>Winche__ServiceAccountKeyMaxDays</c>, default 730).</summary>
+    public int ServiceAccountKeyMaxDays { get; set; } = 730;
+
+    /// <summary>Whether service accounts may have keys (<c>Winche__ServiceAccountKeysAllowed</c>, default true); false: trusted identities only.</summary>
+    public bool ServiceAccountKeysAllowed { get; set; } = true;
+
     /// <summary>The longest any function may run, in minutes (default 9, at most 60): where the server setting starts.</summary>
     public int FunctionsMaxMinutes { get; set; } = 9;
 

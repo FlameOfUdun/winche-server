@@ -39,7 +39,7 @@ nothing else) to wherever the server will run.
 
    Or do it from a terminal, without the console: `winche setup --url http://localhost:8080` (the
    [CLI](https://github.com/FlameOfUdun/winche-cli) asks for the setup code and your account, and signs you in), then
-   `winche projects:create clinic --name Clinic`. Products, settings (as files), CI tokens have CLI commands too.
+   `winche projects:create clinic --name Clinic`. Products, settings (as files), service accounts have CLI commands too.
 
 4. **Start a product.** Every product (Authentication, Database, Storage, Functions, Assets) is off until you start it from its
    page (**Get started**). Its API refuses requests until then (`failed-precondition`, reason `service-disabled`).
@@ -93,6 +93,7 @@ Environment variables (or `appsettings.json`, section `Winche`):
 | `Winche__FunctionsMaxMinutes` | Optional: the longest any function may run, in minutes (default 9, at most 60). Also in **Server settings → General**; projects set their default and each function's own time up to it (**Functions → Settings**). |
 | `Winche__FunctionsMaxMemoryMb`, `__FunctionsMaxConcurrency`, `__FunctionsSharedProcessMb`, `__FunctionsMaxProcesses` | Optional: the most memory a function may ask for (default 1024 MB), runs at once per project (default 8 per CPU, at least 8), each run's heap limit in a project's shared functions process (default 1024 MB), and functions processes per project (default 4). Also in **Server settings → General**. |
 | `WINCHE_FUNCTIONS_MEMORY_MB` | Optional: what functions' processes may hold in all (default 60% of the container's memory, or the machine's). An isolated function that wouldn't fit runs in the shared process. |
+| `Winche__ServiceAccountKeyMaxDays`, `__ServiceAccountKeysAllowed` | Optional: the longest a service account's key may last (default 730 days), and whether keys are allowed at all (default `true`; `false`: only trusted identities sign service accounts in). |
 | `Winche__FunctionPackagesPath` | Optional, for servers that can't reach npm: a folder of the npm packages functions use (`@winche/functions/`, `@winche/admin/`: each its `package.json` and built files), given to deployments that import them without naming them in `deno.json`. Unset (the default), projects name their packages and the server fetches them when it bundles a deployment. |
 | `Winche__StopTimeoutSeconds` | How long a stop (SIGTERM) waits for requests and function runs going on to end (default 30). Give the container at least as long. |
 | `Winche__ProjectsPath` | Projects' files on disk, each under `<id>/files`, until they're moved to a bucket (default `/data/projects`: mount a volume). |
@@ -156,7 +157,7 @@ and a deploy reaches every task within seconds.
 - **Storage:** files, rules, webhooks, logs and settings (size limit, a disk or an S3-compatible bucket).
 - **Functions:** TypeScript functions run by Deno: callables apps call, HTTP functions, schedules, and triggers on
   documents, files, users and assets. You write them in your editor and deploy them with the CLI (`winche functions
-  deploy`, or a CI token). The console shows each one with what it does, runs callables, lists each trigger's runs, sets
+  deploy`, or a service account). The console shows each one with what it does, runs callables, lists each trigger's runs, sets
   each function's run time, and keeps every deploy in its change history (Settings → Change history) to roll back to.
 - **Secrets:** the API keys and passwords functions read (`secrets.define`), and those the products keep (the SMTP
   password, a sync's or provider's client secret, a bucket's key), on one page. Each is a value kept encrypted and never
@@ -164,7 +165,7 @@ and a deploy reaches every task within seconds.
   project can keep an AWS access key of its own for those (optional); without one, references use the server's AWS
   credentials and region (`AWS_REGION`, the task's role), which only server admins may choose.
 - **Assets:** versioned content apps read (translations, pages, media): numbered releases published from the CLI
-  (`winche assets deploy`, or a CI token with the `assets` scope), channels apps follow (moving one back is a
+  (`winche assets deploy`, or a service account with the `assets` scope), channels apps follow (moving one back is a
   rollback), and rules per path. Kept in the project's files folder unless the console moves them to a bucket.
 - **Project pages:** pages of the project's own in the console's sidebar: its HTML, JS and CSS, deployed with its
   functions, shown in a sandboxed frame, reading and writing the project's data with @winche/admin as the person
@@ -172,9 +173,16 @@ and a deploy reaches every task within seconds.
 - **Admin API** (`/console/v1/projects/<id>/admin`): what @winche/admin sends from console pages and other servers
   (`initializeAdmin` with a token), limited by the caller's role: a viewer reads, a member also writes the data, an
   admin may also call functions.
+- **Service accounts** (**Project settings → Service accounts**, `winche accounts`): what CI and other servers act as,
+  with a role or deploy scopes. They sign in with a key (at most two, so one replaces the other with no downtime) or a
+  trusted identity: a CI system's or cloud host's own OpenID Connect token for its job, with no key to keep. Either is
+  exchanged at `/console/v1/projects/<id>/service-accounts/token` for an access token that lasts an hour; the CLI
+  (`WINCHE_TOKEN`, `WINCHE_ID_TOKEN`) and `@winche/admin` (`initializeAdmin({ key })`) do that themselves. They belong to
+  the project: the console flags one whose maker is no longer an admin, and keys unused for 90 days. Their changes are
+  named for them in the history. CI tokens from before became service accounts (their tokens are their keys).
 - **Logs:** every product's requests and events, as plain sentences, with filters and saved queries. Changes are always
   logged; successful reads are sampled.
-- **Project settings:** the project (name, id, image), apps and browser origins, members and invites, CI tokens, and
+- **Project settings:** the project (name, id, image), apps and browser origins, members and invites, service accounts, and
   **Data** (where its database is, moving it, connections). The CLI signs in with `winche login`, once per server, as
   a session of your account like the console's own.
 - **Server settings** (server admins): the console's own accounts. Users, sign-in method (email and password, which is

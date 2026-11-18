@@ -20,6 +20,12 @@ public sealed record ServerSettings
     /// <summary>Console admins need two-step sign-in to change sensitive settings.</summary>
     public bool RequireTwoFactorForSettings { get; init; } = true;
 
+    /// <summary>The longest a project's service account key may last, in days (default 730).</summary>
+    public int ServiceAccountKeyMaxDays { get; init; } = 730;
+
+    /// <summary>Whether service accounts may have keys; when false, only trusted identities sign them in.</summary>
+    public bool ServiceAccountKeysAllowed { get; init; } = true;
+
     /// <summary>
     /// The longest any project's function may run, in minutes (default 9, at most 60). Projects set their default and
     /// each function's own time up to it. Changes apply from the next run.
@@ -71,6 +77,8 @@ public sealed record ServerSettings
     {
         PublicUrl = o.PublicUrl.TrimEnd('/'),
         RequireTwoFactorForSettings = o.RequireTwoFactorForSettings,
+        ServiceAccountKeyMaxDays = Math.Clamp(o.ServiceAccountKeyMaxDays, 1, 3650),
+        ServiceAccountKeysAllowed = o.ServiceAccountKeysAllowed,
         FunctionsMaxMinutes = o.FunctionsMaxMinutes,
         FunctionsMaxMemoryMb = o.FunctionsMaxMemoryMb,
         FunctionsMaxConcurrency = o.FunctionsMaxConcurrency,

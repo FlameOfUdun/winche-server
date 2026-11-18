@@ -386,6 +386,8 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
     internal static bool NeedsRestart(ServerSettings before, ServerSettings after) =>
         before.PublicUrl != after.PublicUrl
         || before.RequireTwoFactorForSettings != after.RequireTwoFactorForSettings
+        || before.ServiceAccountKeyMaxDays != after.ServiceAccountKeyMaxDays
+        || before.ServiceAccountKeysAllowed != after.ServiceAccountKeysAllowed
 ;
 
     /// <summary>

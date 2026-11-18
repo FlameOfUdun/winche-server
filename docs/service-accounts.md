@@ -1,6 +1,8 @@
 # Plan: service accounts and short-lived tokens
 
-**Status:** plan. The admin SDK (`docs/admin-sdk.md`) uses these for other servers and CI; it only needs an access
+**Status:** built locally (2026-11-18), unreleased: Server and console 3.0, CLI 3.0, `@winche-technologies/winche-admin` 3.1.0
+(`initializeAdmin({ key })` / `identityToken`). The server's limits are `Winche__ServiceAccountKeyMaxDays` and
+`Winche__ServiceAccountKeysAllowed`. Not built: source-address limits (an open question). The admin SDK (`docs/admin-sdk.md`) uses these for other servers and CI; it only needs an access
 token, however it was issued.
 
 ## Why

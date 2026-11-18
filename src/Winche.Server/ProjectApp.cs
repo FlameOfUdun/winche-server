@@ -190,6 +190,8 @@ internal static class ProjectApp
             // leave invitees waiting for an email.
             o.UseEmailSender(_ => ServerKeyRing.ConsoleEmail(projects));
             o.RequireTwoFactorForSettings = settings.Current.RequireTwoFactorForSettings;
+            o.ServiceAccountKeyMaxDays = settings.Current.ServiceAccountKeyMaxDays;
+            o.ServiceAccountKeysAllowed = settings.Current.ServiceAccountKeysAllowed;
             // The console's cookie outlives use: the accounts' session (renewed every few minutes) decides how long it lasts.
             o.SessionLifetime = TimeSpan.FromDays(400);
             o.ServerSettings = new ServerSettingsForConsole(settings, projects);
