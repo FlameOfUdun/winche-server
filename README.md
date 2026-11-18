@@ -157,7 +157,7 @@ and a deploy reaches every task within seconds.
   documents, files, users and assets. You write them in your editor and deploy them with the CLI (`winche functions
   deploy`, or a CI token). The console shows each one with what it does, runs callables, lists each trigger's runs, sets
   each function's run time, and keeps every deploy in its change history (Settings → Change history) to roll back to.
-- **Secrets:** the API keys and passwords functions read (`ctx.secrets.get`), and those the products keep (the SMTP
+- **Secrets:** the API keys and passwords functions read (`secrets.define`), and those the products keep (the SMTP
   password, a sync's or provider's client secret, a bucket's key), on one page. Each is a value kept encrypted and never
   shown again, or a reference read from AWS Secrets Manager or Parameter Store (`aws-ssm:/app/key`, with Test). A
   project can keep an AWS access key of its own for those (optional); without one, references use the server's AWS
@@ -166,8 +166,11 @@ and a deploy reaches every task within seconds.
   (`winche assets deploy`, or a CI token with the `assets` scope), channels apps follow (moving one back is a
   rollback), and rules per path. Kept in the project's files folder unless the console moves them to a bucket.
 - **Project pages:** pages of the project's own in the console's sidebar: its HTML, JS and CSS, deployed with its
-  functions, shown in a sandboxed frame, and talking to the server only through its console actions (role-checked,
-  logged). See Winche.Functions' README.
+  functions, shown in a sandboxed frame, reading and writing the project's data with @winche/admin as the person
+  who opened it (their role limits it). See Winche.Functions' README.
+- **Admin API** (`/console/v1/projects/<id>/admin`): what @winche/admin sends from console pages and other servers
+  (`initializeAdmin` with a token), limited by the caller's role: a viewer reads, a member also writes the data, an
+  admin may also call functions.
 - **Logs:** every product's requests and events, as plain sentences, with filters and saved queries. Changes are always
   logged; successful reads are sampled.
 - **Project settings:** the project (name, id, image), apps and browser origins, members and invites, CI tokens, and

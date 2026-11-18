@@ -1,6 +1,7 @@
 # Plan: one admin SDK for functions, console pages and other servers
 
-**Status:** plan. Builds on Server 3.0's paths (`docs/paths.md`). How other servers get their access tokens is its own
+**Status:** done locally (2026-11-18), unreleased: Functions 3.0.0 (with the `@winche/admin` npm package in
+`npm/admin`), Storage 11.1.0, Server and CLI 3.0, the console web app. Builds on Server 3.0's paths (`docs/paths.md`). How other servers get their access tokens is its own
 plan (`docs/service-accounts.md`); this one only needs "a token".
 
 ## Why
@@ -147,6 +148,18 @@ const admin = initializeAdmin({ server: "https://winche.example.com", project: "
 ```
 
 The SDK gets and refreshes its access token; calls go to `/console/v1/projects/<id>/…` with it.
+
+## As built
+
+- **One admin API** (`POST /console/v1/projects/<id>/admin`, `{ op, args }`) runs the same operations functions send
+  (the bindings), so every place behaves the same; the role needed comes from the operation (reads, data writes,
+  the rest). A page's calls carry `X-Winche-Page` and may not call functions.
+- **Pages** get `@winche/admin` from an import map the console adds (`_winche/admin.js`, the SDK bundled for
+  browsers by the server's Deno) and a bridge script that carries its calls to the console.
+- **Functions** keep their run's state across awaits (`AsyncLocalStorage`): `@winche/admin`, secrets and resources
+  find the run they belong to; at a module's top level they throw.
+- **Other servers**: `initializeAdmin({ server, project, token })` over HTTPS; tokens are today's console tokens until
+  service accounts (`docs/service-accounts.md`).
 
 ## Server changes
 
