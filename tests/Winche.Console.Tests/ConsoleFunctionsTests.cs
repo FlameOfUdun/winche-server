@@ -175,6 +175,9 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Contains("../_winche/console.js", await frame.GetStringAsync(url + "sub/more.html"));
         Assert.Contains("window.winche", await frame.GetStringAsync(url + "_winche/console.js"));
         Assert.Equal("text/javascript; charset=utf-8", (await frame.GetAsync(url + "app.js")).Content.Headers.ContentType!.ToString());
+        // A sandboxed frame's origin is "null": its module scripts (type="module", import) load in CORS mode.
+        using (var module = new HttpRequestMessage(HttpMethod.Get, url + "app.js") { Headers = { { "Origin", "null" } } })
+            Assert.Equal("*", (await frame.SendAsync(module)).Headers.GetValues("Access-Control-Allow-Origin").Single());
         Assert.False((await frame.GetAsync(url + "../tools/index.html")).IsSuccessStatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await frame.GetAsync(url + "..%2F..%2Ftools%2Findex.html")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await frame.GetAsync(url.Replace("/reports/", "/reports/x").TrimEnd('/') + "/")).StatusCode);

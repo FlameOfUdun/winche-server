@@ -99,6 +99,9 @@ public static class ConsolePagesEndpoints
             http.Response.Headers.XContentTypeOptions = "nosniff";
             http.Response.Headers["Referrer-Policy"] = "no-referrer";
             http.Response.Headers.CacheControl = "private, no-cache";
+            // The frame is sandboxed (its origin is "null"): its module scripts load in CORS mode, so its files say
+            // anyone may read them (whoever has the signed address may anyway).
+            http.Response.Headers.AccessControlAllowOrigin = "*";
             if (path == BridgePath) return Results.Text(Bridge, "text/javascript; charset=utf-8");
             await functions.RefreshAsync(ct);
             var page = functions.Current?.Functions.FirstOrDefault(f => f.Name == name && f.Trigger.Kind == "consolePage");
