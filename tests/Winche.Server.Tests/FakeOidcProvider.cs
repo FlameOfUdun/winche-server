@@ -61,6 +61,15 @@ public sealed class FakeOidcProvider : IAsyncDisposable
         });
     }
 
+    /// <summary>A token this provider signs about a workload (as a CI system does for a job): its subject and audience.</summary>
+    public string WorkloadToken(string sub, string audience, TimeSpan? lifetime = null) =>
+        new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
+        {
+            Issuer = Issuer, Audience = audience, Claims = new Dictionary<string, object> { ["sub"] = sub }, IssuedAt = DateTime.UtcNow,
+            Expires = DateTime.UtcNow + (lifetime ?? TimeSpan.FromMinutes(5)), NotBefore = DateTime.UtcNow.AddMinutes(-1),
+            SigningCredentials = new SigningCredentials(_key, SecurityAlgorithms.RsaSha256),
+        });
+
     /// <summary>Claims for a signed access token (as Keycloak puts roles there); none: an opaque one.</summary>
     public Dictionary<string, object>? NextAccess { get; set; }
 

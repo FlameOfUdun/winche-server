@@ -128,6 +128,12 @@ public sealed class ConsoleOptions
     /// </summary>
     public bool RequireTwoFactorForSettings { get; set; } = true;
 
+    /// <summary>The longest a service account's key may last, in days (default 730).</summary>
+    public int ServiceAccountKeyMaxDays { get; set; } = 730;
+
+    /// <summary>Whether service accounts may have keys; when false, only trusted identities sign them in.</summary>
+    public bool ServiceAccountKeysAllowed { get; set; } = true;
+
     /// <summary>
     /// Buffered email-sender registration; applied against the host's service collection by
     /// AddWincheConsole. Null when the consumer never calls UseEmailSender (email features stay off).

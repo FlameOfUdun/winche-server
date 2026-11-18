@@ -38,6 +38,8 @@ public static class ConsoleAuthSettingsEndpoints
     {
         var options = http.RequestServices.GetRequiredService<ConsoleOptions>();
         if (!options.RequireTwoFactorForSettings) return null;
+        // A service account acts as an admin made it (with two-step sign-in, to make its key or trust its identity).
+        if (http.User.FindFirstValue(Identity.ConsoleTokenHandler.TokenKindClaim) == "service") return null;
         if (http.RequestServices.GetService<ConsoleAccounts>() is { } accounts && await accounts.CurrentAsync(http.User, http.RequestAborted) is { TwoFactorEnabled: true })
             return null;
         if (Identity.ConsoleOidc.ProviderTwoStep(http, options)) return null;   // the identity provider did it

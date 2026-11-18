@@ -107,6 +107,9 @@ public static class WincheConsoleExtensions
 
         // Console API tokens (winche login in Identity mode, and CI tokens), in either mode.
         services.AddSingleton<ConsoleTokenStore>();
+        services.AddSingleton<ServiceAccountStore>();
+        services.AddSingleton<ServiceAccountTokens>();
+        services.AddSingleton<TrustedIdentityValidator>();
         services.AddSingleton<Project.ProjectSetup>();
         services.AddSingleton<Project.ProductSetupRunner>();
         services.AddSingleton<Project.ProjectImageStore>();
@@ -271,6 +274,7 @@ public static class WincheConsoleExtensions
         if (isService?.IsService(typeof(Winche.Webhooks.HookCatalog)) == true) group.MapConsoleHooksEndpoints();
         // Background deliveries (hooks inside the app) of every package that has them.
         group.MapConsoleTokenEndpoints(options, signIn: !project);
+        if (!options.ServerConsole) group.MapConsoleServiceAccountEndpoints(options);   // a project's: the server's console has none
         group.MapConsoleSecretsEndpoints();   // where secrets may be read from; references and the project's own keys
         if (!project)
         {

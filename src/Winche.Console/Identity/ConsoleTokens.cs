@@ -300,6 +300,7 @@ internal sealed class ConsoleTokenHandler(IOptionsMonitor<AuthenticationSchemeOp
         var header = Request.Headers.Authorization.ToString();
         if (!header.StartsWith("Bearer ", StringComparison.Ordinal)) return AuthenticateResult.NoResult();
         var raw = header[7..].Trim();
+        if (raw.StartsWith(ServiceAccountTokens.Prefix, StringComparison.Ordinal)) return await ServiceAccountAsync(raw);
         if (!raw.StartsWith(ConsoleTokenStore.Prefix, StringComparison.Ordinal))
             return raw.Count(c => c == '.') == 2 ? await SessionAsync(raw) : AuthenticateResult.NoResult();
         var store = Context.RequestServices.GetRequiredService<ConsoleTokenStore>();
@@ -340,6 +341,55 @@ internal sealed class ConsoleTokenHandler(IOptionsMonitor<AuthenticationSchemeOp
         claims.Add(new Claim(ClaimTypes.Name, $"{token.Name} (CI token by {token.UserEmail ?? token.UserId})"));
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme, ClaimTypes.Name, ClaimTypes.Role));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme));
+    }
+
+    public const string ServiceAccountClaim = "winche_service_account";
+
+    /// <summary>
+    /// A service account's access token: it acts as the account, with its role; an account with deploy scopes instead
+    /// acts as an admin on the endpoints marked with one of them only. Refused once its key or identity is gone or the
+    /// account is turned off (looked up at most every few seconds).
+    /// </summary>
+    private async Task<AuthenticateResult> ServiceAccountAsync(string raw)
+    {
+        var tokens = Context.RequestServices.GetRequiredService<ServiceAccountTokens>();
+        if (tokens.Read(raw, Api.ServiceAccountEndpoints.ApiOf(Context)) is not var (accountId, credential))
+            return AuthenticateResult.Fail("That access token isn't valid here (expired, or another project's): exchange the key again.");
+        var store = Context.RequestServices.GetRequiredService<ServiceAccountStore>();
+        if (await LiveAccountAsync(store, accountId, credential, Context.RequestAborted) is not { } account)
+            return AuthenticateResult.Fail("The service account is turned off, or its key or identity was removed.");
+        var role = account.Role ?? ConsoleRoles.Admin;
+        if (account.Role is null)
+        {
+            var allowed = Context.GetEndpoint()?.Metadata.GetOrderedMetadata<ConsoleCiScope>() ?? [];
+            if (!allowed.Any(s => account.Scopes.Contains(s.Scope)))
+                return AuthenticateResult.Fail($"The service account '{account.Name}' can only deploy ({string.Join(", ", account.Scopes)}).");
+        }
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, "service:" + account.Id),
+            new(TokenKindClaim, "service"),
+            new(ServiceAccountClaim, account.Id),
+            new(ClaimTypes.Role, role),
+            new(Project.ProjectRoleClaims.DoneClaim, role),
+            // The history names it: "billing-server (service account)".
+            new(ClaimTypes.Name, $"{account.Name} (service account)"),
+        };
+        return AuthenticateResult.Success(new AuthenticationTicket(
+            new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme, ClaimTypes.Name, ClaimTypes.Role)), Scheme));
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTimeOffset At, ServiceAccount Account)> LiveAccounts = new();
+
+    private static async Task<ServiceAccount?> LiveAccountAsync(ServiceAccountStore store, string accountId, string credential, CancellationToken ct)
+    {
+        var key = accountId + "/" + credential;
+        var now = DateTimeOffset.UtcNow;
+        if (LiveAccounts.TryGetValue(key, out var seen) && now - seen.At < SessionFreshFor) return seen.Account;
+        var account = await store.LiveAsync(accountId, credential, ct);
+        if (account is null) LiveAccounts.TryRemove(key, out _); else LiveAccounts[key] = (now, account);
+        if (LiveAccounts.Count > 10_000) foreach (var old in LiveAccounts.Where(e => now - e.Value.At > SessionFreshFor).Select(e => e.Key).ToList()) LiveAccounts.TryRemove(old, out _);
+        return account;
     }
 
     /// <summary>The CLI's sign-in: an access token of the account's session in the console's accounts.</summary>
