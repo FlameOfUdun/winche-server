@@ -93,6 +93,21 @@ export const leaveWard = callable(async (data, ctx) => {
 The database's and storage's rules engines evaluate these calls with the caller's identity; a refusal is
 `permission-denied`, as an app gets.
 
+### Trigger names
+
+`@winche/admin` exports `documents`, `files` and `assets` (data), so the trigger builders in `@winche/functions` are
+renamed to read as events and never clash with them:
+
+| Today | Renamed |
+| --- | --- |
+| `documents.onCreated / onUpdated / onDeleted / onWritten / beforeWrite` | `onDocument.created / updated / deleted / written / beforeWrite` |
+| `files.onUploaded / onDeleted / onMetadataUpdated / beforeWrite` | `onFile.uploaded / deleted / metadataUpdated / beforeWrite` |
+| `users.onCreated / onDeleted / onSignedIn / onDisabled / beforeCreate / beforeSignIn` | `onUser.created / deleted / signedIn / disabled / beforeCreate / beforeSignIn` |
+| `assets.onReleased / onChannelMoved` | `onAssets.released / channelMoved` |
+
+`callable`, `http.onRequest`, `schedule` and `pages` keep their names. Part of the same clean break: the deploy refuses
+the old names, naming the new one.
+
 ### Console pages
 
 A page stays a plain sandboxed frame without the console's sign-in. The SDK in a page sends each call to the console
@@ -130,7 +145,8 @@ The SDK gets and refreshes its access token; calls go to `/console/v1/projects/<
 ## Steps
 
 1. **The SDK package** (`@winche/admin`): the API from `ctx` today, one transport interface; in functions, signed in as
-   the server. `ctx` keeps the call's facts, `secrets` and `resources` (`functionName` → `name`). Tests: the same suite run
+   the server. `ctx` keeps the call's facts, `secrets` and `resources` (`functionName` → `name`). The trigger builders renamed (`onDocument`, `onFile`,
+   `onUser`, `onAssets`). Tests: the same suite run
    against each transport.
 2. **The console's project API** fills the SDK's gaps (transactions, batches, cursors, uploads).
 3. **Pages:** the SDK's page transport over the console's channel; the console relays calls as the person.
