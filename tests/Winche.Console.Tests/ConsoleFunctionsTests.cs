@@ -170,9 +170,13 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.StartsWith("sandbox allow-scripts", csp);
         Assert.Contains("connect-src 'none'", csp);
         var html = await index.Content.ReadAsStringAsync();
-        Assert.Contains("<head><script src=\"_winche/console.js\"></script><title>R</title>", html);
-        Assert.Contains("../_winche/console.js", await frame.GetStringAsync(url + "sub/more.html"));
-        Assert.Contains("window.winche", await frame.GetStringAsync(url + "_winche/console.js"));
+        // @winche/admin resolves to the SDK served beside the page; the bridge carries its calls to the console.
+        Assert.Contains("<head><script type=\"importmap\">{\"imports\":{\"@winche/admin\":\"_winche/admin.js\"}}</script><script src=\"_winche/console.js\"></script><title>R</title>", html);
+        var sub = await frame.GetStringAsync(url + "sub/more.html");
+        Assert.Contains("\"@winche/admin\":\"../_winche/admin.js\"", sub);
+        Assert.Contains("../_winche/console.js", sub);
+        Assert.Contains("Symbol.for(\"winche.page\")", await frame.GetStringAsync(url + "_winche/console.js"));
+        Assert.Contains("initializeAdmin", await frame.GetStringAsync(url + "_winche/admin.js"));
         Assert.Equal("text/javascript; charset=utf-8", (await frame.GetAsync(url + "app.js")).Content.Headers.ContentType!.ToString());
         // A sandboxed frame's origin is "null": its module scripts (type="module", import) load in CORS mode.
         using (var module = new HttpRequestMessage(HttpMethod.Get, url + "app.js") { Headers = { { "Origin", "null" } } })

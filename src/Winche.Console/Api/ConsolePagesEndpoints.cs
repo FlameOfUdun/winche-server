@@ -17,19 +17,18 @@ using Winche.Functions;
 namespace Winche.Console.Api;
 
 /// <summary>
-/// The project's own console pages (<c>consolePage</c> in its functions): listed in the sidebar for the roles that may see
-/// them, served from the live deployment in a sandboxed frame, and their console actions (<c>consoleAction</c>) run for
-/// the signed-in person after checking their role.
+/// The project's own console pages (<c>pages(...)</c> in its functions): listed in the sidebar for the roles that may see
+/// them, and served from the live deployment in a sandboxed frame, where @winche/admin acts as the person who opened it.
 /// </summary>
 /// <remarks>
-/// A page is opened through a short-lived signed address (<c>page/{name}/{token}/</c>): the frame has no cookies of
-/// the console's and runs in an opaque origin (the sandbox CSP), so it can't call the console's API or read its
-/// session. It talks to the console only through the bridge script the console injects (window.winche), whose
-/// requests the console sends with the person's own session.
+/// A page is opened through a short-lived signed address (<c>pages/{name}/view/{token}/</c>): the frame has no cookies
+/// of the console's and runs in an opaque origin (the sandbox CSP), so it can't call the console's API or read its
+/// session. Its pages import <c>@winche/admin</c> (an import map the console adds points it at the SDK, served beside
+/// the page), whose calls go over a channel to the console, which sends them to the admin API (<c>admin</c>) with the
+/// person's own session, so their role limits them.
 /// </remarks>
 public static class ConsolePagesEndpoints
 {
-    public sealed record ActionRequest(JsonElement? Data);
 
     private const string Purpose = "Winche.Console.Page.v1";
     private static readonly TimeSpan Lifetime = TimeSpan.FromHours(8);
@@ -76,18 +75,6 @@ public static class ConsolePagesEndpoints
             });
         });
 
-        // Runs a console action for the signed-in person (their role is checked against the action's minRole).
-        api.MapPost("/actions/{name}", async (string name, ActionRequest body, HttpContext http, WincheFunctions functions, ConsoleOptions options, CancellationToken ct) =>
-        {
-            var role = RoleName(ConsoleRolePolicy.Highest(http.User, options));
-            var action = functions.Current?.Functions.FirstOrDefault(f => f.Name == name && f.Trigger.Kind == "consoleAction");
-            if (action?.MinRole == "admin" && await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
-            var data = body.Data is { ValueKind: not (JsonValueKind.Undefined or JsonValueKind.Null) } d ? JsonNode.Parse(d.GetRawText()) : null;
-            var r = await functions.RunConsoleActionAsync(name, data, Who(http.User), role, ct);
-            if (r.Ok) return Results.Json(new { data = r.Result });
-            return FunctionsEndpoints.ErrorOf(r, reason: true).ToResult();   // the project's own people: why it failed
-        });
-
         // The page's files: no session (the frame has none), the signed address instead.
         app.MapGet("/pages/{name}/view/{token}/{**path}", async (string name, string token, string? path, HttpContext http, WincheFunctions functions, CancellationToken ct) =>
         {
@@ -103,6 +90,8 @@ public static class ConsolePagesEndpoints
             // anyone may read them (whoever has the signed address may anyway).
             http.Response.Headers.AccessControlAllowOrigin = "*";
             if (path == BridgePath) return Results.Text(Bridge, "text/javascript; charset=utf-8");
+            if (path == AdminPath)
+                return Results.Text(await http.RequestServices.GetRequiredService<FunctionBundler>().AdminForBrowserAsync(ct), "text/javascript; charset=utf-8");
             await functions.RefreshAsync(ct);
             var page = functions.Current?.Functions.FirstOrDefault(f => f.Name == name && f.Trigger.Kind == "consolePage");
             if (page is null || ConsolePages.File(functions.Current!, page, path ?? "") is not { } file) return Results.NotFound();
@@ -115,70 +104,52 @@ public static class ConsolePagesEndpoints
     }
 
     internal const string BridgePath = "_winche/console.js";
+    internal const string AdminPath = "_winche/admin.js";
 
     private static int Depth(string? path) => (path ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries).Length - ((path ?? "").EndsWith('/') || path is null or "" ? 0 : 1);
 
-    /// <summary>The page's HTML with the bridge script first in its head (or at the top, without one).</summary>
+    /// <summary>
+    /// The page's HTML with, first in its head (or at the top, without one), an import map that resolves
+    /// <c>@winche/admin</c> to the SDK served beside the page, and the bridge script.
+    /// </summary>
     internal static string WithBridge(string html, int depth)
     {
-        var tag = $"<script src=\"{string.Concat(Enumerable.Repeat("../", Math.Max(0, depth)))}{BridgePath}\"></script>";
+        var up = string.Concat(Enumerable.Repeat("../", Math.Max(0, depth)));
+        var tag = $"<script type=\"importmap\">{{\"imports\":{{\"@winche/admin\":\"{up}{AdminPath}\"}}}}</script><script src=\"{up}{BridgePath}\"></script>";
         var head = html.IndexOf("<head", StringComparison.OrdinalIgnoreCase);
         var end = head < 0 ? -1 : html.IndexOf('>', head);
         return end < 0 ? tag + html : html.Insert(end + 1, tag);
     }
 
     /// <summary>
-    /// window.winche in the page: a channel to the console opened once (a MessageChannel), so only this page, not one it
-    /// navigates to, can use it.
+    /// @winche/admin's way out of the page: a channel to the console opened once (a MessageChannel), so only this page,
+    /// not one it navigates to, can use it. Each call is answered with its result or its error (code and message).
     /// </summary>
     internal const string Bridge = """
         (() => {
-          if (window.winche) return;
-          let port = null, next = 1, resolveReady;
+          const key = Symbol.for("winche.page");
+          if (globalThis[key]) return;
+          let port = null, next = 1, connected;
           const pending = new Map();
-          const ready = new Promise((r) => (resolveReady = r));
-          const theme = (t) => {
-            if (!t) return;
-            document.documentElement.dataset.wincheTheme = t.scheme;
-            for (const [k, v] of Object.entries(t.colors ?? {})) document.documentElement.style.setProperty("--winche-" + k, v);
-            if (t.font) document.documentElement.style.setProperty("--winche-font", t.font);
-          };
-          const ask = (op, args) => ready.then(() => new Promise((resolve, reject) => {
+          const ready = new Promise((r) => (connected = r));
+          globalThis[key] = (op, args) => ready.then(() => new Promise((resolve, reject) => {
             const id = next++;
             pending.set(id, { resolve, reject });
-            port.postMessage({ op, id, ...args });
+            port.postMessage({ op: "admin", id, call: op, args });
           }));
-          const api = {
-            user: null,
-            theme: null,
-            ready,
-            call: (name, data) => ask("call", { name, data: data === undefined ? null : data }),
-            confirm: (text, options) => ask("confirm", { text: String(text), danger: !!options?.danger, confirmLabel: options?.confirmLabel ?? null }),
-            toast: (text, kind) => { ready.then(() => port.postMessage({ op: "toast", text: String(text), kind: kind ?? "info" })); },
-            navigate: (path) => { ready.then(() => port.postMessage({ op: "navigate", path: String(path) })); },
-            setTitle: (text) => { ready.then(() => port.postMessage({ op: "title", text: String(text) })); },
-          };
           window.addEventListener("message", (e) => {
             if (port || e.source !== window.parent || e.data?.winche !== 1 || e.data.op !== "connect" || !e.ports[0]) return;
             port = e.ports[0];
             port.onmessage = (m) => {
               const d = m.data;
-              if (d.op === "init" || d.op === "theme") {
-                if (d.user) api.user = d.user;
-                api.theme = d.theme ?? api.theme;
-                theme(d.theme);
-                window.dispatchEvent(new CustomEvent("winche:theme", { detail: d.theme }));
-                if (d.op === "init") resolveReady(api);
-                return;
-              }
+              if (d.op === "init") { connected(); return; }
               const p = pending.get(d.id);
               if (!p) return;
               pending.delete(d.id);
-              if (d.error) p.reject(Object.assign(new Error(d.error.message), { code: d.error.code, details: d.error.details }));
+              if (d.error) p.reject(Object.assign(new Error(d.error.message), { name: "WincheError", code: d.error.code }));
               else p.resolve(d.result);
             };
           });
-          window.winche = api;
           window.parent.postMessage({ winche: 1, op: "hello" }, "*");
         })();
         """;
