@@ -115,7 +115,8 @@ public static class ConsolePagesEndpoints
     internal static string WithBridge(string html, int depth)
     {
         var up = string.Concat(Enumerable.Repeat("../", Math.Max(0, depth)));
-        var tag = $"<script type=\"importmap\">{{\"imports\":{{\"@winche/admin\":\"{up}{AdminPath}\"}}}}</script><script src=\"{up}{BridgePath}\"></script>";
+        // An import map's addresses start with ./, ../ or / (a bare one is ignored).
+        var tag = $"<script type=\"importmap\">{{\"imports\":{{\"@winche/admin\":\"{(up.Length == 0 ? "./" : up)}{AdminPath}\"}}}}</script><script src=\"{up}{BridgePath}\"></script>";
         var head = html.IndexOf("<head", StringComparison.OrdinalIgnoreCase);
         var end = head < 0 ? -1 : html.IndexOf('>', head);
         return end < 0 ? tag + html : html.Insert(end + 1, tag);
