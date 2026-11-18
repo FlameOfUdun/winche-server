@@ -54,19 +54,24 @@ export const hello = callable(async (data, ctx) => {
 
 - **`ctx`:** the call only: `name` (the function's export name; today's `functionName`), `caller` (the app user, for
   callables), `log`. Triggers keep their event as the first argument.
-- **Secrets and resources come from `@winche/functions`:** `secrets.get("NAME")` / `secrets.has`, and
-  `resources.read(path)` / `list` / `has`. They resolve for the function that's running (the runtime tracks it across
-  async calls), so a function still sees only the secrets it declared and use is tracked per function; outside a run
-  (a module's top level) they throw. Tests use `@winche/functions/testing`: `withSecrets({ NAME: "x" }, fn)`,
-  `withResources(folder, fn)`. The admin SDK never has them, so pages and other servers can't read secrets.
+- **Secrets are declared at the top, given to the functions that use them:** `const mailKey = secret("MAIL_KEY")`
+  (from `@winche/functions`) is a handle; a function lists the handles it uses (`{ secrets: [mailKey] }`) and reads
+  `mailKey.value()` while it runs, getting the current value. Reading one the running function didn't list throws,
+  naming both. The deploy checks every listed secret is set on the project. The admin SDK never has secrets, so pages
+  and other servers can't read them.
+- **Resources likewise:** `const logo = resource("logo.png")`, then `await logo.bytes()` / `logo.text()` while a
+  function runs (any function may read the deployment's resources).
+- **Tests** (`@winche/functions/testing`): `withSecrets({ MAIL_KEY: "x" }, fn)`, `withResources(folder, fn)`.
 
 ```ts
-import { callable, secrets, resources } from "@winche/functions";
+import { callable, secret, resource } from "@winche/functions";
+
+const mailKey = secret("MAIL_KEY");
+const logo = resource("logo.png");
 
 export const send = callable(async (data, ctx) => {
-  const key = secrets.get("MAIL_KEY");
-  const logo = await resources.read("logo.png");
-}, { secrets: ["MAIL_KEY"] });
+  await sendMail(mailKey.value(), await logo.bytes(), data);
+}, { secrets: [mailKey] });
 ```
 - **A clean break:** `ctx.documents`, `ctx.files`, `ctx.auth`, `ctx.assets` are removed; a deployment that uses them is
   refused with what to import instead.
@@ -158,7 +163,7 @@ The SDK gets and refreshes its access token; calls go to `/console/v1/projects/<
 ## Steps
 
 1. **The SDK package** (`@winche/admin`): the API from `ctx` today, one transport interface; in functions, signed in as
-   the server. `ctx` keeps the call's facts (`functionName` → `name`); `secrets` and `resources` imported from `@winche/functions`, with test helpers. The trigger builders renamed (`onDocument`, `onFile`,
+   the server. `ctx` keeps the call's facts (`functionName` → `name`); `secret(...)` / `resource(...)` handles from `@winche/functions` (functions list their secrets' handles), with test helpers. The trigger builders renamed (`onDocument`, `onFile`,
    `onUser`, `onAssets`). Tests: the same suite run
    against each transport.
 2. **The console's project API** fills the SDK's gaps (transactions, batches, cursors, uploads).
