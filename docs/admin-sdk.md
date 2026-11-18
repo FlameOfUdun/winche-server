@@ -43,7 +43,7 @@ in as the server inside functions:
 
 ```ts
 import { documents } from "@winche/admin";
-import { callable, secret } from "@winche/functions";
+import { callable } from "@winche/functions";
 
 export const hello = callable(async (data, request) => {
   request.log("by", request.caller?.uid);
@@ -52,11 +52,13 @@ export const hello = callable(async (data, request) => {
 ```
 
 - **`request`** (callables, HTTP functions, console actions): `caller` (the app user), `console.user` (console
-  actions), `log`. Triggers (documents, files, schedules) get **`event`** instead: what happened, its `params`, `log`.
-- **Secrets and resources** belong to the deployment, not to the call or the SDK (pages and other servers never read
-  secrets): `secret("NAME")` and `resource("fonts/a.ttf")` from `@winche/functions`.
-- **A clean break:** `ctx.documents`, `ctx.files`, `ctx.auth`, `ctx.assets`, `ctx.secrets`, `ctx.resources` are
-  removed; a deployment that uses them is refused with what to import instead.
+  actions), `log`, `secrets`, `resources`. Triggers (documents, files, schedules) get **`event`** instead: what
+  happened, its `params`, `log`, `secrets`, `resources`.
+- **Secrets and resources stay with the function** (`request.secrets`, `request.resources`): found where the function
+  is written, given in tests with the call, and tracked per function. The SDK never has them, so pages and other
+  servers can't read secrets.
+- **A clean break:** `ctx.documents`, `ctx.files`, `ctx.auth`, `ctx.assets` are removed; a deployment that uses them is
+  refused with what to import instead.
 
 ### Roles (pages and other servers)
 
@@ -126,7 +128,7 @@ The SDK gets and refreshes its access token; calls go to `/console/v1/projects/<
 ## Steps
 
 1. **The SDK package** (`@winche/admin`): the API from `ctx` today, one transport interface; in functions, signed in as
-   the server. `request` and `event` replace `ctx`; `secret()` and `resource()` imports. Tests: the same suite run
+   the server. `request` and `event` replace `ctx` (keeping `secrets` and `resources`). Tests: the same suite run
    against each transport.
 2. **The console's project API** fills the SDK's gaps (transactions, batches, cursors, uploads).
 3. **Pages:** the SDK's page transport over the console's channel; the console relays calls as the person.
