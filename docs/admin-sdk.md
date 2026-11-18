@@ -33,12 +33,13 @@ await admin.functions.call("recompute", { ward: "a" });
 | Console pages | the person who opened the page | their role in the project (viewer, member, admin) |
 | Other servers | a service account's access token | the account's role |
 
-Products: `documents`, `files`, `auth` (the app's users), `assets`, `functions.call`. The API is the one `ctx` has
+Products: `documents`, `files`, `auth` (the app's users), `assets`, `functions.call` (not in pages: callables are for
+app users). The API is the one `ctx` has
 today.
 
 ### Functions: data from the SDK, `ctx` for the call
 
-A function's `ctx` (its second argument everywhere: callables, HTTP functions, triggers, schedules, console actions)
+A function's `ctx` (its second argument everywhere: callables, HTTP functions, triggers, schedules)
 describes the call only; data comes from the SDK, already signed in as the server inside functions:
 
 ```ts
@@ -51,8 +52,7 @@ export const hello = callable(async (data, ctx) => {
 });
 ```
 
-- **`ctx`:** `name` (the function's export name; today's `functionName`), `caller` (the app user, for callables),
-  `console.user` (console actions), `log`, `secrets` (those the function declared), `resources` (the deployment's
+- **`ctx`:** `name` (the function's export name; today's `functionName`), `caller` (the app user, for callables), `log`, `secrets` (those the function declared), `resources` (the deployment's
   `resources/` folder). Triggers keep their event as the first argument.
 - **Secrets and resources stay on `ctx`:** found where the function is written, given in tests with the call, and
   tracked per function. The SDK never has them, so pages and other servers can't read secrets.
@@ -98,8 +98,11 @@ The database's and storage's rules engines evaluate these calls with the caller'
 A page stays a plain sandboxed frame without the console's sign-in. The SDK in a page sends each call to the console
 over the page's channel (`window.winche`); the console runs it on the project's console API as the signed-in person.
 
-- The page's actions (`consoleAction`) stay, for work that needs the server's rights (long jobs, other users' data
-  beyond the person's role).
+- **No console actions:** `consoleAction` and `ctx.console` are removed. Work that needs the server's rights (long
+  jobs) is asked for with a document the page writes (e.g. `jobs/backfill` with `status: "requested"`); a document
+  trigger runs it and writes its progress there, and the page reads it. Who may start it is whoever may write there.
+- **Declaring a page:** `pages({ title, files, icon, minRole, order })` from `@winche/functions` (today's
+  `consolePage`).
 - The console gives a page nothing else: no dialogs, notices or titles. `@winche/console-page` (with its React hooks)
   and `winche pages init`'s template come out. The CLI keeps building pages that name a build in `winche.json`
   (`pages`).
@@ -117,7 +120,7 @@ The SDK gets and refreshes its access token; calls go to `/console/v1/projects/<
 - **One API for the SDK:** the console's project API (`documents`, `files`, `auth`, `assets`) covers what the SDK
   needs: batched writes and transactions, queries with cursors, file upload and download, the app's users. Gaps are
   added there, so the console's own screens get them too.
-- **Pages' calls:** the console relays a page's calls to that API (not only `pages/actions/{name}`), with the person's
+- **Pages' calls:** the console relays a page's calls to that API (`pages/actions/{name}` is removed), with the person's
   session; the page never holds it.
 - **Acting as a user:** the functions runtime passes `as(user)` calls with that identity; the database and storage
   evaluate their rules for it.
