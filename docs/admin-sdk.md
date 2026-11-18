@@ -154,8 +154,12 @@ The SDK gets and refreshes its access token; calls go to `/console/v1/projects/<
 - **One admin API** (`POST /console/v1/projects/<id>/admin`, `{ op, args }`) runs the same operations functions send
   (the bindings), so every place behaves the same; the role needed comes from the operation (reads, data writes,
   the rest). A page's calls carry `X-Winche-Page` and may not call functions.
-- **Pages** get `@winche/admin` from an import map the console adds (`_winche/admin.js`, the SDK bundled for
-  browsers by the server's Deno) and a bridge script that carries its calls to the console.
+- **The SDKs are the project's:** `@winche/functions` and `@winche/admin` are npm packages with repositories of their
+  own (winche-functions-typescript-sdk, winche-admin-typescript-sdk, MIT), named in the project's `deno.json`; the
+  server doesn't inject or serve them (`Winche__FunctionPackagesPath` provides them to a server without npm). Both
+  speak protocol 1, which the server checks (exported functions' `__winche`, `X-Winche-Protocol` on admin calls).
+- **Pages** bring their own `@winche/admin` (bundled, or a file in their folder); the console adds only the bridge
+  script that carries its calls.
 - **Functions** keep their run's state across awaits (`AsyncLocalStorage`): `@winche/admin`, secrets and resources
   find the run they belong to; at a module's top level they throw.
 - **Other servers**: `initializeAdmin({ server, project, token })` over HTTPS; tokens are today's console tokens until
