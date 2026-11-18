@@ -296,7 +296,7 @@ public static class WincheConsoleExtensions
         {
             group.MapConsoleFunctionsEndpoints();
             group.MapConsolePagesEndpoints();   // the project's own pages
-            if (!options.ServerConsole) group.MapConsoleAdminEndpoints();   // @winche/admin from pages and other servers
+            if (!options.ServerConsole) group.MapConsoleAdminEndpoints();   // @winche-technologies/winche-admin from pages and other servers
         }
 
         if (options.AnyLogs)

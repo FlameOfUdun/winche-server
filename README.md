@@ -94,7 +94,7 @@ Environment variables (or `appsettings.json`, section `Winche`):
 | `Winche__FunctionsMaxMemoryMb`, `__FunctionsMaxConcurrency`, `__FunctionsSharedProcessMb`, `__FunctionsMaxProcesses` | Optional: the most memory a function may ask for (default 1024 MB), runs at once per project (default 8 per CPU, at least 8), each run's heap limit in a project's shared functions process (default 1024 MB), and functions processes per project (default 4). Also in **Server settings → General**. |
 | `WINCHE_FUNCTIONS_MEMORY_MB` | Optional: what functions' processes may hold in all (default 60% of the container's memory, or the machine's). An isolated function that wouldn't fit runs in the shared process. |
 | `Winche__ServiceAccountKeyMaxDays`, `__ServiceAccountKeysAllowed` | Optional: the longest a service account's key may last (default 730 days), and whether keys are allowed at all (default `true`; `false`: only trusted identities sign service accounts in). |
-| `Winche__FunctionPackagesPath` | Optional, for servers that can't reach npm: a folder of the npm packages functions use (`@winche/functions/`, `@winche/admin/`: each its `package.json` and built files), given to deployments that import them without naming them in `deno.json`. Unset (the default), projects name their packages and the server fetches them when it bundles a deployment. |
+| `Winche__FunctionPackagesPath` | Optional, for servers that can't reach npm: a folder of the npm packages functions use (`@winche-technologies/winche-functions/`, `@winche-technologies/winche-admin/`: each its `package.json` and built files), given to deployments that import them without naming them in `deno.json`. Unset (the default), projects name their packages and the server fetches them when it bundles a deployment. |
 | `Winche__StopTimeoutSeconds` | How long a stop (SIGTERM) waits for requests and function runs going on to end (default 30). Give the container at least as long. |
 | `Winche__ProjectsPath` | Projects' files on disk, each under `<id>/files`, until they're moved to a bucket (default `/data/projects`: mount a volume). |
 | `Winche__Email__Provider`, `__Region`, `__FromAddress` | Optional: the server's own email, `ses` (Amazon SES), e.g. region `eu-west-1`, from `no-reply@example.com` (verified in SES); `__FromName` sets the name, else each project's app name. **No keys are kept**: the AWS credentials of the server's environment are used (`AWS_*` variables, the ECS task's role, the instance's profile). Console emails go through it with nothing to set up, and projects can choose it for their sign-in emails (**Authentication → Settings → Emails to users → The server's email**). |
@@ -168,16 +168,16 @@ and a deploy reaches every task within seconds.
   (`winche assets deploy`, or a service account with the `assets` scope), channels apps follow (moving one back is a
   rollback), and rules per path. Kept in the project's files folder unless the console moves them to a bucket.
 - **Project pages:** pages of the project's own in the console's sidebar: its HTML, JS and CSS, deployed with its
-  functions, shown in a sandboxed frame, reading and writing the project's data with @winche/admin as the person
+  functions, shown in a sandboxed frame, reading and writing the project's data with @winche-technologies/winche-admin as the person
   who opened it (their role limits it). See Winche.Functions' README.
-- **Admin API** (`/console/v1/projects/<id>/admin`): what @winche/admin sends from console pages and other servers
+- **Admin API** (`/console/v1/projects/<id>/admin`): what @winche-technologies/winche-admin sends from console pages and other servers
   (`initializeAdmin` with a token), limited by the caller's role: a viewer reads, a member also writes the data, an
   admin may also call functions.
 - **Service accounts** (**Project settings → Service accounts**, `winche accounts`): what CI and other servers act as,
   with a role or deploy scopes. They sign in with a key (at most two, so one replaces the other with no downtime) or a
   trusted identity: a CI system's or cloud host's own OpenID Connect token for its job, with no key to keep. Either is
   exchanged at `/console/v1/projects/<id>/service-accounts/token` for an access token that lasts an hour; the CLI
-  (`WINCHE_TOKEN`, `WINCHE_ID_TOKEN`) and `@winche/admin` (`initializeAdmin({ key })`) do that themselves. They belong to
+  (`WINCHE_TOKEN`, `WINCHE_ID_TOKEN`) and `@winche-technologies/winche-admin` (`initializeAdmin({ key })`) do that themselves. They belong to
   the project: the console flags one whose maker is no longer an admin, and keys unused for 90 days. Their changes are
   named for them in the history. CI tokens from before became service accounts (their tokens are their keys).
 - **Logs:** every product's requests and events, as plain sentences, with filters and saved queries. Changes are always

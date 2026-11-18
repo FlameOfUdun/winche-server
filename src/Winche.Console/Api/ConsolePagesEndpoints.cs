@@ -18,12 +18,12 @@ namespace Winche.Console.Api;
 
 /// <summary>
 /// The project's own console pages (<c>pages(...)</c> in its functions): listed in the sidebar for the roles that may see
-/// them, and served from the live deployment in a sandboxed frame, where @winche/admin acts as the person who opened it.
+/// them, and served from the live deployment in a sandboxed frame, where @winche-technologies/winche-admin acts as the person who opened it.
 /// </summary>
 /// <remarks>
 /// A page is opened through a short-lived signed address (<c>pages/{name}/view/{token}/</c>): the frame has no cookies
 /// of the console's and runs in an opaque origin (the sandbox CSP), so it can't call the console's API or read its
-/// session. A page brings its own <c>@winche/admin</c> (bundled, or a file in its folder); the SDK finds the channel
+/// session. A page brings its own <c>@winche-technologies/winche-admin</c> (bundled, or a file in its folder); the SDK finds the channel
 /// the console's bridge script opens, and its calls go over it to the console, which sends them to the admin API
 /// (<c>admin</c>) with the person's own session, so their role limits them.
 /// </remarks>
@@ -115,7 +115,7 @@ public static class ConsolePagesEndpoints
     }
 
     /// <summary>
-    /// @winche/admin's way out of the page: a channel to the console opened once (a MessageChannel), so only this page,
+    /// @winche-technologies/winche-admin's way out of the page: a channel to the console opened once (a MessageChannel), so only this page,
     /// not one it navigates to, can use it. Each call is answered with its result or its error (code and message).
     /// </summary>
     internal const string Bridge = """

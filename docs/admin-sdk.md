@@ -1,6 +1,6 @@
 # Plan: one admin SDK for functions, console pages and other servers
 
-**Status:** done locally (2026-11-18), unreleased: Functions 3.0.0 (with the `@winche/admin` npm package in
+**Status:** done locally (2026-11-18), unreleased: Functions 3.0.0 (with the `@winche-technologies/winche-admin` npm package in
 `npm/admin`), Storage 11.1.0, Server and CLI 3.0, the console web app. Builds on Server 3.0's paths (`docs/paths.md`). How other servers get their access tokens is its own
 plan (`docs/service-accounts.md`); this one only needs "a token".
 
@@ -17,7 +17,7 @@ A function, a page and a server that do the same thing are written three ways.
 
 ## What it is
 
-`@winche/admin`: one plain TypeScript SDK (no framework, no UI) for a project's data. It is the same API wherever it
+`@winche-technologies/winche-admin`: one plain TypeScript SDK (no framework, no UI) for a project's data. It is the same API wherever it
 runs; only how it signs in differs.
 
 ```ts
@@ -44,8 +44,8 @@ A function's `ctx` (its second argument everywhere: callables, HTTP functions, t
 describes the call only; data comes from the SDK, already signed in as the server inside functions:
 
 ```ts
-import { documents } from "@winche/admin";
-import { callable } from "@winche/functions";
+import { documents } from "@winche-technologies/winche-admin";
+import { callable } from "@winche-technologies/winche-functions";
 
 export const hello = callable(async (data, ctx) => {
   ctx.log("by", ctx.caller?.uid);
@@ -56,16 +56,16 @@ export const hello = callable(async (data, ctx) => {
 - **`ctx`:** the call only: `name` (the function's export name; today's `functionName`), `caller` (the app user, for
   callables), `log`. Triggers keep their event as the first argument.
 - **Secrets are declared at the top, given to the functions that use them:** `const mailKey = secrets.define("MAIL_KEY")`
-  (from `@winche/functions`) is a handle; a function lists the handles it uses (`{ secrets: [mailKey] }`) and reads
+  (from `@winche-technologies/winche-functions`) is a handle; a function lists the handles it uses (`{ secrets: [mailKey] }`) and reads
   `mailKey.value()` while it runs, getting the current value. Reading one the running function didn't list throws,
   naming both. The deploy checks every listed secret is set on the project. The admin SDK never has secrets, so pages
   and other servers can't read them.
 - **Resources likewise:** `const logo = resources.define("logo.png")`, then `await logo.bytes()` / `logo.text()` while a
   function runs (any function may read the deployment's resources).
-- **Tests** (`@winche/functions/testing`): `withSecrets({ MAIL_KEY: "x" }, fn)`, `withResources(folder, fn)`.
+- **Tests** (`@winche-technologies/winche-functions/testing`): `withSecrets({ MAIL_KEY: "x" }, fn)`, `withResources(folder, fn)`.
 
 ```ts
-import { callable, secrets, resources } from "@winche/functions";
+import { callable, secrets, resources } from "@winche-technologies/winche-functions";
 
 const mailKey = secrets.define("MAIL_KEY");
 const logo = resources.define("logo.png");
@@ -99,7 +99,7 @@ A function called by an app user can choose to act as that user: `admin.as(ctx.c
 if the app had made it. The plain SDK stays available beside it:
 
 ```ts
-import * as admin from "@winche/admin";
+import * as admin from "@winche-technologies/winche-admin";
 
 export const leaveWard = callable(async (data, ctx) => {
   const asUser = admin.as(ctx.caller);
@@ -113,7 +113,7 @@ The database's and storage's rules engines evaluate these calls with the caller'
 
 ### Trigger names
 
-`@winche/admin` exports `documents`, `files` and `assets` (data), so the trigger builders in `@winche/functions` are
+`@winche-technologies/winche-admin` exports `documents`, `files` and `assets` (data), so the trigger builders in `@winche-technologies/winche-functions` are
 renamed to read as events and never clash with them:
 
 | Today | Renamed |
@@ -135,7 +135,7 @@ over the page's channel (`window.winche`); the console runs it on the project's 
 - **No console actions:** `consoleAction` and `ctx.console` are removed. Work that needs the server's rights (long
   jobs) is asked for with a document the page writes (e.g. `jobs/backfill` with `status: "requested"`); a document
   trigger runs it and writes its progress there, and the page reads it. Who may start it is whoever may write there.
-- **Declaring a page:** `pages({ title, files, icon, minRole, order })` from `@winche/functions` (today's
+- **Declaring a page:** `pages({ title, files, icon, minRole, order })` from `@winche-technologies/winche-functions` (today's
   `consolePage`).
 - The console gives a page nothing else: no dialogs, notices or titles. `@winche/console-page` (with its React hooks)
   and `winche pages init`'s template come out. The CLI keeps building pages that name a build in `winche.json`
@@ -154,13 +154,13 @@ The SDK gets and refreshes its access token; calls go to `/console/v1/projects/<
 - **One admin API** (`POST /console/v1/projects/<id>/admin`, `{ op, args }`) runs the same operations functions send
   (the bindings), so every place behaves the same; the role needed comes from the operation (reads, data writes,
   the rest). A page's calls carry `X-Winche-Page` and may not call functions.
-- **The SDKs are the project's:** `@winche/functions` and `@winche/admin` are npm packages with repositories of their
+- **The SDKs are the project's:** `@winche-technologies/winche-functions` and `@winche-technologies/winche-admin` are npm packages with repositories of their
   own (winche-functions-typescript-sdk, winche-admin-typescript-sdk, MIT), named in the project's `deno.json`; the
   server doesn't inject or serve them (`Winche__FunctionPackagesPath` provides them to a server without npm). Both
   speak protocol 1, which the server checks (exported functions' `__winche`, `X-Winche-Protocol` on admin calls).
-- **Pages** bring their own `@winche/admin` (bundled, or a file in their folder); the console adds only the bridge
+- **Pages** bring their own `@winche-technologies/winche-admin` (bundled, or a file in their folder); the console adds only the bridge
   script that carries its calls.
-- **Functions** keep their run's state across awaits (`AsyncLocalStorage`): `@winche/admin`, secrets and resources
+- **Functions** keep their run's state across awaits (`AsyncLocalStorage`): `@winche-technologies/winche-admin`, secrets and resources
   find the run they belong to; at a module's top level they throw.
 - **Other servers**: `initializeAdmin({ server, project, token })` over HTTPS; tokens are today's console tokens until
   service accounts (`docs/service-accounts.md`).
@@ -179,8 +179,8 @@ The SDK gets and refreshes its access token; calls go to `/console/v1/projects/<
 
 ## Steps
 
-1. **The SDK package** (`@winche/admin`): the API from `ctx` today, one transport interface; in functions, signed in as
-   the server. `ctx` keeps the call's facts (`functionName` → `name`); `secrets.define(...)` / `resources.define(...)` handles from `@winche/functions` (functions list their secrets' handles), with test helpers. The trigger builders renamed (`onDocument`, `onFile`,
+1. **The SDK package** (`@winche-technologies/winche-admin`): the API from `ctx` today, one transport interface; in functions, signed in as
+   the server. `ctx` keeps the call's facts (`functionName` → `name`); `secrets.define(...)` / `resources.define(...)` handles from `@winche-technologies/winche-functions` (functions list their secrets' handles), with test helpers. The trigger builders renamed (`onDocument`, `onFile`,
    `onUser`, `onAssets`). Tests: the same suite run
    against each transport.
 2. **The console's project API** fills the SDK's gaps (transactions, batches, cursors, uploads).

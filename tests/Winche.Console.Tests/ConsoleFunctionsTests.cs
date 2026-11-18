@@ -60,7 +60,7 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Contains("doesn't build", await refused.Content.ReadAsStringAsync());
 
         string Code(string greeting) => $$"""
-            import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
+            import { callable } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
             export const hello = callable(async (data: { name: string }, ctx) => {
               const n = await admin.documents.collection("people").count();
               console.log("people:", n);
@@ -103,7 +103,7 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 }) return;   // deploying needs Deno
 
         await Json(await client.PostAsJsonAsync("/console/v1/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = """
-            import { callable, secrets } from "@winche/functions";
+            import { callable, secrets } from "@winche-technologies/winche-functions";
             const mailKey = secrets.define("MAIL_KEY");
             export const keyLength = callable(async () => mailKey.value().length, { secrets: [mailKey] });
             """ }, note = "Secrets" }));
@@ -138,7 +138,7 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         await Json(await admin.PostAsJsonAsync("/console/v1/functions/deploy", new { note = "Pages", files = new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { pages, callable } from "@winche/functions";
+                import { pages, callable } from "@winche-technologies/winche-functions";
                 export const reports = pages({ title: "Reports", files: "console/reports", icon: "chart-bar" });
                 export const tools = pages({ title: "Tools", files: "console/tools", minRole: "admin" });
                 export const whoami = callable(async (_d, ctx) => ctx.caller?.uid ?? "nobody");
@@ -172,7 +172,7 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.StartsWith("sandbox allow-scripts", csp);
         Assert.Contains("connect-src 'none'", csp);
         var html = await index.Content.ReadAsStringAsync();
-        // The page brings its own @winche/admin; the console adds only the bridge that carries its calls.
+        // The page brings its own @winche-technologies/winche-admin; the console adds only the bridge that carries its calls.
         Assert.Contains("<head><script src=\"_winche/console.js\"></script><title>R</title>", html);
         Assert.Contains("../_winche/console.js", await frame.GetStringAsync(url + "sub/more.html"));
         Assert.Contains("Symbol.for(\"winche.page\")", await frame.GetStringAsync(url + "_winche/console.js"));
@@ -185,7 +185,7 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, (await frame.GetAsync(url + "..%2F..%2Ftools%2Findex.html")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await frame.GetAsync(url.Replace("/view/", "/view/x"))).StatusCode);   // a tampered link
         Assert.Equal(HttpStatusCode.NotFound, (await frame.GetAsync(url.Replace("/reports/", "/tools/"))).StatusCode);   // a link is for one page
-        // @winche/admin from a page (relayed by the console) or another server: the caller's role decides.
+        // @winche-technologies/winche-admin from a page (relayed by the console) or another server: the caller's role decides.
         Assert.Equal(HttpStatusCode.Unauthorized, (await frame.PostAsJsonAsync("/console/v1/admin", new { op = "db.get", args = new { path = "notes/a" } })).StatusCode);
         await admin.PostAsJsonAsync("/console/v1/accounts", new { email = "m@example.com", role = "Member", password = "Passw0rd!" });
         using var member = app.CreateClient();
@@ -212,7 +212,7 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         {
             var refusedSdk = await viewer.SendAsync(later);
             Assert.Equal(HttpStatusCode.BadRequest, refusedSdk.StatusCode);
-            Assert.Contains("This @winche/admin speaks protocol 2; this server speaks 1 (@winche/admin 3.x).", await refusedSdk.Content.ReadAsStringAsync());
+            Assert.Contains("This @winche-technologies/winche-admin speaks protocol 2; this server speaks 1 (@winche-technologies/winche-admin 3.x).", await refusedSdk.Content.ReadAsStringAsync());
         }
         var missing = await viewer.PostAsJsonAsync("/console/v1/admin", new { op = "db.get", args = new { path = "notes" } });
         Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);   // the binding's own refusal, with its code

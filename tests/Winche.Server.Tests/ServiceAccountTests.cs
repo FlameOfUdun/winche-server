@@ -92,7 +92,7 @@ public class ServiceAccountTests(PostgresFixture pg)
         using var asDeployer = As(server, (await Json(await anonymous.PostAsJsonAsync($"{sa}/token", new { key = deployKey }))).GetProperty("accessToken").GetString()!);
         var deployed = await asDeployer.PostAsJsonAsync("/console/v1/projects/clinic/functions/deploy", new { note = "From CI", files = new Dictionary<string, string>
         {
-            ["index.ts"] = """import { callable } from "@winche/functions"; export const hi = callable(() => "hi");""",
+            ["index.ts"] = """import { callable } from "@winche-technologies/winche-functions"; export const hi = callable(() => "hi");""",
         } });
         Assert.True(deployed.IsSuccessStatusCode, await deployed.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.Unauthorized, (await asDeployer.PostAsJsonAsync("/console/v1/projects/clinic/admin", Note("ci"))).StatusCode);

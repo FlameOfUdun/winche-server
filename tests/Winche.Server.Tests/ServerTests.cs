@@ -393,7 +393,7 @@ public class ServerTests(PostgresFixture pg)
         Assert.Equal(HttpStatusCode.Forbidden, (await cli.GetAsync("/console/v1/projects/wards/members")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await cli.GetAsync("/console/v1/projects/clinic/project")).StatusCode);
         Assert.Equal(["wards"], (await Json(await cli.GetAsync("/console/v1/projects"))).GetProperty("projects").EnumerateArray().Select(p => p.GetProperty("id").GetString()).ToArray());
-        // The same token works for @winche/admin from another server (initializeAdmin): his role in Wards limits it.
+        // The same token works for @winche-technologies/winche-admin from another server (initializeAdmin): his role in Wards limits it.
         await StartProductAsync(admin, "/projects/wards", "database");
         var note = new { op = "db.add", args = new { collection = "notes", fields = new { by = new { stringValue = "bob's script" } } } };
         var noted = await Json(await cli.PostAsJsonAsync("/console/v1/projects/wards/admin", note));
@@ -1606,7 +1606,7 @@ public class ServerEmailTests(PostgresFixture pg)
         await Json(await console.PostAsJsonAsync("/console/v1/projects/wards/functions/deploy", new { note = "Hook", files = new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { http } from "@winche/functions"; import * as admin from "@winche/admin";
+                import { http } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
                 export const hook = http.onRequest(async (req) => ({ method: req.method, path: new URL(req.url).pathname, body: await req.text() }));
                 """,
         } }));
@@ -1645,7 +1645,7 @@ public class ServerEmailTests(PostgresFixture pg)
         var code = new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, resources } from "@winche/functions";
+                import { callable, resources } from "@winche-technologies/winche-functions";
                 const hello = resources.define("de/hello.txt"), font = resources.define("fonts/a.ttf");
                 export const read = callable(async () => ({ text: await hello.text(), font: (await font.bytes())?.length }));
                 """,
@@ -1743,7 +1743,7 @@ public class ServerEmailTests(PostgresFixture pg)
         await Json(await admin.PostAsJsonAsync("/console/v1/projects/clinic/functions/deploy", new { note = "Jobs", files = new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, schedule } from "@winche/functions"; import * as admin from "@winche/admin";
+                import { callable, schedule } from "@winche-technologies/winche-functions"; import * as admin from "@winche-technologies/winche-admin";
                 export const quick = callable(async () => 1);
                 export const backfill = schedule("0 3 * * *", async () => {}, { timeoutSeconds: 480 });
                 """,

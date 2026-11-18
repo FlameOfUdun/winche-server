@@ -218,7 +218,7 @@ internal sealed class ConsoleTokenHandler(IOptionsMonitor<AuthenticationSchemeOp
         var raw = header[7..].Trim();
         if (raw.StartsWith(ServiceAccountTokens.Prefix, StringComparison.Ordinal)) return await ServiceAccountAsync(raw);
         if (raw.StartsWith(ConsoleTokenStore.Prefix, StringComparison.Ordinal) || raw.StartsWith(ServiceAccountStore.KeyPrefix, StringComparison.Ordinal))
-            return AuthenticateResult.Fail("That's a service account's key: exchange it for an access token first (service-accounts/token; the CLI and @winche/admin do it).");
+            return AuthenticateResult.Fail("That's a service account's key: exchange it for an access token first (service-accounts/token; the CLI and @winche-technologies/winche-admin do it).");
         return raw.Count(c => c == '.') == 2 ? await SessionAsync(raw) : AuthenticateResult.NoResult();
     }
 

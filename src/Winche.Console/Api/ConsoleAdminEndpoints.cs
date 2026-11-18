@@ -14,7 +14,7 @@ using Winche.Functions;
 namespace Winche.Console.Api;
 
 /// <summary>
-/// <c>admin</c>: what @winche/admin sends from outside functions (a console page, another server with a token), run by
+/// <c>admin</c>: what @winche-technologies/winche-admin sends from outside functions (a console page, another server with a token), run by
 /// the same bindings functions use, limited by the caller's role in the project: a viewer reads, a member also writes
 /// the data (documents, files, the app's users), an admin may also call functions. A page may not call functions
 /// (callables are the apps').
@@ -26,7 +26,7 @@ public static class ConsoleAdminEndpoints
     /// <summary>Set by the console's web app on the calls it relays for a page.</summary>
     public const string PageHeader = "X-Winche-Page";
 
-    /// <summary>The protocol the calling @winche/admin speaks (refused unless this server's).</summary>
+    /// <summary>The protocol the calling @winche-technologies/winche-admin speaks (refused unless this server's).</summary>
     public const string ProtocolHeader = "X-Winche-Protocol";
 
     /// <summary>The least role <paramref name="op"/> needs.</summary>
@@ -39,7 +39,7 @@ public static class ConsoleAdminEndpoints
         {
             if (http.Request.Headers[ProtocolHeader].FirstOrDefault() is { Length: > 0 } spoken && spoken != FunctionsSdk.Protocol.ToString())
                 return new WincheError(WincheErrorCode.FailedPrecondition,
-                    $"This @winche/admin speaks protocol {spoken}; this server speaks {FunctionsSdk.Protocol} (@winche/admin {FunctionsSdk.Major}.x).").ToResult();
+                    $"This @winche-technologies/winche-admin speaks protocol {spoken}; this server speaks {FunctionsSdk.Protocol} (@winche-technologies/winche-admin {FunctionsSdk.Major}.x).").ToResult();
             var op = body.Op?.Trim() ?? "";
             if (op.Length == 0 || !op.Contains('.'))
                 return new WincheError(WincheErrorCode.InvalidArgument, "Give an operation, e.g. db.get.").ToResult();

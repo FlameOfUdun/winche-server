@@ -93,7 +93,7 @@ public sealed class ServerOptions
 
     /// <summary>
     /// A folder of npm packages this server provides to functions that import them without naming them in deno.json
-    /// (<c>@winche/functions/</c>, <c>@winche/admin/</c>: each a package.json and its built files), for servers that
+    /// (<c>@winche-technologies/winche-functions/</c>, <c>@winche-technologies/winche-admin/</c>: each a package.json and its built files), for servers that
     /// can't reach npm (<c>Winche__FunctionPackagesPath</c>). Unset: projects name their packages themselves.
     /// </summary>
     public string? FunctionPackagesPath { get; set; }
