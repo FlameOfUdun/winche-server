@@ -54,20 +54,20 @@ export const hello = callable(async (data, ctx) => {
 
 - **`ctx`:** the call only: `name` (the function's export name; today's `functionName`), `caller` (the app user, for
   callables), `log`. Triggers keep their event as the first argument.
-- **Secrets are declared at the top, given to the functions that use them:** `const mailKey = secret("MAIL_KEY")`
+- **Secrets are declared at the top, given to the functions that use them:** `const mailKey = secrets.define("MAIL_KEY")`
   (from `@winche/functions`) is a handle; a function lists the handles it uses (`{ secrets: [mailKey] }`) and reads
   `mailKey.value()` while it runs, getting the current value. Reading one the running function didn't list throws,
   naming both. The deploy checks every listed secret is set on the project. The admin SDK never has secrets, so pages
   and other servers can't read them.
-- **Resources likewise:** `const logo = resource("logo.png")`, then `await logo.bytes()` / `logo.text()` while a
+- **Resources likewise:** `const logo = resources.define("logo.png")`, then `await logo.bytes()` / `logo.text()` while a
   function runs (any function may read the deployment's resources).
 - **Tests** (`@winche/functions/testing`): `withSecrets({ MAIL_KEY: "x" }, fn)`, `withResources(folder, fn)`.
 
 ```ts
-import { callable, secret, resource } from "@winche/functions";
+import { callable, secrets, resources } from "@winche/functions";
 
-const mailKey = secret("MAIL_KEY");
-const logo = resource("logo.png");
+const mailKey = secrets.define("MAIL_KEY");
+const logo = resources.define("logo.png");
 
 export const send = callable(async (data, ctx) => {
   await sendMail(mailKey.value(), await logo.bytes(), data);
@@ -163,7 +163,7 @@ The SDK gets and refreshes its access token; calls go to `/console/v1/projects/<
 ## Steps
 
 1. **The SDK package** (`@winche/admin`): the API from `ctx` today, one transport interface; in functions, signed in as
-   the server. `ctx` keeps the call's facts (`functionName` → `name`); `secret(...)` / `resource(...)` handles from `@winche/functions` (functions list their secrets' handles), with test helpers. The trigger builders renamed (`onDocument`, `onFile`,
+   the server. `ctx` keeps the call's facts (`functionName` → `name`); `secrets.define(...)` / `resources.define(...)` handles from `@winche/functions` (functions list their secrets' handles), with test helpers. The trigger builders renamed (`onDocument`, `onFile`,
    `onUser`, `onAssets`). Tests: the same suite run
    against each transport.
 2. **The console's project API** fills the SDK's gaps (transactions, batches, cursors, uploads).
