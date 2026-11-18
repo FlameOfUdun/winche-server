@@ -111,8 +111,8 @@ public static class ProjectImageEndpoints
 
     internal static IEndpointRouteBuilder MapConsoleProjectImageEndpoints(this IEndpointRouteBuilder app)
     {
-        // GET project/image(?v=…): the image; the console adds ?v=<version> so it can be cached for good.
-        app.MapGet("/project/image", async (HttpContext http, ProjectImageStore store, CancellationToken ct) =>
+        // GET api/project/image(?v=…): the image; the console adds ?v=<version> so it can be cached for good.
+        app.MapGet("/api/project/image", async (HttpContext http, ProjectImageStore store, CancellationToken ct) =>
         {
             if (await store.GetAsync(ct) is not { } image) return Results.NotFound();
             http.Response.Headers.CacheControl = http.Request.Query.ContainsKey("v") ? "private, max-age=31536000, immutable" : "private, no-cache";
@@ -120,8 +120,8 @@ public static class ProjectImageEndpoints
             return Results.File(image.Bytes, image.ContentType, lastModified: image.UpdatedAt);
         }).RequireAuthorization(ConsoleRoles.ViewerPolicy);
 
-        // PUT project/image: the image's bytes as the body (PNG, JPEG or WebP, 256 KB at most).
-        app.MapPut("/project/image", async (HttpContext http, ProjectImageStore store, CancellationToken ct) =>
+        // PUT api/project/image: the image's bytes as the body (PNG, JPEG or WebP, 256 KB at most).
+        app.MapPut("/api/project/image", async (HttpContext http, ProjectImageStore store, CancellationToken ct) =>
         {
             if (!store.Available) return Problem("This console has nowhere to keep an image (AddWincheConfig).");
             if (http.Request.ContentLength > ProjectImageStore.MaxBytes) return Problem("The image is too big: 256 KB at most.");
@@ -135,7 +135,7 @@ public static class ProjectImageEndpoints
             return Results.Json(new { imageVersion = await store.VersionAsync(ct) });
         }).RequireAuthorization(ConsoleRoles.AdminPolicy);
 
-        app.MapDelete("/project/image", async (ProjectImageStore store, CancellationToken ct) =>
+        app.MapDelete("/api/project/image", async (ProjectImageStore store, CancellationToken ct) =>
         {
             if (store.Available) await store.RemoveAsync(ct);
             return Results.NoContent();

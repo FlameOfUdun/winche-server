@@ -5,7 +5,7 @@ using Winche.Console.Identity;
 
 namespace Winche.Console.Api;
 
-/// <summary>Self-service TOTP two-factor enrollment under <c>/session/2fa</c>.</summary>
+/// <summary>Self-service TOTP two-factor enrollment under <c>/api/auth/2fa</c>.</summary>
 public static class TwoFactorEndpoints
 {
     public sealed record CodeRequest(string Code);
@@ -14,7 +14,7 @@ public static class TwoFactorEndpoints
 
     public static IEndpointRouteBuilder MapTwoFactorEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/session/2fa").RequireAuthorization(ConsoleRoles.ViewerPolicy);
+        var group = app.MapGroup("/api/auth/2fa").RequireAuthorization(ConsoleRoles.ViewerPolicy);
 
         // Begin enrollment: a new authenticator key and the otpauth URI for a QR.
         group.MapPost("/setup", async (ConsoleAccounts accounts, HttpContext http) =>

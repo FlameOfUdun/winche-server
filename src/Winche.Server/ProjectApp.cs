@@ -154,7 +154,6 @@ internal static class ProjectApp
             {
                 fs.Root = project.FilesPath;
                 fs.PublicBaseUrl = publicUrl;
-                fs.RoutePrefix = SignedFiles;   // links to files kept on the server's disk: storage's own path
             });
         });
 
@@ -166,14 +165,14 @@ internal static class ProjectApp
             o.UseSettings();
         });
 
-        // The project's console API (its calls come as /console/v1/projects/<id>/…). Accounts are the server's: one sign-in, every project.
+        // The console, at ConsolePath under the project's path. Accounts are the server's: one sign-in, every project.
         builder.Services.AddWincheConsole(o =>
         {
             o.ConnectionString = config;          // rules versions
             o.LogsConnectionString = conn;        // the Logs tab's entries are data
             o.AccountsConnectionString = serverConn;
             o.Accounts = projects.Accounts;   // the console's accounts: one Winche Auth for the whole server
-            o.SignInCookiePath = ServerOptions.ConsolePath;   // the console's cookie never goes to the apps' addresses
+            o.SignInCookiePath = "/";
             o.AddDatabaseTab(b => { b.UseRulesEditor(); b.UseLogs(); b.UseHistory(); });
             o.AddStorageTab(b => { b.UseRulesEditor(); b.UseLogs(); });
             o.AddAssetsTab(b => b.UseRulesEditor());
@@ -222,11 +221,6 @@ internal static class ProjectApp
                     .ToResult().ExecuteAsync(http);
             }
         });
-        // The project's console calls: the router hands them over with the path base /console/v1/projects/<id>. They run
-        // in a branch of their own (the console's API, signed in with the console's schemes), so the apps' routes, token
-        // checks and CORS below never see them.
-        app.MapWhen(http => IsConsoleCall(http.Request.PathBase), console => console.UseWincheConsoleApi(ServerOptions.ConsolePath));
-        app.UseRouting();   // the apps' routes, matched after the console's branch
         // CORS: the project's browser origins and its registered web apps' (Project settings → General), read as
         // requests come, so changes apply at once. None set, or *: any origin.
         var registeredApps = app.Services.GetRequiredService<Winche.Console.Apps.RegisteredApps>();
@@ -235,16 +229,18 @@ internal static class ProjectApp
             p.SetIsOriginAllowed(origin => registeredApps.Current.AllowsOrigin(origin));
             p.AllowAnyHeader().AllowAnyMethod();
         });
-        // Compression for the apps' APIs (a bearer token in a header: another site can't make the browser send it). Never
-        // the console's API (cookies), where a compressed answer's size could give away what it holds (BREACH).
-        app.UseWhen(http => Compressible(http.Request.Path), branch => branch.UseResponseCompression());
+        // Compression only where another site can't make the browser send the credentials: the apps' APIs (a bearer token
+        // in a header) and the console's static files. Never the console's own API or sign-in (cookies), where a
+        // compressed answer's size could give away what it holds (BREACH).
+        app.UseWhen(http => Compressible(http.Request.Path, server.ConsolePath), branch => branch.UseResponseCompression());
         app.UseWebSockets();
         app.UseWincheWsQueryToken();
-        app.UseAuthentication();   // the apps' tokens (the console's calls are in their branch above)
+        // Apps' tokens are checked on the apps' routes only. The console's routes sign in with the console's own schemes
+        // (its policies name them): checking a console token as an app's would only fail, and log that it did.
+        app.UseWhen(http => ChecksAppTokens(http.Request.Path, server.ConsolePath), branch => branch.UseAuthentication());
         app.UseAuthorization();
         app.UseWincheCaller();
-        // A product's API answers once it's started (signed links answer for themselves: Assets' files are there too).
-        Winche.Console.Project.ProjectEndpoints.UseWincheProjectGate(app, SignedFiles);
+        Winche.Console.Project.ProjectEndpoints.UseWincheProjectGate(app);   // a product's API answers once it's started
 
         // Products are set up when they're started (and again as the project starts): nothing is made for those that aren't.
         app.MapWincheDatabaseRestApi();
@@ -254,26 +250,21 @@ internal static class ProjectApp
         app.MapWincheAuth();
         app.MapWincheFunctions();
         app.MapWincheAssets();
+        app.MapWincheConsole(server.ConsolePath);
         Winche.Console.Apps.AppSetupEndpoints.MapWincheAppSetup(app);   // GET /.well-known/winche: winche configure reads it
-        app.MapGet("/", () => Results.Redirect($"{ServerOptions.ConsolePath}/projects/{project.Id}"));   // people opening the project's address
+        app.MapGet("/", (HttpContext http) => Results.Redirect($"{http.Request.PathBase}{server.ConsolePath}"));
 
         await app.StartAsync(ct);
         return (app, inProcess);
     }
 
-    /// <summary>Links to files kept on the server's disk (signed): under storage's own path.</summary>
-    internal const string SignedFiles = "/files/v1/signed";
+    /// <summary>Whether a request on <paramref name="path"/> is checked for an app's token: everywhere but the console.</summary>
+    internal static bool ChecksAppTokens(PathString path, string consolePath) => !path.StartsWithSegments(consolePath);
 
-    /// <summary>Whether a request came as a project's console call (the router's path base <c>/console/v1/projects/&lt;id&gt;</c>).</summary>
-    internal static bool IsConsoleCall(PathString pathBase) => pathBase.StartsWithSegments(ServerOptions.ConsolePath);
-
-    /// <summary>Whether answers on an app's <paramref name="path"/> may be compressed (see the pipeline).</summary>
-    internal static bool Compressible(PathString path) =>
-        Api(path, "/documents/v1") || Api(path, "/files/v1") || Api(path, "/functions/v1") || Api(path, "/assets/v1");
-
-    /// <summary>Whether answers on the console's <paramref name="path"/> may be compressed: its page and files, never its API (cookies).</summary>
-    internal static bool ConsoleCompressible(PathString path) =>
-        path.StartsWithSegments(ServerOptions.ConsolePath, out var rest) && !System.Text.RegularExpressions.Regex.IsMatch(rest.Value ?? "", "^/v[0-9]+(/|$)");
+    /// <summary>Whether answers on <paramref name="path"/> may be compressed (see the pipeline).</summary>
+    internal static bool Compressible(PathString path, string consolePath) =>
+        Api(path, "/documents/v1") || Api(path, "/files/v1") || Api(path, "/functions/v1") || Api(path, "/assets/v1")
+        || (path.StartsWithSegments(consolePath, out var rest) && !rest.StartsWithSegments("/api"));
 
     /// <summary>An API's routes: <c>/documents/v1</c>, <c>/documents/v1/…</c> and its verbs, <c>/documents/v1:runQuery</c>.</summary>
     private static bool Api(PathString path, string prefix) =>

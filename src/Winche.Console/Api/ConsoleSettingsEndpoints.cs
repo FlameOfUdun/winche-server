@@ -51,7 +51,7 @@ public static class ConsoleSettingsEndpoints
 
     public static IEndpointRouteBuilder MapConsoleSettingsEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/settings").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var group = app.MapGroup("/api/settings").RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         group.MapGet("/{area}", (string area, IServiceProvider sp) =>
         {

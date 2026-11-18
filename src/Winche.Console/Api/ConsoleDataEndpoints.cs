@@ -31,12 +31,12 @@ public static class ConsoleDataEndpoints
                       ?? user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub") ?? "unknown");
 
     /// <summary>
-    /// <c>documents/history</c>: changes newest first — one document (<c>path</c>), everything under a path
+    /// <c>api/database/history</c>: changes newest first — one document (<c>path</c>), everything under a path
     /// (<c>under</c>), or by someone (<c>actor</c>); paged with <c>before</c>. Readable by whoever can read the Database tab.
     /// </summary>
     public static IEndpointRouteBuilder MapConsoleHistoryEndpoints(this IEndpointRouteBuilder app, ConsoleRole minRole)
     {
-        app.MapGet("/documents/history", async (
+        app.MapGet("/api/database/history", async (
             string? path, string? under, string? actor, long? before, int? limit,
             [FromServices] DocumentHistory history, CancellationToken ct) =>
         {
@@ -69,7 +69,7 @@ public static class ConsoleDataEndpoints
 
     public static IEndpointRouteBuilder MapConsoleDataEndpoints(this IEndpointRouteBuilder app, ConsoleRole minRole)
     {
-        var group = app.MapGroup("/documents");
+        var group = app.MapGroup("/api/database");
         // Edits made here are the signed-in console user's in the document history (Winche.Database KeepHistory).
         group.AddEndpointFilter(async (ctx, next) =>
         {

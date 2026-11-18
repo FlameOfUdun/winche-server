@@ -1,6 +1,6 @@
 # Plan: one layout for every path (Winche Server 3.0)
 
-**Status:** in progress: the server (step 1) done. A clean break: the old addresses stop answering (no redirects), so it ships before
+**Status:** plan, not started. A clean break: the old addresses stop answering (no redirects), so it ships before
 servers go live.
 
 ## Why
@@ -60,17 +60,11 @@ Server:
 | `projects…` | List, create, `check-database`; `{id}/archive`, `{id}/restore`, `{id}` (delete) |
 
 A project (`/console/v1/projects/<id>/…`): the server forwards these into that project's app, as it does for the
-apps' paths, where they run in a branch of their own (the console's API and sign-in; the apps' routes and token checks
-never see them). Only the project's own areas are there: signing in, the accounts, invites, the projects and Server
-settings are the server's (`/console/v1/…`); a project's `access` says the signed-in person's role and what its console
-has (the project's part of what `session/state` says for the server). The project as a whole (`/console/v1/projects/<id>`
-itself, `archive`, `restore`) stays the server's.
+apps' paths.
 
 | Path | What | Today's |
 | --- | --- | --- |
 | `project…` | The project, its `image`, `products/{product}/start\|setup` | `api/project…` |
-| `access` | The signed-in person's role here and what this project's console has | part of `api/auth/state` |
-| `tokens…` | CI tokens (a project's) | `api/tokens…` |
 | `members…` | Members | `api/members…` |
 | `overview`, `logs/…` | The project's | same |
 | `documents/…` | `collections`, `documents/{path}`, `query`, `history` | `api/database/…` |

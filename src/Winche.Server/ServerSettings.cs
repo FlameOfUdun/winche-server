@@ -194,9 +194,9 @@ internal sealed class ServerSettingsForConsole(ServerSettingsProvider settings, 
 
     public Task<string?> ConsoleProviderSecretAsync(string id, CancellationToken ct) => settings.ConsoleProviderSecretAsync(id, ct);
 
-    public string ConsoleSignInCallbackUrl => settings.Current.PublicUrl.TrimEnd('/') + ServerOptions.ConsolePath + "/v1/session/oidc/callback";
+    public string ConsoleSignInCallbackUrl => settings.Current.PublicUrl.TrimEnd('/') + "/_console/api/auth/oidc/callback";
 
-    public string ConsoleSignInReturnPath => ServerOptions.ConsolePath + "/";
+    public string ConsoleSignInReturnPath => "/_console/";
 
 }
 

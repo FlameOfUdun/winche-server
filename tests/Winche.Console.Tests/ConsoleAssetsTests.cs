@@ -28,7 +28,7 @@ public class ConsoleAssetsTests(PostgresFixture fx) : IAsyncLifetime
         using var client = app.CreateClient();
         await client.SetupAdminAsync();
         await client.LoginAsync();
-        Assert.True((await Json(await client.GetAsync("/console/v1/session/state"))).GetProperty("capabilities").GetProperty("assets").GetBoolean());
+        Assert.True((await Json(await client.GetAsync("/_console/api/auth/state"))).GetProperty("capabilities").GetProperty("assets").GetBoolean());
 
         var stamp = Guid.NewGuid().ToString("N");   // contents unique to this run: the database is shared by the tests
         var hello = Encoding.UTF8.GetBytes($"hello {stamp}");
@@ -36,13 +36,13 @@ public class ConsoleAssetsTests(PostgresFixture fx) : IAsyncLifetime
         string Hash(byte[] b) => Convert.ToHexString(SHA256.HashData(b)).ToLowerInvariant();
 
         // Only contents the server doesn't have are sent.
-        var missing = await Json(await client.PostAsJsonAsync("/console/v1/assets/contents/missing", new { hashes = new[] { Hash(hello), Hash(secret) } }));
+        var missing = await Json(await client.PostAsJsonAsync("/_console/api/assets/contents/missing", new { hashes = new[] { Hash(hello), Hash(secret) } }));
         Assert.Equal(2, missing.GetProperty("missing").GetArrayLength());
         foreach (var b in new[] { hello, secret })
-            Assert.Equal(HttpStatusCode.NoContent, (await client.PutAsync($"/console/v1/assets/contents/{Hash(b)}", new ByteArrayContent(b))).StatusCode);
-        Assert.Equal(0, (await Json(await client.PostAsJsonAsync("/console/v1/assets/contents/missing", new { hashes = new[] { Hash(hello) } }))).GetProperty("missing").GetArrayLength());
+            Assert.Equal(HttpStatusCode.NoContent, (await client.PutAsync($"/_console/api/assets/contents/{Hash(b)}", new ByteArrayContent(b))).StatusCode);
+        Assert.Equal(0, (await Json(await client.PostAsJsonAsync("/_console/api/assets/contents/missing", new { hashes = new[] { Hash(hello) } }))).GetProperty("missing").GetArrayLength());
 
-        var release = await Json(await client.PostAsJsonAsync("/console/v1/assets/releases", new
+        var release = await Json(await client.PostAsJsonAsync("/_console/api/assets/releases", new
         {
             note = "First words", channel = $"run-{stamp[..8]}",
             files = new Dictionary<string, object>
@@ -63,7 +63,7 @@ public class ConsoleAssetsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.False(refused.IsSuccessStatusCode);
 
         // The console's history of that channel.
-        var history = await Json(await client.GetAsync($"/console/v1/assets/channels/{channel}/history"));
+        var history = await Json(await client.GetAsync($"/_console/api/assets/channels/{channel}/history"));
         Assert.Single(history.GetProperty("moves").EnumerateArray());
     }
 }

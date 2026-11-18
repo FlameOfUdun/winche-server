@@ -138,53 +138,12 @@ public static class WincheConsoleExtensions
         return services;
     }
 
-    /// <summary>
-    /// The console at <paramref name="prefix"/>: its pages there, its API at <c>{prefix}/v1</c>.
-    /// </summary>
     public static IEndpointConventionBuilder MapWincheConsole(
-        this IEndpointRouteBuilder endpoints, string prefix = "/console")
+        this IEndpointRouteBuilder endpoints, string prefix = "/_console")
     {
-        var root = endpoints.MapGroup(prefix);
-        MapApi(endpoints, root.MapGroup("/v1"), pages: prefix, api: prefix + "/v1", project: false);
-        ConsoleSpa.Map(root, prefix);
-        return root;
-    }
-
-    /// <summary>
-    /// The console's API only, at the root of these endpoints (the request's path base says where: Winche Server hands a
-    /// project's console calls, <c>/console/v1/projects/&lt;id&gt;/…</c>, to that project's app this way). Links to the
-    /// console's pages point at <paramref name="pages"/>.
-    /// </summary>
-    public static IEndpointConventionBuilder MapWincheConsoleApi(this IEndpointRouteBuilder endpoints, string pages = "/console")
-    {
-        var group = endpoints.MapGroup("");
-        MapApi(endpoints, group, pages, api: "", project: true);
-        return group;
-    }
-
-    /// <summary>
-    /// The console's API as a pipeline branch of its own (routing, the accounts' services, authorization), for an app
-    /// whose other routes are something else: Winche Server's project apps, whose console calls arrive with the path
-    /// base <c>/console/v1/projects/&lt;id&gt;</c>. The console's endpoints sign in with the console's schemes (their
-    /// policies name them), so the branch has no default authentication of its own.
-    /// </summary>
-    public static IApplicationBuilder UseWincheConsoleApi(this IApplicationBuilder branch, string pages = "/console")
-    {
-        branch.UseRouting();
-        branch.Use(Identity.ConsoleAccountsEndpoint.UseAccountsServicesAsync);
-        branch.UseAuthorization();
-        branch.UseEndpoints(endpoints => endpoints.MapWincheConsoleApi(pages));
-        return branch;
-    }
-
-    /// <param name="project">A project's calls (<c>/console/v1/projects/&lt;id&gt;/…</c>): its own areas only. Signing in,
-    /// the accounts, invites, the projects and Server settings are the server's console's.</param>
-    private static void MapApi(IEndpointRouteBuilder endpoints, RouteGroupBuilder group, string pages, string api, bool project)
-    {
-        var links = endpoints.ServiceProvider.GetRequiredService<ConsolePrefix>();
-        links.Value = pages;
-        links.Api = api;
+        endpoints.ServiceProvider.GetRequiredService<ConsolePrefix>().Value = prefix;
         var options = endpoints.ServiceProvider.GetRequiredService<ConsoleOptions>();
+        var group = endpoints.MapGroup(prefix);
 
         // Surface the most common deployment mistake (behind a TLS-terminating proxy without
         // UseForwardedHeaders -> cookie/OIDC login 401s) as one actionable log line. Logs once.
@@ -196,7 +155,7 @@ public static class WincheConsoleExtensions
         // What the products throw for a bad request: answered as such (400/409), not as a server error.
         group.AddEndpointFilter(Api.ConsoleExceptionFilter.InvokeAsync);
 
-        if (!project) group.MapAuthConfigEndpoint(options);
+        group.MapAuthConfigEndpoint(options);
 
         {
             // Forced two-factor setup gate: a user the admin marked TwoFactorRequired who has not yet enrolled
@@ -214,15 +173,11 @@ public static class WincheConsoleExtensions
                 return await next(ctx);
             });
 
-            if (project) group.MapProjectAccessEndpoint();   // the caller's role in this project and what it has
-            else
-            {
-                group.MapAuthEndpoints();
-                if (options.ServerSettings is not null) Identity.ConsoleOidc.MapConsoleOidcEndpoints(group, options);
-                group.MapTwoFactorEndpoints();
-                group.MapUserEndpoints();
-                group.MapInviteEndpoints();
-            }
+            group.MapAuthEndpoints();
+            if (options.ServerSettings is not null) Identity.ConsoleOidc.MapConsoleOidcEndpoints(group, options);
+            group.MapTwoFactorEndpoints();
+            group.MapUserEndpoints();
+            group.MapInviteEndpoints();
         }
 
         var isService = endpoints.ServiceProvider.GetService<IServiceProviderIsService>();
@@ -270,13 +225,10 @@ public static class WincheConsoleExtensions
         // Hooks, when the app uses Winche.Webhooks (AddWincheHooks).
         if (isService?.IsService(typeof(Winche.Webhooks.HookCatalog)) == true) group.MapConsoleHooksEndpoints();
         // Background deliveries (hooks inside the app) of every package that has them.
-        group.MapConsoleTokenEndpoints(options, signIn: !project);
+        group.MapConsoleTokenEndpoints(options);
         group.MapConsoleSecretsEndpoints();   // where secrets may be read from; references and the project's own keys
-        if (!project)
-        {
-            Project.WincheProjectEndpoints.MapConsoleWincheProjectEndpoints(group, options);
-            Project.ServerSettingsEndpoints.MapConsoleServerSettingsEndpoints(group, options);
-        }
+        Project.WincheProjectEndpoints.MapConsoleWincheProjectEndpoints(group, options);
+        Project.ServerSettingsEndpoints.MapConsoleServerSettingsEndpoints(group, options);
         // A project's own pages: not in the server's console, which has no project.
         if (!options.ServerConsole)
         {
@@ -309,27 +261,30 @@ public static class WincheConsoleExtensions
 
         // Server settings → Authentication: the same pages for the console's accounts (their Winche Auth), for server
         // admins. Their requests get the accounts' services first (users, settings, secrets, templates, keys).
-        if (!project && options.Accounts is not null && options.ServerSettings is not null)
+        if (options.Accounts is not null && options.ServerSettings is not null)
         {
             var accounts = group.MapGroup("").WithMetadata(new Identity.ConsoleAccountsEndpoint()).AddEndpointFilter(async (ctx, next) =>
                 Project.WincheProjectsCaller.Of(ctx.HttpContext.User).ServerAdmin ? await next(ctx)
                     : Results.Json(new { error = "Only server admins manage the console's accounts." }, statusCode: StatusCodes.Status403Forbidden));
-            accounts.MapConsoleAppAuthEndpoints(wincheAuth: true, root: "/server/auth");
-            accounts.MapConsoleAuthSettingsEndpoints(tokens: false, root: "/server/auth");
+            accounts.MapConsoleAppAuthEndpoints(wincheAuth: true, root: "/api/server/auth");
+            accounts.MapConsoleAuthSettingsEndpoints(tokens: false, root: "/api/server/auth");
             if (endpoints is IApplicationBuilder pipeline) pipeline.Use(Identity.ConsoleAccountsEndpoint.UseAccountsServicesAsync);
         }
 
         // Apps: how an app connects (the console's API; /.well-known/winche is MapWincheAppSetup).
         group.MapConsoleAppsEndpoints(options);
 
+
+        ConsoleSpa.Map(group, prefix);
+        return group;
     }
 
     private static bool IsTwoFactorSetupExempt(PathString path)
     {
         var p = path.Value ?? "";
-        return p.EndsWith("/session/logout", StringComparison.OrdinalIgnoreCase)
-            || p.EndsWith("/session/profile", StringComparison.OrdinalIgnoreCase)
-            || p.EndsWith("/session/2fa/setup", StringComparison.OrdinalIgnoreCase)
-            || p.EndsWith("/session/2fa/enable", StringComparison.OrdinalIgnoreCase);
+        return p.EndsWith("/api/auth/logout", StringComparison.OrdinalIgnoreCase)
+            || p.EndsWith("/api/auth/profile", StringComparison.OrdinalIgnoreCase)
+            || p.EndsWith("/api/auth/2fa/setup", StringComparison.OrdinalIgnoreCase)
+            || p.EndsWith("/api/auth/2fa/enable", StringComparison.OrdinalIgnoreCase);
     }
 }

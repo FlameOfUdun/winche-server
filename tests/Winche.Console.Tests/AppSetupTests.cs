@@ -36,10 +36,10 @@ public class AppSetupTests(PostgresFixture fx) : IAsyncLifetime
     {
         using var app = new ConsoleAppFactory(fx);
         using var client = app.CreateClient();
-        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/console/v1/apps")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/_console/api/apps")).StatusCode);
         await client.SetupAdminAsync();
         await client.LoginAsync();
-        var page = await Json(await client.GetAsync("/console/v1/apps?platforms=android,ios,nonsense"));
+        var page = await Json(await client.GetAsync("/_console/api/apps?platforms=android,ios,nonsense"));
         var file = page.GetProperty("file").GetString()!;
         Assert.Contains("abstract final class DefaultWincheOptions", file);
         Assert.Contains("static final android = WincheOptions(", file);

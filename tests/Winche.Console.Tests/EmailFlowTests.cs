@@ -48,16 +48,16 @@ public class EmailFlowTests(PostgresFixture fx) : IAsyncLifetime
         using var client = emailApp.CreateClient();
         await client.SetupAdminAsync();
 
-        var state = await client.GetFromJsonAsync<System.Text.Json.JsonElement>("/console/v1/session/state");
+        var state = await client.GetFromJsonAsync<System.Text.Json.JsonElement>("/_console/api/auth/state");
         Assert.True(state.GetProperty("selfServiceResetEnabled").GetBoolean());
 
-        var forgot = await client.PostAsJsonAsync("/console/v1/session/forgot-password", new { email = "admin@example.com" });
+        var forgot = await client.PostAsJsonAsync("/_console/api/auth/forgot-password", new { email = "admin@example.com" });
         Assert.Equal(HttpStatusCode.OK, forgot.StatusCode);
         Assert.NotNull(fake.LastResetLink);
 
         // The console accounts' reset link: …/reset-password?mode=resetPassword&code=…
         Assert.Equal("resetPassword", QueryParam(fake.LastResetLink!, "mode"));
-        var reset = await client.PostAsJsonAsync("/console/v1/session/reset-password",
+        var reset = await client.PostAsJsonAsync("/_console/api/auth/reset-password",
             new { code = QueryParam(fake.LastResetLink!, "code"), newPassword = "Reset3d!" });
         Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
 
@@ -76,13 +76,13 @@ public class EmailFlowTests(PostgresFixture fx) : IAsyncLifetime
         await admin.SetupAdminAsync();
         await admin.LoginAsync();
 
-        // No password → rejected even when email is configured (invites now go through /console/v1/invites).
-        var noPwd = await admin.PostAsJsonAsync("/console/v1/accounts",
+        // No password → rejected even when email is configured (invites now go through /api/invites).
+        var noPwd = await admin.PostAsJsonAsync("/_console/api/users",
             new { email = "invitee@example.com", role = "Member" });
         Assert.Equal(HttpStatusCode.BadRequest, noPwd.StatusCode);
 
         // With a password → created.
-        var withPwd = await admin.PostAsJsonAsync("/console/v1/accounts",
+        var withPwd = await admin.PostAsJsonAsync("/_console/api/users",
             new { email = "invitee@example.com", role = "Member", password = "Inv1ted!" });
         Assert.Equal(HttpStatusCode.OK, withPwd.StatusCode);
 
@@ -98,19 +98,19 @@ public class EmailFlowTests(PostgresFixture fx) : IAsyncLifetime
         using var admin = app.CreateClient();
         await admin.SetupAdminAsync();
 
-        var state = await admin.GetFromJsonAsync<System.Text.Json.JsonElement>("/console/v1/session/state");
+        var state = await admin.GetFromJsonAsync<System.Text.Json.JsonElement>("/_console/api/auth/state");
         Assert.False(state.GetProperty("selfServiceResetEnabled").GetBoolean());
 
-        var forgot = await admin.PostAsJsonAsync("/console/v1/session/forgot-password", new { email = "admin@example.com" });
+        var forgot = await admin.PostAsJsonAsync("/_console/api/auth/forgot-password", new { email = "admin@example.com" });
         Assert.Equal(HttpStatusCode.NotFound, forgot.StatusCode);
 
         // Links made by an admin (a new member's first password) still work: a wrong code is refused, not missing.
-        var reset = await admin.PostAsJsonAsync("/console/v1/session/reset-password", new { code = "x", newPassword = "Passw0rd!long" });
+        var reset = await admin.PostAsJsonAsync("/_console/api/auth/reset-password", new { code = "x", newPassword = "Passw0rd!long" });
         Assert.Equal(HttpStatusCode.BadRequest, reset.StatusCode);
 
         await admin.LoginAsync();
-        // Direct create without a password is always rejected (invites go through /console/v1/invites).
-        var invite = await admin.PostAsJsonAsync("/console/v1/accounts", new { email = "x@example.com", role = "Viewer" });
+        // Direct create without a password is always rejected (invites go through /api/invites).
+        var invite = await admin.PostAsJsonAsync("/_console/api/users", new { email = "x@example.com", role = "Viewer" });
         Assert.Equal(HttpStatusCode.BadRequest, invite.StatusCode);
     }
 }

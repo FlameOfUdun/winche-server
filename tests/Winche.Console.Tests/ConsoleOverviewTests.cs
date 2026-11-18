@@ -18,12 +18,12 @@ public class ConsoleOverviewTests(PostgresFixture fx) : IAsyncLifetime
         using var client = app.CreateClient();
         await client.SetupAdminAsync();
 
-        var config = JsonDocument.Parse(await client.GetStringAsync("/console/v1/session/config")).RootElement;
+        var config = JsonDocument.Parse(await client.GetStringAsync("/_console/api/auth/config")).RootElement;
         Assert.False(string.IsNullOrEmpty(config.GetProperty("project").GetProperty("name").GetString()));   // before sign-in
-        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/console/v1/overview")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/_console/api/overview")).StatusCode);
 
         await client.LoginAsync();
-        var overview = JsonDocument.Parse(await client.GetStringAsync("/console/v1/overview")).RootElement;
+        var overview = JsonDocument.Parse(await client.GetStringAsync("/_console/api/overview")).RootElement;
         var products = overview.GetProperty("products").EnumerateArray().Select(p => p.GetProperty("id").GetString()).ToList();
         Assert.Contains("database", products);
         Assert.Contains("storage", products);

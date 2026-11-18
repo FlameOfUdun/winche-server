@@ -47,14 +47,12 @@ public static class ConsoleTokenEndpoints
         createdAt = t.CreatedAt, expiresAt = t.ExpiresAt, lastUsedAt = t.LastUsedAt,
     };
 
-    /// <param name="signIn">The CLI's sign-in (<c>cli/…</c>): the server's, not a project's.</param>
-    public static IEndpointRouteBuilder MapConsoleTokenEndpoints(this IEndpointRouteBuilder app, ConsoleOptions options, bool signIn = true)
+    public static IEndpointRouteBuilder MapConsoleTokenEndpoints(this IEndpointRouteBuilder app, ConsoleOptions options)
     {
         // ── winche login ──────────────────────────────────────────────────────────────────────────────────────
-        if (signIn)
         {
             // The signed-in user allows the CLI waiting on 127.0.0.1:{port}; the browser goes back to it with a code.
-            app.MapPost("/cli/approve", async (ApproveRequest body, HttpContext http, ConsoleTokenStore store, CancellationToken ct) =>
+            app.MapPost("/api/cli-login/approve", async (ApproveRequest body, HttpContext http, ConsoleTokenStore store, CancellationToken ct) =>
             {
                 // A person approves: in the browser, or a code from a CLI signed in as them (winche login:approve); never a CI token.
                 if (ByCiToken(http.User) || (ByToken(http.User) && body.UserCode is null)) return Results.Forbid();
@@ -79,7 +77,7 @@ public static class ConsoleTokenEndpoints
             // The CLI trades the code (with its PKCE verifier) for a session of the account in the console's accounts,
             // like any sign-in (it's among the account's sessions, and ends with "sign out everywhere"): an access token
             // for its requests, and a refresh token to renew it (POST cli-login/refresh).
-            app.MapPost("/cli/token", async (ExchangeRequest body, HttpContext http, ConsoleTokenStore store, ConsoleAccounts accounts, CancellationToken ct) =>
+            app.MapPost("/api/cli-login/token", async (ExchangeRequest body, HttpContext http, ConsoleTokenStore store, ConsoleAccounts accounts, CancellationToken ct) =>
             {
                 if (string.IsNullOrEmpty(body.Code) || string.IsNullOrEmpty(body.Verifier) || !store.Available)
                     return Results.Json(new { error = new { code = "INVALID_CODE", message = "Send the code and verifier." } }, statusCode: 400);
@@ -94,7 +92,7 @@ public static class ConsoleTokenEndpoints
             }).AllowAnonymous();
 
             // winche login --no-browser: the CLI shows a code to type in a browser anywhere, and polls until it's allowed.
-            app.MapPost("/cli/device", async (DeviceRequest body, ConsoleTokenStore store, CancellationToken ct) =>
+            app.MapPost("/api/cli-login/device", async (DeviceRequest body, ConsoleTokenStore store, CancellationToken ct) =>
             {
                 if (!store.Available) return Problem("The CLI's sign-in needs AddWincheConfig(…) (where its tokens are kept).");
                 if (body.Challenge is not { Length: 43 } challenge) return Problem("Send the PKCE challenge.");
@@ -102,19 +100,19 @@ public static class ConsoleTokenEndpoints
                 var (deviceCode, userCode) = await store.CreateDeviceAsync(challenge, name, ct);
                 return Results.Json(new { deviceCode, userCode, expiresIn = (int)ConsoleTokenStore.DeviceLifetime.TotalSeconds, interval = 2 });
             }).AllowAnonymous();
-            app.MapPost("/cli/device/poll", async (PollRequest body, ConsoleTokenStore store, CancellationToken ct) =>
+            app.MapPost("/api/cli-login/device/poll", async (PollRequest body, ConsoleTokenStore store, CancellationToken ct) =>
             {
                 if (string.IsNullOrEmpty(body.DeviceCode)) return Problem("Send the device code.");
                 var (status, code) = await store.PollDeviceAsync(body.DeviceCode, ct);
                 return Results.Json(new { status, code });
             }).AllowAnonymous();
             // The browser page shows which CLI it's allowing.
-            app.MapGet("/cli/device/{userCode}", async (string userCode, ConsoleTokenStore store, CancellationToken ct) =>
+            app.MapGet("/api/cli-login/device/{userCode}", async (string userCode, ConsoleTokenStore store, CancellationToken ct) =>
                 await store.DeviceNameAsync(userCode, ct) is { } name ? Results.Json(new { name, userCode = ConsoleTokenStore.NormalizeUserCode(userCode) }) : Results.NotFound()
             ).RequireAuthorization(ConsoleRoles.SignedInPolicy);
 
             // Renews the CLI's sign-in: refused once the session has ended (signed out, everywhere too; account off).
-            app.MapPost("/cli/refresh", async (RefreshRequest body, HttpContext http, ConsoleAccounts accounts, CancellationToken ct) =>
+            app.MapPost("/api/cli-login/refresh", async (RefreshRequest body, HttpContext http, ConsoleAccounts accounts, CancellationToken ct) =>
             {
                 if (string.IsNullOrEmpty(body.RefreshToken)) return Results.Json(new { error = new { code = "INVALID_REFRESH_TOKEN", message = "Send the refresh token." } }, statusCode: 400);
                 try { return Session(await accounts.UseAsync(a => a.RefreshAsync(body.RefreshToken, CliInfo(http, body.Name), ct))); }
@@ -122,7 +120,7 @@ public static class ConsoleTokenEndpoints
             }).AllowAnonymous();
 
             // winche logout: ends the session.
-            app.MapPost("/cli/logout", async (RefreshRequest body, ConsoleAccounts accounts, CancellationToken ct) =>
+            app.MapPost("/api/cli-login/logout", async (RefreshRequest body, ConsoleAccounts accounts, CancellationToken ct) =>
             {
                 if (!string.IsNullOrEmpty(body.RefreshToken))
                     try { await accounts.UseAsync(a => a.SignOutAsync(body.RefreshToken, ct)); }
@@ -132,7 +130,7 @@ public static class ConsoleTokenEndpoints
         }
 
         // ── the caller's own token (winche logout) ──────────────────────────────────────────────────────────────
-        app.MapDelete("/tokens/current", async (HttpContext http, ConsoleTokenStore store, CancellationToken ct) =>
+        app.MapDelete("/api/tokens/current", async (HttpContext http, ConsoleTokenStore store, CancellationToken ct) =>
         {
             if (http.User.FindFirstValue(ConsoleTokenHandler.TokenIdClaim) is not { } id) return Problem("This request wasn't made with a token.");
             await store.RevokeAsync(id, ct);
@@ -141,7 +139,7 @@ public static class ConsoleTokenEndpoints
 
         // ── admins: CI tokens (a project's: the server's console has none) ──────────────────────────────────────────
         if (options.ServerConsole) return app;
-        var admin = app.MapGroup("/tokens").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var admin = app.MapGroup("/api/tokens").RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         admin.MapGet("", async (ConsoleTokenStore store, CancellationToken ct) => Results.Json(new
         {

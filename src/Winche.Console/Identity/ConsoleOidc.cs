@@ -167,7 +167,7 @@ internal static class ConsoleOidc
 
     public static IEndpointRouteBuilder MapConsoleOidcEndpoints(this IEndpointRouteBuilder app, ConsoleOptions options)
     {
-        var group = app.MapGroup("/session/oidc");
+        var group = app.MapGroup("/api/auth/oidc");
 
         // Off to the provider. A test (from Server settings) carries unsaved settings; otherwise those in force.
         group.MapGet("/start", async (HttpContext http, string? provider, string? returnUrl, string? test, CancellationToken ct) =>

@@ -43,10 +43,10 @@ public class ConsoleUserDirectoryTests(PostgresFixture fx) : IAsyncLifetime
         using var client = app.CreateClient();
         await client.SetupAdminAsync();
         await client.LoginAsync();
-        var refused = await client.PutAsJsonAsync("/console/v1/auth/settings/providers", new { settings = new { trustWincheAuth = true, providers = Array.Empty<object>() }, reason = "x" });
+        var refused = await client.PutAsJsonAsync("/_console/api/app-auth/settings/providers", new { settings = new { trustWincheAuth = true, providers = Array.Empty<object>() }, reason = "x" });
         Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
         Assert.Contains("TWO_FACTOR_REQUIRED", await refused.Content.ReadAsStringAsync());
-        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/console/v1/auth/settings/directory")).StatusCode);   // no user directory setting
-        await Json(await client.GetAsync("/console/v1/auth/settings/providers"));   // reading is fine
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/_console/api/app-auth/settings/directory")).StatusCode);   // no user directory setting
+        await Json(await client.GetAsync("/_console/api/app-auth/settings/providers"));   // reading is fine
     }
 }

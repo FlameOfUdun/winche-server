@@ -199,7 +199,7 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
         row.Id,
         await DataConnectionAsync(row, ct),
         Path.Combine(server.ProjectsPath, row.Id, "files"),
-        $"{settings.Current.PublicUrl.TrimEnd('/')}{ServerOptions.ProjectsPrefix}/{row.Id}",
+        $"{settings.Current.PublicUrl.TrimEnd('/')}/p/{row.Id}",
         ConfigConnection(row.Id));
 
     private async Task<ProjectHost> StartAsync(ServerProject project, CancellationToken ct)
@@ -484,11 +484,13 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
 /// </summary>
 internal sealed class ServerProjectsForConsole(ProjectHosts hosts, ServerProject? project, ServerOptions server) : Winche.Console.Project.IWincheProjects
 {
+    public string CurrentPrefix => project is null ? "" : $"/p/{project.Id}";
+
     private async Task<Winche.Console.Project.WincheProjectInfo> InfoAsync(ProjectHost host, CancellationToken ct)
     {
         var current = host.App.Services.GetRequiredService<Winche.Console.Project.ProjectSetup>().Current;
         var image = await host.App.Services.GetRequiredService<Winche.Console.Project.ProjectImageStore>().VersionAsync(ct);
-        return new(host.Project.Id, current.Name, $"{ServerOptions.ConsolePath}/projects/{host.Project.Id}", image)
+        return new(host.Project.Id, current.Name, $"/p/{host.Project.Id}{server.ConsolePath}", image)
         {
             Products = [.. Winche.Console.Project.WincheProducts.All.Where(current.IsStarted)],
         };
@@ -539,15 +541,14 @@ internal sealed class ServerProjectsForConsole(ProjectHosts hosts, ServerProject
 /// </summary>
 internal static class ProjectRouter
 {
-    /// <summary>
-    /// <c>/projects/&lt;id&gt;/…</c> (apps) and <c>/console/v1/projects/&lt;id&gt;/…</c> (that project's console API) go to the
-    /// project's app, with the path base saying which; everything else to the server's console app, which also keeps
-    /// what's about a project as a whole (<c>/console/v1/projects/&lt;id&gt;</c> itself, its <c>archive</c> and <c>restore</c>).
-    /// </summary>
     public static async Task RouteAsync(HttpContext http, ProjectHosts projects, ServerConsoleApp console)
     {
-        if (Target(http.Request.Path) is var (prefix, id, rest))
+        var path = http.Request.Path;
+        if (path.StartsWithSegments("/p", out var rest) && rest.HasValue && rest.Value!.Length > 1)
         {
+            var value = rest.Value!;
+            var slash = value.IndexOf('/', 1);
+            var id = slash < 0 ? value[1..] : value[1..slash];
             if (projects.IsArchived(id))
             {
                 await Results.Json(new { error = new { code = "failed-precondition", message = $"Project {id} is archived: a server admin can restore it.", reason = "project-archived" } }, statusCode: 410).ExecuteAsync(http);
@@ -559,30 +560,11 @@ internal static class ProjectRouter
                 return;
             }
             if (await PausedAsync(http, projects, host)) return;
-            await host.Server.HandleAsync(http, http.Request.PathBase.Add($"{prefix}/{id}"), rest);
+            var pathBase = http.Request.PathBase.Add($"/p/{id}");
+            await host.Server.HandleAsync(http, pathBase, slash < 0 ? PathString.Empty : new PathString(value[slash..]));
             return;
         }
-        await console.Server.HandleAsync(http, http.Request.PathBase, http.Request.Path);
-    }
-
-    private const string ConsoleProjects = ServerOptions.ConsolePath + "/v1/projects";
-
-    /// <summary>The project a request goes to: its prefix (apps' or console's), its id and the path under them; null: the server's console.</summary>
-    internal static (string Prefix, string Id, PathString Under)? Target(PathString path)
-    {
-        if (Split(path, ServerOptions.ProjectsPrefix) is var (id, rest)) return (ServerOptions.ProjectsPrefix, id, rest);
-        if (Split(path, ConsoleProjects) is var (cid, crest)
-            && crest.HasValue && crest.Value is not ("/" or "/archive" or "/restore"))
-            return (ConsoleProjects, cid, crest);
-        return null;
-    }
-
-    private static (string Id, PathString Under)? Split(PathString path, string prefix)
-    {
-        if (!path.StartsWithSegments(prefix, out var after) || !after.HasValue || after.Value!.Length <= 1) return null;
-        var value = after.Value!;
-        var slash = value.IndexOf('/', 1);
-        return (slash < 0 ? value[1..] : value[1..slash], slash < 0 ? PathString.Empty : new PathString(value[slash..]));
+        await console.Server.HandleAsync(http, http.Request.PathBase, path);
     }
 
     /// <summary>A project whose data is moving is paused: requests are told to try again, with how far the move has got.</summary>

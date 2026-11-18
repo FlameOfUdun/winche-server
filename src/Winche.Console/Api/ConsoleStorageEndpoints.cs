@@ -18,7 +18,7 @@ public static class ConsoleStorageEndpoints
 
     public static IEndpointRouteBuilder MapConsoleStorageEndpoints(this IEndpointRouteBuilder app, ConsoleRole minRole)
     {
-        var group = app.MapGroup("/files");
+        var group = app.MapGroup("/api/storage");
         var readPolicy = ConsoleRolePolicy.For(minRole);
         var writePolicy = ConsoleRolePolicy.For(minRole < ConsoleRole.Member ? ConsoleRole.Member : minRole);
 

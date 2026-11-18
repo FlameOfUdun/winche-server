@@ -91,10 +91,10 @@ public class RuleFieldSamplerTests(PostgresFixture fx) : IAsyncLifetime
         await client.SetupAdminAsync();
         await client.LoginAsync();
 
-        var db = JsonDocument.Parse(await client.GetStringAsync("/console/v1/rules/database/fields?pattern=" + Uri.EscapeDataString("s3u/{uid}"))).RootElement;
+        var db = JsonDocument.Parse(await client.GetStringAsync("/_console/api/rules/database/fields?pattern=" + Uri.EscapeDataString("s3u/{uid}"))).RootElement;
         Assert.Contains(db.GetProperty("fields").EnumerateArray(), f => f.GetProperty("path").GetString() == "address.city");
 
-        var storage = JsonDocument.Parse(await client.GetStringAsync("/console/v1/rules/storage/fields")).RootElement;
+        var storage = JsonDocument.Parse(await client.GetStringAsync("/_console/api/rules/storage/fields")).RootElement;
         Assert.Contains(storage.GetProperty("fields").EnumerateArray(), f => f.GetProperty("path").GetString() == "mimeType");
     }
 

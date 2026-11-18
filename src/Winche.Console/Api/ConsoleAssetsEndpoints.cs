@@ -17,7 +17,7 @@ namespace Winche.Console.Api;
 /// <summary>
 /// The Assets page and <c>winche assets deploy</c>: channels, releases and their differences, publishing (as the
 /// signed-in admin, or a CI token with the <c>assets</c> scope), and where contents are kept. Rules are the rules
-/// editor's (<c>rules/assets</c>); limits are the <c>assets</c> settings area.
+/// editor's (<c>api/rules/assets</c>); limits are the <c>assets</c> settings area.
 /// </summary>
 public static class ConsoleAssetsEndpoints
 {
@@ -50,7 +50,7 @@ public static class ConsoleAssetsEndpoints
     {
         var options = app.ServiceProvider.GetRequiredService<ConsoleOptions>();
         var minRole = options.AssetsTab!.MinRole;
-        var group = app.MapGroup("/assets").RequireAuthorization(ConsoleRolePolicy.For(minRole));
+        var group = app.MapGroup("/api/assets").RequireAuthorization(ConsoleRolePolicy.For(minRole));
         // Nothing of Assets is read before it's started and set up.
         group.AddEndpointFilter(async (ctx, next) =>
             Project.ProjectSetup.IsReady(ctx.HttpContext.RequestServices, Project.WincheProducts.Assets) ? await next(ctx)

@@ -16,7 +16,7 @@ using Winche.Console.Users;
 namespace Winche.Console.Api;
 
 /// <summary>
-/// <c>auth/settings</c> — the Authentication tab's Settings: trusted identity providers and their token mapping
+/// <c>api/app-auth/settings</c> — the Authentication tab's Settings: trusted identity providers and their token mapping
 /// (Winche.Auth's settings area <c>auth.identityProviders</c>), a token test, and the change history. Admins only.
 /// Changing them needs <c>AddWincheTokens(t =&gt; t.UseSettings())</c> and <c>AddWincheConfig</c>; otherwise read-only.
 /// </summary>
@@ -64,7 +64,7 @@ public static class ConsoleAuthSettingsEndpoints
     private static IResult Problem(string message, IReadOnlyList<string>? errors = null) =>
         ConsoleErrors.Problem("invalid-settings", message, errors);
 
-    public static IEndpointRouteBuilder MapConsoleAuthSettingsEndpoints(this IEndpointRouteBuilder app, bool tokens = true, string root = "/auth")
+    public static IEndpointRouteBuilder MapConsoleAuthSettingsEndpoints(this IEndpointRouteBuilder app, bool tokens = true, string root = "/api/app-auth")
     {
         var group = app.MapGroup(root + "/settings").RequireAuthorization(ConsoleRoles.AdminPolicy);
 

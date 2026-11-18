@@ -183,7 +183,7 @@ public static class ProjectEndpoints
     private static object Body(ProjectInfo p, DateTimeOffset? image, ProductSetupRunner runner) => new
     {
         setup = p.SetupEnabled, created = p.Created, id = p.Id, name = p.Name,
-        // When the thumbnail last changed (null: none): GET project/image?v=<it>.
+        // When the thumbnail last changed (null: none): GET api/project/image?v=<it>.
         imageVersion = image?.ToUnixTimeMilliseconds().ToString(),
         // Each product: started, and its setup when one has run (running, failed or done).
         products = WincheProducts.All.Select(id => new { id, started = p.IsStarted(id), ready = p.IsStarted(id) && runner.IsReady(id), setup = runner.RunOf(id) }),
@@ -191,11 +191,11 @@ public static class ProjectEndpoints
 
     internal static IEndpointRouteBuilder MapConsoleProjectEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/project", async (ProjectSetup setup, ProjectImageStore images, ProductSetupRunner runner, CancellationToken ct) =>
+        app.MapGet("/api/project", async (ProjectSetup setup, ProjectImageStore images, ProductSetupRunner runner, CancellationToken ct) =>
                 Results.Json(Body(setup.Current, await images.VersionAsync(ct), runner)))
             .RequireAuthorization(ConsoleRoles.ViewerPolicy);
 
-        var admin = app.MapGroup("/project").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var admin = app.MapGroup("/api/project").RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         admin.MapPost("", async (CreateRequest body, HttpContext http, ProjectSetup setup, ProjectImageStore images, ProductSetupRunner runner, CancellationToken ct) =>
         {
@@ -242,12 +242,10 @@ public static class ProjectEndpoints
     /// Refuses a product's public API while the product isn't started (<c>failed-precondition</c>, reason
     /// <c>service-disabled</c>). Only with <c>UseProjectSetup()</c>; put it before the products' endpoints.
     /// </summary>
-    /// <param name="ungated">Addresses under a product's path that answer on their own terms (a signed link carries its
-    /// own permission): neither the product's state nor the calling app is checked.</param>
-    public static IApplicationBuilder UseWincheProjectGate(this IApplicationBuilder app, params string[] ungated) => app.Use(async (http, next) =>
+    public static IApplicationBuilder UseWincheProjectGate(this IApplicationBuilder app) => app.Use(async (http, next) =>
     {
         var setup = http.RequestServices.GetService<ProjectSetup>();
-        if (setup is { Enabled: true } && !ungated.Any(u => http.Request.Path.StartsWithSegments(u)))
+        if (setup is { Enabled: true })
         {
             var path = http.Request.Path.Value ?? "";
             foreach (var (prefix, product) in WincheProducts.Paths)

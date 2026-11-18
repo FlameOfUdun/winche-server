@@ -73,7 +73,7 @@ public sealed class ServerConsoleApp(ServerOptions server, ServerSettingsProvide
             o.ConnectionString = new Npgsql.NpgsqlConnectionStringBuilder(server.ConnectionString) { SearchPath = "server" }.ConnectionString;
             o.AccountsConnectionString = server.ConnectionString;
             o.Accounts = projects.Accounts;   // one set of accounts for the server and every project
-            o.SignInCookiePath = ServerOptions.ConsolePath;   // the console's cookie never goes to the apps' addresses
+            o.SignInCookiePath = "/";
             o.UseServerConsole();
             o.UseEmailSender(_ => ServerKeyRing.ConsoleEmail(projects));
             o.RequireTwoFactorForSettings = settings.Current.RequireTwoFactorForSettings;
@@ -93,14 +93,14 @@ public sealed class ServerConsoleApp(ServerOptions server, ServerSettingsProvide
         builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProviderOptions>(o => o.Level = System.IO.Compression.CompressionLevel.Fastest);
 
         var app = builder.Build();
-        app.UseWhen(http => ProjectApp.ConsoleCompressible(http.Request.Path), branch => branch.UseResponseCompression());
+        app.UseWhen(http => ProjectApp.Compressible(http.Request.Path, server.ConsolePath), branch => branch.UseResponseCompression());
         app.UseAuthentication();
         app.UseAuthorization();
-        app.MapWincheConsole(ServerOptions.ConsolePath);
-        app.MapGet("/", () => Results.Redirect(ServerOptions.ConsolePath));
+        app.MapWincheConsole(server.ConsolePath);
+        app.MapGet("/", (HttpContext http) => Results.Redirect($"{http.Request.PathBase}{server.ConsolePath}"));
         // Anything else at the root (an app's API without its project): where projects are.
         app.MapFallback((HttpContext http) => new Winche.WincheError(Winche.WincheErrorCode.NotFound,
-            $"There's nothing at {http.Request.Path} on this server: a project's APIs are at {ServerOptions.ProjectsPrefix}/<project id>{http.Request.Path}.", "no-project").ToResult());
+            $"There's nothing at {http.Request.Path} on this server: a project's APIs are at /p/<project id>{http.Request.Path}.", "no-project").ToResult());
         await app.StartAsync(ct);
         return (app, inProcess);
     }

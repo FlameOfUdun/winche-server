@@ -48,7 +48,7 @@ public static class ConsolePagesEndpoints
 
     public static IEndpointRouteBuilder MapConsolePagesEndpoints(this IEndpointRouteBuilder app)
     {
-        var api = app.MapGroup("/pages").RequireAuthorization(ConsoleRoles.ViewerPolicy);
+        var api = app.MapGroup("/api/console-pages").RequireAuthorization(ConsoleRoles.ViewerPolicy);
 
         api.MapGet("", async (HttpContext http, WincheFunctions functions, ConsoleOptions options, CancellationToken ct) =>
         {
@@ -68,10 +68,10 @@ public static class ConsolePagesEndpoints
             if (!ConsolePages.For(functions.Current, role).Any(f => f.Name == name))
                 return new WincheError(WincheErrorCode.NotFound, $"There's no console page {name} for your role.").ToResult();
             var token = Protector(http).Protect($"{name}\n{Who(http.User)}", Lifetime);
-            var api = http.RequestServices.GetRequiredService<ConsolePrefix>().Api;
+            var prefix = http.RequestServices.GetRequiredService<ConsolePrefix>().Value;
             return Results.Json(new
             {
-                url = $"{http.Request.PathBase}{api}/pages/{Uri.EscapeDataString(name)}/view/{token}/",
+                url = $"{http.Request.PathBase}{prefix}/page/{Uri.EscapeDataString(name)}/{token}/",
                 user = new { email = Who(http.User), role },
             });
         });
@@ -89,7 +89,7 @@ public static class ConsolePagesEndpoints
         });
 
         // The page's files: no session (the frame has none), the signed address instead.
-        app.MapGet("/pages/{name}/view/{token}/{**path}", async (string name, string token, string? path, HttpContext http, WincheFunctions functions, CancellationToken ct) =>
+        app.MapGet("/page/{name}/{token}/{**path}", async (string name, string token, string? path, HttpContext http, WincheFunctions functions, CancellationToken ct) =>
         {
             string payload;
             try { payload = Protector(http).Unprotect(token); }

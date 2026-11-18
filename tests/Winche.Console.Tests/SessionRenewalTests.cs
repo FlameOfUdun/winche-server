@@ -16,7 +16,7 @@ public class SessionRenewalTests(PostgresFixture fx)
         await setup.SetupAdminAsync();
         // Due for renewal from the start: every request renews.
         Winche.Console.Identity.ConsoleSession.CheckEvery = TimeSpan.Zero;
-        var login = await setup.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!" });
+        var login = await setup.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!" });
         var cookie = string.Join("; ", login.Headers.GetValues("Set-Cookie").Select(c => c.Split(';')[0]));
 
         // A page's requests, all at once, with the same cookie.
@@ -26,7 +26,7 @@ public class SessionRenewalTests(PostgresFixture fx)
             {
                 var c = app.CreateClient(new() { HandleCookies = false });
                 c.DefaultRequestHeaders.Add("Cookie", cookie);
-                var resp = await c.GetAsync("/console/v1/session/state");
+                var resp = await c.GetAsync("/_console/api/auth/state");
                 var state = JsonDocument.Parse(await resp.Content.ReadAsStringAsync()).RootElement;
                 var renewed = resp.Headers.TryGetValues("Set-Cookie", out var set) ? string.Join("; ", set.Select(x => x.Split(';')[0])) : null;
                 return (signedIn: state.GetProperty("user").ValueKind == JsonValueKind.Object, renewed);
@@ -38,7 +38,7 @@ public class SessionRenewalTests(PostgresFixture fx)
             {
                 var c = app.CreateClient(new() { HandleCookies = false });
                 c.DefaultRequestHeaders.Add("Cookie", renewed!);
-                var state = JsonDocument.Parse(await (await c.GetAsync("/console/v1/session/state")).Content.ReadAsStringAsync()).RootElement;
+                var state = JsonDocument.Parse(await (await c.GetAsync("/_console/api/auth/state")).Content.ReadAsStringAsync()).RootElement;
                 Assert.Equal(JsonValueKind.Object, state.GetProperty("user").ValueKind);
             }
         }
@@ -53,14 +53,14 @@ public class SessionRenewalTests(PostgresFixture fx)
         var admin = app.CreateClient();
         await admin.SetupAdminAsync();
         await admin.LoginAsync();
-        await admin.PostAsJsonAsync("/console/v1/accounts", new { email = "m@example.com", role = "Member", password = "Passw0rd!" });
+        await admin.PostAsJsonAsync("/_console/api/users", new { email = "m@example.com", role = "Member", password = "Passw0rd!" });
         var member = app.CreateClient();
         await member.LoginAsync("m@example.com", "Passw0rd!");
-        Assert.Equal(System.Net.HttpStatusCode.OK, (await member.GetAsync("/console/v1/project")).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.OK, (await member.GetAsync("/_console/api/project")).StatusCode);
 
-        var users = JsonDocument.Parse(await admin.GetStringAsync("/console/v1/accounts")).RootElement;
+        var users = JsonDocument.Parse(await admin.GetStringAsync("/_console/api/users")).RootElement;
         var id = users.EnumerateArray().Single(u => u.GetProperty("email").GetString() == "m@example.com").GetProperty("id").GetString();
-        await admin.PutAsJsonAsync($"/console/v1/accounts/{id}", new { active = false });
-        Assert.Equal(System.Net.HttpStatusCode.Unauthorized, (await member.GetAsync("/console/v1/project")).StatusCode);   // not minutes later
+        await admin.PutAsJsonAsync($"/_console/api/users/{id}", new { active = false });
+        Assert.Equal(System.Net.HttpStatusCode.Unauthorized, (await member.GetAsync("/_console/api/project")).StatusCode);   // not minutes later
     }
 }

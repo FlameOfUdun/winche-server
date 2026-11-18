@@ -41,11 +41,8 @@ public sealed class ServerOptions
     /// </summary>
     public string? SetupCode { get; set; }
 
-    /// <summary>Where the console is served: its pages, its API under <c>/console/v1</c>.</summary>
-    public const string ConsolePath = "/console";
-
-    /// <summary>Where projects' apps are: <c>/projects/&lt;id&gt;/…</c>.</summary>
-    public const string ProjectsPrefix = "/projects";
+    /// <summary>Where the console is served (default /_console).</summary>
+    public string ConsolePath { get; set; } = "/_console";
 
     /// <summary>
     /// Console admins need two-step sign-in on to change sensitive settings (default true). Turn off only to try the

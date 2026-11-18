@@ -18,7 +18,7 @@ public static class AuthConfigEndpoints
         object Project() => app.ServiceProvider.GetService<Project.ProjectSetup>()?.Current is { } p
             ? new { id = p.Id, name = p.Name }
             : new { id = options.ProjectId, name = options.ProjectName ?? options.ProjectId };
-        app.MapGet("/session/config", () => Results.Json(new { provider = "identity", project = Project() }));
+        app.MapGet("/api/auth/config", () => Results.Json(new { provider = "identity", project = Project() }));
         return app;
     }
 }

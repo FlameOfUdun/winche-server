@@ -18,7 +18,7 @@ public class ConsolePathDecodingTests(PostgresFixture fx) : IAsyncLifetime
         await client.SetupAdminAsync();
         await client.LoginAsync();
         // "!!!!" is not valid base64.
-        var resp = await client.GetAsync("/console/v1/documents/documents/!!!!");
+        var resp = await client.GetAsync("/_console/api/database/documents/!!!!");
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 
@@ -30,7 +30,7 @@ public class ConsolePathDecodingTests(PostgresFixture fx) : IAsyncLifetime
         using var client = app.CreateClient();
         await client.SetupAdminAsync();
         await client.LoginAsync();
-        var resp = await client.GetAsync("/console/v1/files/files/!!!!");
+        var resp = await client.GetAsync("/_console/api/storage/files/!!!!");
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 }

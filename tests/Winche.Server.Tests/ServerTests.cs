@@ -56,7 +56,7 @@ internal static class TestProjects
 {
     public static async Task CreateAsync(HttpClient console, string id, string name, params string[] products)
     {
-        var made = await console.PostAsJsonAsync("/console/v1/projects", new { name, id });
+        var made = await console.PostAsJsonAsync("/_console/api/projects", new { name, id });
         Assert.True(made.IsSuccessStatusCode, $"{(int)made.StatusCode} {await made.Content.ReadAsStringAsync()}");
         await StartAsync(console, id, products);
     }
@@ -64,7 +64,7 @@ internal static class TestProjects
     public static async Task StartAsync(HttpClient console, string id, params string[] products)
     {
         foreach (var product in products.Where(p => p != "hooks"))   // hooks come with the products that send them
-            await ServerTests.StartProductAsync(console, $"/projects/{id}", product);
+            await ServerTests.StartProductAsync(console, $"/p/{id}", product);
     }
 }
 
@@ -101,38 +101,38 @@ public class ServerTests(PostgresFixture pg)
         HttpResponseMessage health = null!;
         for (var i = 0; i < 50 && (health = await app.GetAsync("/healthz")).StatusCode != HttpStatusCode.OK; i++) await Task.Delay(100);   // ready once warm
         Assert.Equal(HttpStatusCode.OK, health.StatusCode);
-        Assert.Equal("/console", (await app.GetAsync("/")).Headers.Location?.ToString());
-        // The server runs with no project at all: apps' APIs are a project's, at /projects/<id>; the root says so.
+        Assert.Equal("/_console", (await app.GetAsync("/")).Headers.Location?.ToString());
+        // The server runs with no project at all: apps' APIs are a project's, at /p/<id>; the root says so.
         var none = await app.PostAsJsonAsync("/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" });
         Assert.Equal(HttpStatusCode.NotFound, none.StatusCode);
-        Assert.Contains("/projects/<project id>/auth/v1/signUp", await none.Content.ReadAsStringAsync());
-        Assert.Equal(HttpStatusCode.NotFound, (await app.GetAsync("/projects/clinic/.well-known/winche")).StatusCode);
+        Assert.Contains("/p/<project id>/auth/v1/signUp", await none.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.NotFound, (await app.GetAsync("/p/clinic/.well-known/winche")).StatusCode);
 
         // The first admin sets the server up (an account, nothing else), then makes a project on its Projects page.
         var console = server.CreateClient();
-        Assert.Equal(HttpStatusCode.OK, (await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" })).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" })).StatusCode);
-        var state = await Json(await console.GetAsync("/console/v1/session/state"));
+        Assert.Equal(HttpStatusCode.OK, (await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" })).StatusCode);
+        var state = await Json(await console.GetAsync("/_console/api/auth/state"));
         Assert.True(state.GetProperty("server").GetBoolean());
-        Assert.Equal(0, (await Json(await console.GetAsync("/console/v1/projects"))).GetProperty("projects").GetArrayLength());
+        Assert.Equal(0, (await Json(await console.GetAsync("/_console/api/projects"))).GetProperty("projects").GetArrayLength());
         // Before a product starts, its API refuses.
-        await Json(await console.PostAsJsonAsync("/console/v1/projects", new { name = "Clinic", id = "clinic" }));
-        var off = await app.PostAsJsonAsync("/projects/clinic/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" });
+        await Json(await console.PostAsJsonAsync("/_console/api/projects", new { name = "Clinic", id = "clinic" }));
+        var off = await app.PostAsJsonAsync("/p/clinic/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" });
         Assert.Equal(HttpStatusCode.BadRequest, off.StatusCode);
         Assert.Contains("service-disabled", await off.Content.ReadAsStringAsync());
         await TestProjects.StartAsync(console, "clinic", "database", "storage", "authentication", "functions");
-        var setup = System.Text.Json.JsonDocument.Parse(await app.GetStringAsync("/projects/clinic/.well-known/winche")).RootElement;
+        var setup = System.Text.Json.JsonDocument.Parse(await app.GetStringAsync("/p/clinic/.well-known/winche")).RootElement;
         Assert.Equal("clinic", setup.GetProperty("projectId").GetString());
         Assert.Equal(["database", "storage", "auth", "functions"],
             setup.GetProperty("services").EnumerateArray().Select(s => s.GetProperty("id").GetString()!).ToArray());
 
         // An app user signs up with Winche Auth (email and password are on to start with)…
-        var session = await Json(await app.PostAsJsonAsync("/projects/clinic/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" }));
+        var session = await Json(await app.PostAsJsonAsync("/p/clinic/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" }));
         var uid = session.GetProperty("user").GetProperty("uid").GetString()!;
         app.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.GetProperty("accessToken").GetString());
         var doc = new { fields = new { name = new { stringValue = "Ann" } } };
         // …but nothing is allowed until rules are published.
-        Assert.Equal(HttpStatusCode.Forbidden, (await app.PutAsJsonAsync($"/projects/clinic/documents/v1/{B64($"users/{uid}")}", doc)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await app.PutAsJsonAsync($"/p/clinic/documents/v1/{B64($"users/{uid}")}", doc)).StatusCode);
 
         // Every API refuses the same way: { error: { code, message, reason? } }, one list of codes, one HTTP table.
         async Task<(int, string, string?)> Refusal(HttpResponseMessage r)
@@ -141,18 +141,18 @@ public class ServerTests(PostgresFixture pg)
             Assert.False(string.IsNullOrEmpty(e.GetProperty("message").GetString()));
             return ((int)r.StatusCode, e.GetProperty("code").GetString()!, e.TryGetProperty("reason", out var why) ? why.GetString() : null);
         }
-        Assert.Equal((403, "permission-denied", null), await Refusal(await app.PutAsJsonAsync($"/projects/clinic/documents/v1/{B64($"users/{uid}")}", doc)));
-        Assert.Equal((403, "permission-denied", null), await Refusal(await app.PutAsJsonAsync($"/projects/clinic/files/v1/{B64("a/b.txt")}", new { mimeType = "text/plain", sizeBytes = 1 })));
-        Assert.Equal((401, "unauthenticated", "INVALID_CREDENTIALS"), await Refusal(await app.PostAsJsonAsync("/projects/clinic/auth/v1/signIn", new { email = "ann@example.com", password = "wrong one, long enough" })));
-        Assert.Equal((404, "not-found", null), await Refusal(await app.PostAsJsonAsync("/projects/clinic/functions/v1/call/nothing", new { data = (object?)null })));
+        Assert.Equal((403, "permission-denied", null), await Refusal(await app.PutAsJsonAsync($"/p/clinic/documents/v1/{B64($"users/{uid}")}", doc)));
+        Assert.Equal((403, "permission-denied", null), await Refusal(await app.PutAsJsonAsync($"/p/clinic/files/v1/{B64("a/b.txt")}", new { mimeType = "text/plain", sizeBytes = 1 })));
+        Assert.Equal((401, "unauthenticated", "INVALID_CREDENTIALS"), await Refusal(await app.PostAsJsonAsync("/p/clinic/auth/v1/signIn", new { email = "ann@example.com", password = "wrong one, long enough" })));
+        Assert.Equal((404, "not-found", null), await Refusal(await app.PostAsJsonAsync("/p/clinic/functions/v1/call/nothing", new { data = (object?)null })));
 
         // The admin publishes rules in the console.
-        var parsed = await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/rules/text/parse",
+        var parsed = await Json(await console.PostAsJsonAsync("/p/clinic/_console/api/rules/text/parse",
             new { text = "match users/{uid} { allow read, write: if request.auth.uid == uid; }" }));
-        await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/rules/database", new { rulesJson = parsed.GetProperty("rulesJson").GetString(), note = "Users own their document" }));
+        await Json(await console.PostAsJsonAsync("/p/clinic/_console/api/rules/database", new { rulesJson = parsed.GetProperty("rulesJson").GetString(), note = "Users own their document" }));
 
-        Assert.Equal(HttpStatusCode.OK, (await app.PutAsJsonAsync($"/projects/clinic/documents/v1/{B64($"users/{uid}")}", doc)).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await app.PutAsJsonAsync($"/projects/clinic/documents/v1/{B64("users/someone-else")}", doc)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await app.PutAsJsonAsync($"/p/clinic/documents/v1/{B64($"users/{uid}")}", doc)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await app.PutAsJsonAsync($"/p/clinic/documents/v1/{B64("users/someone-else")}", doc)).StatusCode);
 
         // Console sign-in survives a restart: its cookie keys are in the database, not the container.
         await using var conn = new NpgsqlConnection(server.Services.GetRequiredService<ServerOptions>().ConnectionString);
@@ -168,8 +168,8 @@ public class ServerTests(PostgresFixture pg)
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files);
         var http = server.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions { HandleCookies = true });
-        await Json(await http.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await http.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await http.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await http.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(http, "clinic", "Clinic", "database");
 
         async Task<string?> Encoding(string path)
@@ -180,42 +180,30 @@ public class ServerTests(PostgresFixture pg)
             return response.Content.Headers.ContentEncoding.FirstOrDefault();
         }
         // The apps' APIs (a bearer token, never a cookie) and the console's page and files: compressed.
-        Assert.Equal("br", await Encoding("/projects/clinic/documents/v1/" + Convert.ToBase64String("notes/n1"u8.ToArray())));
-        Assert.Equal("br", await Encoding("/console/"));
-        using (var query = new HttpRequestMessage(HttpMethod.Post, "/projects/clinic/documents/v1:runQuery") { Content = JsonContent.Create(new { query = new { collection = "notes" } }) })
+        Assert.Equal("br", await Encoding("/p/clinic/documents/v1/" + Convert.ToBase64String("notes/n1"u8.ToArray())));
+        Assert.Equal("br", await Encoding("/_console/"));
+        using (var query = new HttpRequestMessage(HttpMethod.Post, "/p/clinic/documents/v1:runQuery") { Content = JsonContent.Create(new { query = new { collection = "notes" } }) })
         {
             query.Headers.AcceptEncoding.ParseAdd("br");
             using var answer = await http.SendAsync(query);
             Assert.Equal("br", answer.Content.Headers.ContentEncoding.FirstOrDefault());   // the colon verbs too
         }
         // The console's API and sign-in (cookies): never, so an answer's size can't give away what it holds.
-        Assert.Null(await Encoding("/console/v1/session/state"));
-        Assert.Null(await Encoding("/console/v1/projects/clinic/project"));
-        Assert.Null(await Encoding("/projects/clinic/auth/v1/config"));
+        Assert.Null(await Encoding("/_console/api/auth/state"));
+        Assert.Null(await Encoding("/p/clinic/_console/api/project"));
+        Assert.Null(await Encoding("/p/clinic/auth/v1/config"));
     }
 
     [Fact]
-    public void Apps_and_a_projects_console_calls_go_to_the_project_the_rest_to_the_servers_console()
+    public void Apps_tokens_are_checked_on_the_apps_routes_not_the_consoles()
     {
-        Assert.Equal(("/projects", "clinic", "/documents/v1/notes"), Route("/projects/clinic/documents/v1/notes"));
-        Assert.Equal(("/projects", "clinic", ""), Route("/projects/clinic"));
-        Assert.Equal(("/console/v1/projects", "clinic", "/documents/query"), Route("/console/v1/projects/clinic/documents/query"));
-        // What's about a project as a whole is the server's: the project itself, archiving, restoring.
-        Assert.Null(Route("/console/v1/projects/clinic"));
-        Assert.Null(Route("/console/v1/projects/clinic/archive"));
-        Assert.Null(Route("/console/v1/projects/clinic/restore"));
-        Assert.Null(Route("/console/v1/projects"));
-        Assert.Null(Route("/console/projects/clinic/data"));   // the console's pages
-        Assert.Null(Route("/p/clinic/documents/v1/notes"));   // the old address: nothing there
-        Assert.Null(Route("/projectsx/clinic"));
-        // Compressed: apps' APIs and the console's page and files; never the console's API (cookies).
-        Assert.True(ProjectApp.Compressible("/documents/v1/notes"));
-        Assert.True(ProjectApp.ConsoleCompressible("/console/assets/index.js"));
-        Assert.False(ProjectApp.ConsoleCompressible("/console/v1/session/state"));
+        Assert.True(ProjectApp.ChecksAppTokens("/documents/v1/notes", "/_console"));
+        Assert.True(ProjectApp.ChecksAppTokens("/functions/v1/call/hello", "/_console"));
+        Assert.True(ProjectApp.ChecksAppTokens("/_consoles", "/_console"));   // another segment, not the console
+        Assert.False(ProjectApp.ChecksAppTokens("/_console", "/_console"));
+        Assert.False(ProjectApp.ChecksAppTokens("/_console/api/database/query", "/_console"));
+        Assert.False(ProjectApp.ChecksAppTokens("/admin/api/project", "/admin"));   // where the console is served
     }
-
-    private static (string, string, string)? Route(string path) =>
-        ProjectRouter.Target(path) is var (prefix, id, under) ? (prefix, id, under.Value ?? "") : null;
 
     [Fact]
     public async Task Each_project_has_its_own_browser_origins_besides_its_registered_web_apps()
@@ -224,11 +212,11 @@ public class ServerTests(PostgresFixture pg)
         var projectsPath = Directory.CreateTempSubdirectory("winche-server-projects-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:ProjectsPath", projectsPath));
         var console = server.CreateClient();
-        await Json(await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(console, "clinic", "Clinic", "authentication");
 
-        async Task<string?> Allowed(string origin, string prefix = "/projects/clinic")
+        async Task<string?> Allowed(string origin, string prefix = "/p/clinic")
         {
             var preflight = new HttpRequestMessage(HttpMethod.Options, $"{prefix}/auth/v1/signIn");
             preflight.Headers.Add("Origin", origin);
@@ -239,15 +227,15 @@ public class ServerTests(PostgresFixture pg)
 
         // None set: any origin. Then the project's own, saved with a reason.
         Assert.Equal("https://anything.example.com", await Allowed("https://anything.example.com"));
-        Assert.Equal(HttpStatusCode.BadRequest, (await console.PutAsJsonAsync("/console/v1/projects/clinic/apps/browser-origins", new { origins = new[] { "not an origin" }, reason = "x" })).StatusCode);
-        await Json(await console.PutAsJsonAsync("/console/v1/projects/clinic/apps/browser-origins", new { origins = new[] { "https://configured.example.com/" }, reason = "Our admin page" }));
-        Assert.Equal("https://configured.example.com", (await Json(await console.GetAsync("/console/v1/projects/clinic/apps/registered"))).GetProperty("browserOrigins")[0].GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, (await console.PutAsJsonAsync("/p/clinic/_console/api/apps/browser-origins", new { origins = new[] { "not an origin" }, reason = "x" })).StatusCode);
+        await Json(await console.PutAsJsonAsync("/p/clinic/_console/api/apps/browser-origins", new { origins = new[] { "https://configured.example.com/" }, reason = "Our admin page" }));
+        Assert.Equal("https://configured.example.com", (await Json(await console.GetAsync("/p/clinic/_console/api/apps/registered"))).GetProperty("browserOrigins")[0].GetString());
         Assert.Equal("https://configured.example.com", await Allowed("https://configured.example.com"));
         Assert.Null(await Allowed("https://app.example.com"));
         // Another project keeps its own (none: any).
-        await Json(await console.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards" }));
-        Assert.Equal("https://app.example.com", await Allowed("https://app.example.com", "/projects/wards"));
-        await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/apps/registered", new { name = "Clinic web", webOrigins = new[] { "https://app.example.com" } }));
+        await Json(await console.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards" }));
+        Assert.Equal("https://app.example.com", await Allowed("https://app.example.com", "/p/wards"));
+        await Json(await console.PostAsJsonAsync("/p/clinic/_console/api/apps/registered", new { name = "Clinic web", webOrigins = new[] { "https://app.example.com" } }));
         Assert.Equal("https://app.example.com", await Allowed("https://app.example.com"));
         Assert.Null(await Allowed("https://elsewhere.example.com"));
     }
@@ -262,65 +250,63 @@ public class ServerTests(PostgresFixture pg)
         await using (var server = new ServerFactory(db, files, projectsSetting))
         {
             var console = server.CreateClient();
-            await Json(await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-            await Json(await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+            await Json(await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+            await Json(await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
             await TestProjects.CreateAsync(console, "clinic", "Clinic", "authentication");
 
             // A second project, made from the console's switcher: its own database, made by the server.
-            Assert.Equal(HttpStatusCode.BadRequest, (await console.PostAsJsonAsync("/console/v1/projects", new { name = "Again", id = "clinic" })).StatusCode);
-            var created = await Json(await console.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards" }));
-            Assert.Equal("/console/projects/wards", created.GetProperty("consoleUrl").GetString());
-            // Its pages are the console's, served once at /console.
-            Assert.Contains("<base href=\"/console/\">", await console.GetStringAsync("/console/projects/wards/overview"));   // one console for every project
+            Assert.Equal(HttpStatusCode.BadRequest, (await console.PostAsJsonAsync("/_console/api/projects", new { name = "Again", id = "clinic" })).StatusCode);
+            var created = await Json(await console.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards" }));
+            Assert.Equal("/p/wards/_console", created.GetProperty("consoleUrl").GetString());
+            // Its console's page loads its own code and API: the base address carries the project's path.
+            Assert.Contains("<base href=\"/p/wards/_console/\">", await console.GetStringAsync("/p/wards/_console/overview"));
 
-            // A project's console calls are its own areas only: signing in, the projects and the accounts are the server's.
-            foreach (var serverArea in new[] { "projects", "session/state", "accounts", "invites", "server/settings" })
-                Assert.Equal(HttpStatusCode.NotFound, (await console.GetAsync($"/console/v1/projects/wards/{serverArea}")).StatusCode);
-            // The console lists them all, with their consoles' addresses.
-            var listed = await Json(await console.GetAsync("/console/v1/projects"));
+            // Every project's console lists them all, with their consoles' addresses and which one it is.
+            var listed = await Json(await console.GetAsync("/p/wards/_console/api/projects"));
+            Assert.Equal("wards", listed.GetProperty("current").GetString());
             Assert.True(listed.GetProperty("canCreate").GetBoolean());
-            Assert.Equal(["clinic:/console/projects/clinic", "wards:/console/projects/wards"], listed.GetProperty("projects").EnumerateArray()
+            Assert.Equal(["clinic:/p/clinic/_console", "wards:/p/wards/_console"], listed.GetProperty("projects").EnumerateArray()
                 .Select(p => $"{p.GetProperty("id").GetString()}:{p.GetProperty("consoleUrl").GetString()}").ToArray());
             // With the products each has started (the Projects home shows them).
             Assert.Equal(["clinic:authentication", "wards:"], listed.GetProperty("projects").EnumerateArray()
                 .Select(p => $"{p.GetProperty("id").GetString()}:{string.Join(",", p.GetProperty("products").EnumerateArray().Select(x => x.GetString()))}").ToArray());
             // Every project is at its own path, seen from anywhere.
-            Assert.Equal("/console/projects/clinic", (await Json(await console.GetAsync("/console/v1/projects"))).GetProperty("projects")[0].GetProperty("consoleUrl").GetString());
+            Assert.Equal("/p/clinic/_console", (await Json(await console.GetAsync("/_console/api/projects"))).GetProperty("projects")[0].GetProperty("consoleUrl").GetString());
 
             // The same console sign-in works there; the project is made, named, with nothing started.
-            var wards = await Json(await console.GetAsync("/console/v1/projects/wards/project"));
+            var wards = await Json(await console.GetAsync("/p/wards/_console/api/project"));
             Assert.True(wards.GetProperty("created").GetBoolean());
             Assert.Equal("Wards", wards.GetProperty("name").GetString());
             Assert.All(wards.GetProperty("products").EnumerateArray(), p => Assert.False(p.GetProperty("started").GetBoolean()));
-            await StartProductAsync(console, "/projects/wards", "authentication");
+            await StartProductAsync(console, "/p/wards", "authentication");
 
             // The default project answers at the root (as before) and at its own path.
-            Assert.Equal("clinic", (await Json(await console.GetAsync("/console/v1/projects/clinic/project"))).GetProperty("id").GetString());
-            var wellKnown = await Json(await console.GetAsync("/projects/wards/.well-known/winche"));
+            Assert.Equal("clinic", (await Json(await console.GetAsync("/p/clinic/_console/api/project"))).GetProperty("id").GetString());
+            var wellKnown = await Json(await console.GetAsync("/p/wards/.well-known/winche"));
             Assert.Equal("wards", wellKnown.GetProperty("projectId").GetString());
-            Assert.Equal("http://localhost/projects/wards", wellKnown.GetProperty("baseUrl").GetString());
-            Assert.Equal(HttpStatusCode.NotFound, (await console.GetAsync("/projects/nope/.well-known/winche")).StatusCode);
+            Assert.Equal("http://localhost/p/wards", wellKnown.GetProperty("baseUrl").GetString());
+            Assert.Equal(HttpStatusCode.NotFound, (await console.GetAsync("/p/nope/.well-known/winche")).StatusCode);
 
             // Users are each project's own: one signed up in Clinic doesn't exist in Wards, and the same email signs
             // up again there as somebody else.
             var app = server.CreateClient();
-            var ann = await Json(await app.PostAsJsonAsync("/projects/clinic/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" }));
-            Assert.NotEqual(HttpStatusCode.OK, (await app.PostAsJsonAsync("/projects/wards/auth/v1/signIn", new { email = "ann@example.com", password = "correct horse battery" })).StatusCode);
-            var annInWards = await Json(await app.PostAsJsonAsync("/projects/wards/auth/v1/signUp", new { email = "ann@example.com", password = "another horse battery" }));
+            var ann = await Json(await app.PostAsJsonAsync("/p/clinic/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" }));
+            Assert.NotEqual(HttpStatusCode.OK, (await app.PostAsJsonAsync("/p/wards/auth/v1/signIn", new { email = "ann@example.com", password = "correct horse battery" })).StatusCode);
+            var annInWards = await Json(await app.PostAsJsonAsync("/p/wards/auth/v1/signUp", new { email = "ann@example.com", password = "another horse battery" }));
             Assert.NotEqual(ann.GetProperty("user").GetProperty("uid").GetString(), annInWards.GetProperty("user").GetProperty("uid").GetString());
 
             // Settings are each project's own too.
-            await Json(await console.PutAsJsonAsync("/console/v1/projects/wards/project", new { name = "Ward boards", id = "wards" }));
-            Assert.Equal("Clinic", (await Json(await console.GetAsync("/console/v1/projects/clinic/project"))).GetProperty("name").GetString());
+            await Json(await console.PutAsJsonAsync("/p/wards/_console/api/project", new { name = "Ward boards", id = "wards" }));
+            Assert.Equal("Clinic", (await Json(await console.GetAsync("/p/clinic/_console/api/project"))).GetProperty("name").GetString());
         }
 
         // After a restart, the server starts every project again.
         await using (var again = new ServerFactory(db, files, projectsSetting))
         {
             var console = again.CreateClient();
-            await Json(await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
-            Assert.Equal("Ward boards", (await Json(await console.GetAsync("/console/v1/projects/wards/project"))).GetProperty("name").GetString());
-            Assert.Equal(HttpStatusCode.OK, (await console.PostAsJsonAsync("/projects/wards/auth/v1/signIn", new { email = "ann@example.com", password = "another horse battery" })).StatusCode);
+            await Json(await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+            Assert.Equal("Ward boards", (await Json(await console.GetAsync("/p/wards/_console/api/project"))).GetProperty("name").GetString());
+            Assert.Equal(HttpStatusCode.OK, (await console.PostAsJsonAsync("/p/wards/auth/v1/signIn", new { email = "ann@example.com", password = "another horse battery" })).StatusCode);
         }
     }
 
@@ -331,85 +317,85 @@ public class ServerTests(PostgresFixture pg)
         var projectsPath = Directory.CreateTempSubdirectory("winche-server-projects-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:ProjectsPath", projectsPath));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(admin, "clinic", "Clinic");
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards" }));
 
         // The server admin is an admin of the new project without being listed; it has no members yet.
-        var members = await Json(await admin.GetAsync("/console/v1/projects/wards/members"));
+        var members = await Json(await admin.GetAsync("/p/wards/_console/api/members"));
         Assert.Equal(0, members.GetProperty("members").GetArrayLength());
         Assert.Equal("admin@example.com", members.GetProperty("serverAdmins")[0].GetProperty("email").GetString());
-        Assert.Equal(0, (await Json(await admin.GetAsync("/console/v1/projects/clinic/members"))).GetProperty("members").GetArrayLength());   // every project has its list
+        Assert.Equal(0, (await Json(await admin.GetAsync("/p/clinic/_console/api/members"))).GetProperty("members").GetArrayLength());   // every project has its list
 
         // Bob is new: added as a Member, he gets an account and a link to set his password (no email set up here).
-        var added = await Json(await admin.PostAsJsonAsync("/console/v1/projects/wards/members", new { email = "bob@example.com", role = "Member" }));
+        var added = await Json(await admin.PostAsJsonAsync("/p/wards/_console/api/members", new { email = "bob@example.com", role = "Member" }));
         Assert.True(added.GetProperty("newAccount").GetBoolean());
         var link = new Uri(added.GetProperty("link").GetString()!);
-        // Console accounts are the server's: their links open the server's console (…/console/reset-password?mode=resetPassword&code=…).
-        Assert.Equal("/console/reset-password", link.AbsolutePath);
+        // Console accounts are the server's: their links open the server's console (…/_console/reset-password?mode=resetPassword&code=…).
+        Assert.Equal("/_console/reset-password", link.AbsolutePath);
         var code = System.Web.HttpUtility.ParseQueryString(link.Query)["code"];
-        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsJsonAsync("/console/v1/session/reset-password",
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsJsonAsync("/p/wards/_console/api/auth/reset-password",
             new { code, newPassword = "Bob-Passw0rd!long" })).StatusCode);
 
         var bob = server.CreateClient();
-        await Json(await bob.PostAsJsonAsync("/console/v1/session/login", new { email = "bob@example.com", password = "Bob-Passw0rd!long" }));
-        var here = await Json(await bob.GetAsync("/console/v1/projects/wards/access"));
-        Assert.Equal("Member", here.GetProperty("role").GetString());
-        Assert.True(here.GetProperty("member").GetBoolean());
-        Assert.Equal(HttpStatusCode.OK, (await bob.GetAsync("/console/v1/projects/wards/project")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await bob.GetAsync("/console/v1/projects/wards/members")).StatusCode);   // members aren't admins
+        await Json(await bob.PostAsJsonAsync("/p/wards/_console/api/auth/login", new { email = "bob@example.com", password = "Bob-Passw0rd!long" }));
+        var here = await Json(await bob.GetAsync("/p/wards/_console/api/auth/state"));
+        Assert.Equal("Member", here.GetProperty("user").GetProperty("role").GetString());
+        Assert.True(here.GetProperty("user").GetProperty("member").GetBoolean());
+        Assert.Equal(HttpStatusCode.OK, (await bob.GetAsync("/p/wards/_console/api/project")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await bob.GetAsync("/p/wards/_console/api/members")).StatusCode);   // members aren't admins
 
         // In clinic he's nobody: signed in, no role, refused. The server's own console he may use (his projects).
-        var there = await Json(await bob.GetAsync("/console/v1/projects/clinic/access"));
-        Assert.False(there.GetProperty("member").GetBoolean());
-        Assert.Equal(HttpStatusCode.Forbidden, (await bob.GetAsync("/console/v1/projects/clinic/project")).StatusCode);
-        Assert.True((await Json(await bob.GetAsync("/console/v1/session/state"))).GetProperty("user").GetProperty("member").GetBoolean());
+        var there = await Json(await bob.GetAsync("/p/clinic/_console/api/auth/state"));
+        Assert.False(there.GetProperty("user").GetProperty("member").GetBoolean());
+        Assert.Equal(HttpStatusCode.Forbidden, (await bob.GetAsync("/p/clinic/_console/api/project")).StatusCode);
+        Assert.True((await Json(await bob.GetAsync("/_console/api/auth/state"))).GetProperty("user").GetProperty("member").GetBoolean());
 
         // His switcher lists only Wards, and he can't create projects.
-        var mine = await Json(await bob.GetAsync("/console/v1/projects"));
+        var mine = await Json(await bob.GetAsync("/p/wards/_console/api/projects"));
         Assert.Equal(["wards"], mine.GetProperty("projects").EnumerateArray().Select(p => p.GetProperty("id").GetString()).ToArray());
         Assert.False(mine.GetProperty("canCreate").GetBoolean());
-        Assert.Equal(HttpStatusCode.Forbidden, (await bob.PostAsJsonAsync("/console/v1/projects", new { name = "Mine", id = "mine" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await bob.PostAsJsonAsync("/p/wards/_console/api/projects", new { name = "Mine", id = "mine" })).StatusCode);
 
         // winche login signs in once, at the server's console: he approves there though he has no role in the first
         // project, and the CLI's session works in Wards with his role there (and lists his projects at the root).
         var verifier = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var challenge = Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(Encoding.ASCII.GetBytes(verifier))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        var approved = await Json(await bob.PostAsJsonAsync("/console/v1/cli/approve", new { challenge, port = 9005, state = "s", name = "winche CLI on laptop" }));
+        var approved = await Json(await bob.PostAsJsonAsync("/_console/api/cli-login/approve", new { challenge, port = 9005, state = "s", name = "winche CLI on laptop" }));
         var cliCode = System.Web.HttpUtility.ParseQueryString(new Uri(approved.GetProperty("redirect").GetString()!).Query)["code"];
-        var session = await Json(await server.CreateClient().PostAsJsonAsync("/console/v1/cli/token", new { code = cliCode, verifier }));
+        var session = await Json(await server.CreateClient().PostAsJsonAsync("/_console/api/cli-login/token", new { code = cliCode, verifier }));
         var cli = server.CreateClient();
         cli.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.GetProperty("accessToken").GetString());
-        Assert.Equal(HttpStatusCode.OK, (await cli.GetAsync("/console/v1/projects/wards/project")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await cli.GetAsync("/console/v1/projects/wards/members")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await cli.GetAsync("/console/v1/projects/clinic/project")).StatusCode);
-        Assert.Equal(["wards"], (await Json(await cli.GetAsync("/console/v1/projects"))).GetProperty("projects").EnumerateArray().Select(p => p.GetProperty("id").GetString()).ToArray());
+        Assert.Equal(HttpStatusCode.OK, (await cli.GetAsync("/p/wards/_console/api/project")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await cli.GetAsync("/p/wards/_console/api/members")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await cli.GetAsync("/p/clinic/_console/api/project")).StatusCode);
+        Assert.Equal(["wards"], (await Json(await cli.GetAsync("/_console/api/projects"))).GetProperty("projects").EnumerateArray().Select(p => p.GetProperty("id").GetString()).ToArray());
 
         // The server admin's CLI makes projects (winche projects:create).
-        var adminApproved = await Json(await admin.PostAsJsonAsync("/console/v1/cli/approve", new { challenge, port = 9005, state = "a", name = "winche CLI on desk" }));
+        var adminApproved = await Json(await admin.PostAsJsonAsync("/_console/api/cli-login/approve", new { challenge, port = 9005, state = "a", name = "winche CLI on desk" }));
         var adminCode = System.Web.HttpUtility.ParseQueryString(new Uri(adminApproved.GetProperty("redirect").GetString()!).Query)["code"];
-        var adminSession = await Json(await server.CreateClient().PostAsJsonAsync("/console/v1/cli/token", new { code = adminCode, verifier }));
+        var adminSession = await Json(await server.CreateClient().PostAsJsonAsync("/_console/api/cli-login/token", new { code = adminCode, verifier }));
         var adminCli = server.CreateClient();
         adminCli.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminSession.GetProperty("accessToken").GetString());
-        Assert.Equal("beds", (await Json(await adminCli.PostAsJsonAsync("/console/v1/projects", new { name = "Beds", id = "beds" }))).GetProperty("id").GetString());
+        Assert.Equal("beds", (await Json(await adminCli.PostAsJsonAsync("/_console/api/projects", new { name = "Beds", id = "beds" }))).GetProperty("id").GetString());
         // Its settings and CI tokens need two-step sign-in like the browser's (winche 2fa enable).
-        var refused = await adminCli.PostAsJsonAsync("/console/v1/projects/beds/tokens", new { name = "gitlab", scopes = new[] { "rules" }, days = 7 });
+        var refused = await adminCli.PostAsJsonAsync("/p/beds/_console/api/tokens", new { name = "gitlab", scopes = new[] { "rules" }, days = 7 });
         Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
         Assert.Contains("TWO_FACTOR_REQUIRED", await refused.Content.ReadAsStringAsync());
 
         // Made an Admin of Wards, he manages its members; removed, he's out.
-        var bobId = (await Json(await admin.GetAsync("/console/v1/projects/wards/members"))).GetProperty("members")[0].GetProperty("userId").GetString();
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync($"/console/v1/projects/wards/members/{bobId}", new { role = "Admin" })).StatusCode);
+        var bobId = (await Json(await admin.GetAsync("/p/wards/_console/api/members"))).GetProperty("members")[0].GetProperty("userId").GetString();
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync($"/p/wards/_console/api/members/{bobId}", new { role = "Admin" })).StatusCode);
         await Task.Delay(100);
-        Assert.Equal(HttpStatusCode.OK, (await bob.GetAsync("/console/v1/projects/wards/members")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await bob.GetAsync("/p/wards/_console/api/members")).StatusCode);
         // His CLI too: an admin of Wards, but not of the server (he can't make projects, or see the first one).
-        Assert.Equal(HttpStatusCode.OK, (await cli.GetAsync("/console/v1/projects/wards/members")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await cli.PostAsJsonAsync("/console/v1/projects", new { name = "Mine", id = "mine" })).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await cli.GetAsync("/console/v1/projects/clinic/project")).StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync($"/console/v1/projects/wards/members/{bobId}")).StatusCode);
-        Assert.False((await Json(await bob.GetAsync("/console/v1/projects/wards/access"))).GetProperty("member").GetBoolean());
-        Assert.Equal(HttpStatusCode.Forbidden, (await cli.GetAsync("/console/v1/projects/wards/project")).StatusCode);   // nor can his CLI
+        Assert.Equal(HttpStatusCode.OK, (await cli.GetAsync("/p/wards/_console/api/members")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await cli.PostAsJsonAsync("/p/wards/_console/api/projects", new { name = "Mine", id = "mine" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await cli.GetAsync("/p/clinic/_console/api/project")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync($"/p/wards/_console/api/members/{bobId}")).StatusCode);
+        Assert.False((await Json(await bob.GetAsync("/p/wards/_console/api/auth/state"))).GetProperty("user").GetProperty("member").GetBoolean());
+        Assert.Equal(HttpStatusCode.Forbidden, (await cli.GetAsync("/p/wards/_console/api/project")).StatusCode);   // nor can his CLI
     }
 
     [Fact]
@@ -420,36 +406,36 @@ public class ServerTests(PostgresFixture pg)
         var db = await pg.NewDatabaseAsync();
         await using var server = new ServerFactory(db, files, ("Winche:ProjectsPath", projectsPath));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(admin, "clinic", "Clinic");
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects/wards/members", new { email = "bob@example.com", role = "Viewer" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards" }));
+        await Json(await admin.PostAsJsonAsync("/p/wards/_console/api/members", new { email = "bob@example.com", role = "Viewer" }));
 
         // No project is special: clinic (made first) can be archived too, and restored.
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync("/console/v1/projects/clinic/archive", null)).StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync("/console/v1/projects/clinic/restore", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync("/_console/api/projects/clinic/archive", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync("/_console/api/projects/clinic/restore", null)).StatusCode);
 
-        // Archived: its addresses are refused, it's listed as archived, and its id is taken.
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync("/console/v1/projects/wards/archive", null)).StatusCode);
-        var gone = await admin.GetAsync("/console/v1/projects/wards/project");
+        // Archived from its own console: its address is refused, it's listed as archived, and its id is taken.
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync("/p/wards/_console/api/projects/wards/archive", null)).StatusCode);
+        var gone = await admin.GetAsync("/p/wards/_console/api/project");
         Assert.Equal(HttpStatusCode.Gone, gone.StatusCode);
         Assert.Contains("project-archived", await gone.Content.ReadAsStringAsync());
-        var listed = await Json(await admin.GetAsync("/console/v1/projects"));
+        var listed = await Json(await admin.GetAsync("/_console/api/projects"));
         Assert.Equal(["clinic"], listed.GetProperty("projects").EnumerateArray().Select(p => p.GetProperty("id").GetString()).ToArray());
         Assert.Equal("wards", listed.GetProperty("archived")[0].GetProperty("id").GetString());
-        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Again", id = "wards" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Again", id = "wards" })).StatusCode);
         // Only archived projects are deleted.
-        Assert.Equal(HttpStatusCode.BadRequest, (await admin.DeleteAsync("/console/v1/projects/clinic")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.DeleteAsync("/_console/api/projects/clinic")).StatusCode);
 
         // Restored: back at its address, with its members.
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync("/console/v1/projects/wards/restore", null)).StatusCode);
-        Assert.Equal("bob@example.com", (await Json(await admin.GetAsync("/console/v1/projects/wards/members"))).GetProperty("members")[0].GetProperty("email").GetString());
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync("/_console/api/projects/wards/restore", null)).StatusCode);
+        Assert.Equal("bob@example.com", (await Json(await admin.GetAsync("/p/wards/_console/api/members"))).GetProperty("members")[0].GetProperty("email").GetString());
 
         // Archived again and deleted: its database is dropped, its address unknown, its id free again.
-        await admin.PostAsync("/console/v1/projects/wards/archive", null);
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync("/console/v1/projects/wards")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/console/v1/projects/wards/project")).StatusCode);
+        await admin.PostAsync("/_console/api/projects/wards/archive", null);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync("/_console/api/projects/wards")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/p/wards/_console/api/project")).StatusCode);
         await using (var conn = new NpgsqlConnection(db))
         {
             await conn.OpenAsync();
@@ -458,8 +444,8 @@ public class ServerTests(PostgresFixture pg)
             Assert.Equal(0L, (long)(await cmd.ExecuteScalarAsync())!);
         }
         Assert.False(Directory.Exists(Path.Combine(projectsPath, "wards")));
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Wards anew", id = "wards" }));
-        Assert.Equal(0, (await Json(await admin.GetAsync("/console/v1/projects/wards/members"))).GetProperty("members").GetArrayLength());
+        await Json(await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Wards anew", id = "wards" }));
+        Assert.Equal(0, (await Json(await admin.GetAsync("/p/wards/_console/api/members"))).GetProperty("members").GetArrayLength());
     }
 
     private static async Task<HashSet<string>> TablesAsync(string connection, string schema)
@@ -482,13 +468,13 @@ public class ServerTests(PostgresFixture pg)
         var control = await pg.NewDatabaseAsync();
         await using var server = new ServerFactory(control, files, ("Winche:ProjectsPath", projectsPath));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(admin, "clinic", "Clinic", "authentication");
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards" }));
-        await StartProductAsync(admin, "/projects/wards", "authentication");
-        await Json(await admin.PostAsJsonAsync("/projects/wards/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects/wards/apps/registered", new { name = "Ward app", id = "ward-app" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards" }));
+        await StartProductAsync(admin, "/p/wards", "authentication");
+        await Json(await admin.PostAsJsonAsync("/p/wards/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" }));
+        await Json(await admin.PostAsJsonAsync("/p/wards/_console/api/apps/registered", new { name = "Ward app", id = "ward-app" }));
 
         // The control database: accounts, keys and the project list in public; each project's configuration in its schema.
         var publicTables = await TablesAsync(control, "public");
@@ -511,8 +497,8 @@ public class ServerTests(PostgresFixture pg)
         Assert.DoesNotContain("console_rule_versions", data);
 
         // Deleting a project takes its configuration too.
-        await admin.PostAsync("/console/v1/projects/wards/archive", null);
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync("/console/v1/projects/wards")).StatusCode);
+        await admin.PostAsync("/_console/api/projects/wards/archive", null);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync("/_console/api/projects/wards")).StatusCode);
         Assert.Empty(await TablesAsync(control, "project_wards"));
     }
 
@@ -522,12 +508,12 @@ public class ServerTests(PostgresFixture pg)
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(admin, "clinic", "Clinic", "authentication");
 
         // What the deployment set is where they start.
-        var page = await Json(await admin.GetAsync("/console/v1/server/settings"));
+        var page = await Json(await admin.GetAsync("/_console/api/server/settings"));
         Assert.Equal("deployment", page.GetProperty("source").GetString());
         Assert.Equal("http://localhost", page.GetProperty("deployment").GetProperty("publicUrl").GetString());
         Assert.False(page.GetProperty("settings").GetProperty("requireTwoFactorForSettings").GetBoolean());
@@ -535,7 +521,7 @@ public class ServerTests(PostgresFixture pg)
         // The public address is the deployment's: the console can't change it (the issuer of every token).
         var settings = System.Text.Json.Nodes.JsonNode.Parse(page.GetProperty("settings").GetRawText())!.AsObject();
         settings["publicUrl"] = "https://api.example.com";
-        var refused = await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings, reason = "x" });
+        var refused = await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings, reason = "x" });
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
         Assert.Contains("Winche__PublicUrl", await refused.Content.ReadAsStringAsync());
 
@@ -546,19 +532,19 @@ public class ServerTests(PostgresFixture pg)
         {
             ["id"] = "staff", ["enabled"] = true, ["issuer"] = "https://id.example.com/realms/staff", ["clientId"] = "winche-console",
         });
-        await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings, reason = "Our web app" }));
-        page = await Json(await admin.GetAsync("/console/v1/server/settings"));
+        await Json(await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings, reason = "Our web app" }));
+        page = await Json(await admin.GetAsync("/_console/api/server/settings"));
         Assert.True(page.GetProperty("settings").GetProperty("consolePasswordsOnlyForAdmins").GetBoolean());
         Assert.Equal("console", page.GetProperty("source").GetString());
         Assert.Equal("Our web app", page.GetProperty("version").GetProperty("reason").GetString());
         Assert.Equal("http://localhost", page.GetProperty("settings").GetProperty("publicUrl").GetString());
 
         // Passwords are write-only.
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/console/v1/server/secrets/server.consoleSignIn.staff.clientSecret", new { value = "s3cret" })).StatusCode);
-        var secret = (await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("secrets")[0];
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/_console/api/server/secrets/server.consoleSignIn.staff.clientSecret", new { value = "s3cret" })).StatusCode);
+        var secret = (await Json(await admin.GetAsync("/_console/api/server/settings"))).GetProperty("secrets")[0];
         Assert.NotEqual(JsonValueKind.Null, secret.GetProperty("setAt").ValueKind);
-        Assert.DoesNotContain("s3cret", await (await admin.GetAsync("/console/v1/server/settings")).Content.ReadAsStringAsync());
-        Assert.Equal(HttpStatusCode.NotFound, (await admin.PutAsJsonAsync("/console/v1/server/secrets/anything", new { value = "x" })).StatusCode);
+        Assert.DoesNotContain("s3cret", await (await admin.GetAsync("/_console/api/server/settings")).Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.PutAsJsonAsync("/_console/api/server/secrets/anything", new { value = "x" })).StatusCode);
     }
 
     [Fact]
@@ -569,8 +555,8 @@ public class ServerTests(PostgresFixture pg)
         var control = await pg.NewDatabaseAsync();
         await using var server = new ServerFactory(control, files, ("Winche:ProjectsPath", projectsPath), ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(admin, "clinic", "Clinic");
 
         // "Another" server: the test's PostgreSQL by its address, user and password, as a separate database server would be.
@@ -578,16 +564,16 @@ public class ServerTests(PostgresFixture pg)
         var database = new { host = target.Host, port = target.Port, username = target.Username, password = target.Password, sslMode = "Disable", database = "wards_data" };
 
         // Checked first: a wrong password says why; the right one is ready, the database to be made.
-        var wrong = await Json(await admin.PostAsJsonAsync("/console/v1/projects/check-database", new { id = "wards", database = database with { password = "nope" } }));
+        var wrong = await Json(await admin.PostAsJsonAsync("/_console/api/projects/check-database", new { id = "wards", database = database with { password = "nope" } }));
         Assert.False(wrong.GetProperty("ok").GetBoolean());
         Assert.StartsWith("Couldn't connect", wrong.GetProperty("problem").GetString());
-        var ready = await Json(await admin.PostAsJsonAsync("/console/v1/projects/check-database", new { id = "wards", database }));
+        var ready = await Json(await admin.PostAsJsonAsync("/_console/api/projects/check-database", new { id = "wards", database }));
         Assert.True(ready.GetProperty("ok").GetBoolean());
         Assert.False(ready.GetProperty("exists").GetBoolean());
-        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards", database = database with { password = "nope" } })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards", database = database with { password = "nope" } })).StatusCode);
 
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards", database }));
-        Assert.Equal("Wards", (await Json(await admin.GetAsync("/console/v1/projects/wards/project"))).GetProperty("name").GetString());
+        await Json(await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards", database }));
+        Assert.Equal("Wards", (await Json(await admin.GetAsync("/p/wards/_console/api/project"))).GetProperty("name").GetString());
         // The project list says where its database is; its password is a secret of its own.
         await using var conn = new NpgsqlConnection(control);
         await conn.OpenAsync();
@@ -598,7 +584,7 @@ public class ServerTests(PostgresFixture pg)
         await r.DisposeAsync();
 
         // Without a database server: one of its own on the server's PostgreSQL, as before.
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Labs", id = "labs" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Labs", id = "labs" }));
         await using var labs = new NpgsqlCommand("SELECT db_host FROM winche_server_projects WHERE id = 'labs'", conn);
         Assert.Equal(DBNull.Value, await labs.ExecuteScalarAsync());
     }
@@ -615,13 +601,13 @@ public class ServerTests(PostgresFixture pg)
         await using (var before = new ServerFactory(db, files, Key(oldKey), TwoStepOff))
         {
             var admin = before.CreateClient(new() { HandleCookies = false });
-            await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-            var login = await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" });
+            await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+            var login = await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" });
             cookie = string.Join("; ", login.Headers.GetValues("Set-Cookie").Select(c => c.Split(';')[0]));
             admin.DefaultRequestHeaders.Add("Cookie", cookie);
             await TestProjects.CreateAsync(admin, "clinic", "Clinic", "authentication");
             await AddProviderAsync(admin, new FakeOidcProvider());   // a server secret: its client secret
-            await Json(await before.CreateClient().PostAsJsonAsync("/projects/clinic/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" }));
+            await Json(await before.CreateClient().PostAsJsonAsync("/p/clinic/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" }));
         }
 
         // The new key with the old one as previous: the console sign-in, the app's users and the secrets all carry on.
@@ -630,17 +616,17 @@ public class ServerTests(PostgresFixture pg)
             var admin = rotating.CreateClient(new() { HandleCookies = false });
             admin.DefaultRequestHeaders.Add("Cookie", cookie);
             // Started with the old key as previous: every secret moved to the new one (nothing for the console to do).
-            await Json(await admin.GetAsync("/console/v1/server/settings"));
-            await Json(await rotating.CreateClient().PostAsJsonAsync("/projects/clinic/auth/v1/signIn", new { email = "ann@example.com", password = "correct horse battery" }));
+            await Json(await admin.GetAsync("/_console/api/server/settings"));
+            await Json(await rotating.CreateClient().PostAsJsonAsync("/p/clinic/auth/v1/signIn", new { email = "ann@example.com", password = "correct horse battery" }));
         }
 
         // Then the new key alone: nothing needed the old one any more.
         await using var after = new ServerFactory(db, files, Key(newKey), TwoStepOff);
         var again = after.CreateClient(new() { HandleCookies = false });
         again.DefaultRequestHeaders.Add("Cookie", cookie);
-        var final = await Json(await again.GetAsync("/console/v1/server/settings"));
+        var final = await Json(await again.GetAsync("/_console/api/server/settings"));
         Assert.NotEqual(JsonValueKind.Null, final.GetProperty("secrets").EnumerateArray().Single(x => x.GetProperty("name").GetString() == "server.consoleSignIn.staff.clientSecret").GetProperty("setAt").ValueKind);
-        await Json(await after.CreateClient().PostAsJsonAsync("/projects/clinic/auth/v1/signIn", new { email = "ann@example.com", password = "correct horse battery" }));
+        await Json(await after.CreateClient().PostAsJsonAsync("/p/clinic/auth/v1/signIn", new { email = "ann@example.com", password = "correct horse battery" }));
         Directory.Delete(files, recursive: true);
     }
 
@@ -654,10 +640,10 @@ public class ServerTests(PostgresFixture pg)
         var app = server.CreateClient();
         foreach (var (path, body) in new[]
         {
-            ("/projects/clinic/auth/v1/signUp", "{oops"),
-            ("/projects/clinic/documents/v1/" + Convert.ToBase64String("a/b"u8.ToArray()).TrimEnd('='), """{"fields":{"x":{"bogusValue":1}}}"""),
-            ("/projects/clinic/documents/v1/" + Convert.ToBase64String("a/b"u8.ToArray()).TrimEnd('='), "[1,2]"),
-            ("/projects/clinic/documents/v1/" + Convert.ToBase64String("a/b"u8.ToArray()).TrimEnd('='), "{}"),
+            ("/p/clinic/auth/v1/signUp", "{oops"),
+            ("/p/clinic/documents/v1/" + Convert.ToBase64String("a/b"u8.ToArray()).TrimEnd('='), """{"fields":{"x":{"bogusValue":1}}}"""),
+            ("/p/clinic/documents/v1/" + Convert.ToBase64String("a/b"u8.ToArray()).TrimEnd('='), "[1,2]"),
+            ("/p/clinic/documents/v1/" + Convert.ToBase64String("a/b"u8.ToArray()).TrimEnd('='), "{}"),
         })
         {
             var resp = await app.SendAsync(new HttpRequestMessage(path.Contains("/documents/") ? HttpMethod.Put : HttpMethod.Post, path)
@@ -680,8 +666,8 @@ public class ServerTests(PostgresFixture pg)
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(admin, "clinic", "Clinic");
 
         var signIn = new System.Text.Json.Nodes.JsonObject
@@ -693,65 +679,65 @@ public class ServerTests(PostgresFixture pg)
         idp.Next = new() { ["sub"] = "u-1", ["email"] = "bob@example.com", ["email_verified"] = true, ["given_name"] = "Bob", ["groups"] = new[] { "staff" } };
 
         // A test sign-in with the unsaved settings: what came back and the role it maps to; nobody signed in.
-        var test = await Json(await admin.PostAsJsonAsync("/console/v1/server/console-sign-in/test", new { settings = signIn, clientSecret = idp.ClientSecret }));
-        Assert.Equal("http://localhost/console/v1/session/oidc/callback", test.GetProperty("callbackUrl").GetString());
+        var test = await Json(await admin.PostAsJsonAsync("/_console/api/server/console-sign-in/test", new { settings = signIn, clientSecret = idp.ClientSecret }));
+        Assert.Equal("http://localhost/_console/api/auth/oidc/callback", test.GetProperty("callbackUrl").GetString());
         var tester = server.CreateClient(new() { AllowAutoRedirect = false });
-        var report = await FollowAsync(tester, idp, "/console/" + test.GetProperty("url").GetString());
+        var report = await FollowAsync(tester, idp, "/_console/" + test.GetProperty("url").GetString());
         var html = await report.Content.ReadAsStringAsync();
         Assert.Contains("winche-oidc-test", html);
         Assert.Contains("\"role\":null", html);   // staff isn't an admin group: no server role
         Assert.Contains("bob@example.com", html);
 
-        var page = System.Text.Json.Nodes.JsonNode.Parse((await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("settings").GetRawText())!.AsObject();
+        var page = System.Text.Json.Nodes.JsonNode.Parse((await Json(await admin.GetAsync("/_console/api/server/settings"))).GetProperty("settings").GetRawText())!.AsObject();
         page["consoleProviders"] = new System.Text.Json.Nodes.JsonArray(signIn);
         page["consolePasswordsOnlyForAdmins"] = true;
-        await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "Staff ID" }));
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/console/v1/server/secrets/server.consoleSignIn.staff.clientSecret", new { value = idp.ClientSecret })).StatusCode);
+        await Json(await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = page, reason = "Staff ID" }));
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/_console/api/server/secrets/server.consoleSignIn.staff.clientSecret", new { value = idp.ClientSecret })).StatusCode);
 
         // The sign-in page offers it.
-        var anonymous = await Json(await server.CreateClient().GetAsync("/console/v1/session/state"));
+        var anonymous = await Json(await server.CreateClient().GetAsync("/_console/api/auth/state"));
         var offered = anonymous.GetProperty("oidc").GetProperty("providers").EnumerateArray().Single();
         Assert.Equal(("staff", "Sign in with Staff ID"), (offered.GetProperty("id").GetString(), offered.GetProperty("label").GetString()));
 
         // Bob signs in: a console account is made for him (not a server admin: his group isn't one), two-step the provider's.
         var bob = server.CreateClient(new() { AllowAutoRedirect = false });
-        var landed = await FollowAsync(bob, idp, "/console/v1/session/oidc/start?provider=staff&returnUrl=/console/projects/clinic/");
-        Assert.Equal("/console/projects/clinic/", landed.Headers.Location!.OriginalString);
-        var state = (await Json(await bob.GetAsync("/console/v1/session/state"))).GetProperty("user");
+        var landed = await FollowAsync(bob, idp, "/_console/api/auth/oidc/start?provider=staff&returnUrl=/p/clinic/_console/");
+        Assert.Equal("/p/clinic/_console/", landed.Headers.Location!.OriginalString);
+        var state = (await Json(await bob.GetAsync("/_console/api/auth/state"))).GetProperty("user");
         Assert.Equal(("bob@example.com", JsonValueKind.Null, true), (state.GetProperty("email").GetString(), state.GetProperty("role").ValueKind, state.GetProperty("signedInWithProvider").GetBoolean()));
         // A project is its members': none of clinic's until an admin adds him, then at once.
-        Assert.Equal(HttpStatusCode.Forbidden, (await bob.GetAsync("/console/v1/projects/clinic/project")).StatusCode);
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects/clinic/members", new { email = "bob@example.com", role = "Member" }));
-        Assert.Equal(HttpStatusCode.OK, (await bob.GetAsync("/console/v1/projects/clinic/project")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await bob.GetAsync("/p/clinic/_console/api/project")).StatusCode);
+        await Json(await admin.PostAsJsonAsync("/p/clinic/_console/api/members", new { email = "bob@example.com", role = "Member" }));
+        Assert.Equal(HttpStatusCode.OK, (await bob.GetAsync("/p/clinic/_console/api/project")).StatusCode);
 
         // His groups change at the provider: the next sign-in brings it (here only in the access token, as Keycloak does).
         idp.Next = new() { ["sub"] = "u-1", ["email"] = "bob@example.com", ["email_verified"] = true };
         idp.NextAccess = new() { ["sub"] = "u-1", ["groups"] = new[] { "staff", "winche-admins" } };
         var bob2 = server.CreateClient(new() { AllowAutoRedirect = false });
-        await FollowAsync(bob2, idp, "/console/v1/session/oidc/start");
-        Assert.True((await Json(await bob2.GetAsync("/console/v1/session/state"))).GetProperty("user").GetProperty("serverAdmin").GetBoolean());
-        Assert.Equal(HttpStatusCode.OK, (await bob2.GetAsync("/console/v1/server/settings")).StatusCode);   // admin now, at once
+        await FollowAsync(bob2, idp, "/_console/api/auth/oidc/start");
+        Assert.True((await Json(await bob2.GetAsync("/_console/api/auth/state"))).GetProperty("user").GetProperty("serverAdmin").GetBoolean());
+        Assert.Equal(HttpStatusCode.OK, (await bob2.GetAsync("/_console/api/server/settings")).StatusCode);   // admin now, at once
 
         // Passwords are for server admins only now; the built-in admin still gets in (the way in when the provider is down).
-        await Json(await server.CreateClient().PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await server.CreateClient().PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
 
         // An address already taken that the provider doesn't vouch for isn't linked.
         idp.NextAccess = null;
         idp.Next = new() { ["sub"] = "u-2", ["email"] = "admin@example.com", ["email_verified"] = false };
         var mallory = server.CreateClient(new() { AllowAutoRedirect = false });
-        var refused = await FollowAsync(mallory, idp, "/console/v1/session/oidc/start");
+        var refused = await FollowAsync(mallory, idp, "/_console/api/auth/oidc/start");
         Assert.Contains("signInError=", refused.Headers.Location!.OriginalString);
-        Assert.Equal(JsonValueKind.Null, (await Json(await mallory.GetAsync("/console/v1/session/state"))).GetProperty("user").ValueKind);
+        Assert.Equal(JsonValueKind.Null, (await Json(await mallory.GetAsync("/_console/api/auth/state"))).GetProperty("user").ValueKind);
         Directory.Delete(files, recursive: true);
     }
 
     /// <summary>Starts a product in a project's console and waits for its setup to finish.</summary>
     internal static async Task StartProductAsync(HttpClient console, string prefix, string product)
     {
-        await Json(await console.PostAsync($"/console/v1{prefix}/project/products/{product}/start", null));
+        await Json(await console.PostAsync($"{prefix}/_console/api/project/products/{product}/start", null));
         for (var i = 0; i < 100; i++)
         {
-            var run = await Json(await console.GetAsync($"/console/v1{prefix}/project/products/{product}/setup"));
+            var run = await Json(await console.GetAsync($"{prefix}/_console/api/project/products/{product}/setup"));
             var state = run.GetProperty("state").GetString();
             if (state == "done") return;
             if (state == "failed") throw new InvalidOperationException($"Setting up {product} failed: {run}");
@@ -767,49 +753,49 @@ public class ServerTests(PostgresFixture pg)
         // No code from the deployment: the server makes one, keeps it, and logs it.
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:SetupCode", ""));
         var console = server.CreateClient();
-        var state = await Json(await console.GetAsync("/console/v1/session/state"));
+        var state = await Json(await console.GetAsync("/_console/api/auth/state"));
         Assert.True(state.GetProperty("setup").GetProperty("code").GetBoolean());
 
         var account = new { email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" };
-        Assert.Equal(HttpStatusCode.BadRequest, (await console.PostAsJsonAsync("/console/v1/session/setup", account)).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await console.PostAsJsonAsync("/console/v1/session/setup/code", new { setupCode = "AAAA-BBBB-CCCC" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await console.PostAsJsonAsync("/_console/api/auth/setup", account)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await console.PostAsJsonAsync("/_console/api/auth/setup/code", new { setupCode = "AAAA-BBBB-CCCC" })).StatusCode);
 
         // The code the server made (and logged): accepted however it's typed.
         var code = await server.Services.GetRequiredService<ServerSettingsProvider>().SetupCodeAsync(CancellationToken.None);
         Assert.Matches("^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$", code);
-        Assert.Equal(HttpStatusCode.NoContent, (await console.PostAsJsonAsync("/console/v1/session/setup/code", new { setupCode = code.ToLowerInvariant().Replace("-", " ") })).StatusCode);
-        await Json(await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = code, account.email, account.firstName, account.lastName, account.password }));
+        Assert.Equal(HttpStatusCode.NoContent, (await console.PostAsJsonAsync("/_console/api/auth/setup/code", new { setupCode = code.ToLowerInvariant().Replace("-", " ") })).StatusCode);
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = code, account.email, account.firstName, account.lastName, account.password }));
 
         // Set up: no more setup, and the code isn't asked for again.
-        state = await Json(await console.GetAsync("/console/v1/session/state"));
+        state = await Json(await console.GetAsync("/_console/api/auth/state"));
         Assert.Equal(JsonValueKind.Null, state.GetProperty("setup").ValueKind);
-        Assert.Equal(HttpStatusCode.Conflict, (await console.PostAsJsonAsync("/console/v1/session/setup/code", new { setupCode = code })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await console.PostAsJsonAsync("/_console/api/auth/setup/code", new { setupCode = code })).StatusCode);
     }
 
     /// <summary>A provider in Server settings, its secret saved: "staff", at <paramref name="idp"/>.</summary>
     private static async Task AddProviderAsync(HttpClient admin, FakeOidcProvider idp, string id = "staff", string label = "Sign in with Staff ID")
     {
-        var page = System.Text.Json.Nodes.JsonNode.Parse((await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("settings").GetRawText())!.AsObject();
+        var page = System.Text.Json.Nodes.JsonNode.Parse((await Json(await admin.GetAsync("/_console/api/server/settings"))).GetProperty("settings").GetRawText())!.AsObject();
         var list = page["consoleProviders"]?.AsArray() ?? [];
         list.Add(new System.Text.Json.Nodes.JsonObject
         {
             ["id"] = id, ["enabled"] = true, ["issuer"] = idp.Issuer, ["clientId"] = idp.ClientId, ["buttonLabel"] = label, ["createAccounts"] = true,
         });
         page["consoleProviders"] = list.DeepClone();
-        await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "Add " + id }));
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync($"/console/v1/server/secrets/server.consoleSignIn.{id}.clientSecret", new { value = idp.ClientSecret })).StatusCode);
+        await Json(await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = page, reason = "Add " + id }));
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync($"/_console/api/server/secrets/server.consoleSignIn.{id}.clientSecret", new { value = idp.ClientSecret })).StatusCode);
     }
 
     private static async Task<HttpClient> AdminAsync(ServerFactory server)
     {
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         return admin;
     }
 
     private static async Task<string?> SignedInAsync(HttpClient client) =>
-        (await Json(await client.GetAsync("/console/v1/session/state"))).GetProperty("user") is { ValueKind: JsonValueKind.Object } u ? u.GetProperty("email").GetString() : null;
+        (await Json(await client.GetAsync("/_console/api/auth/state"))).GetProperty("user") is { ValueKind: JsonValueKind.Object } u ? u.GetProperty("email").GetString() : null;
 
     [Fact]
     public async Task The_console_offers_several_identity_providers_and_one_person_is_the_same_account_through_each()
@@ -822,28 +808,28 @@ public class ServerTests(PostgresFixture pg)
         await AddProviderAsync(admin, staff);
         await AddProviderAsync(admin, partner, "partner", "Sign in with Partner ID");
 
-        var offered = (await Json(await server.CreateClient().GetAsync("/console/v1/session/state"))).GetProperty("oidc").GetProperty("providers")
+        var offered = (await Json(await server.CreateClient().GetAsync("/_console/api/auth/state"))).GetProperty("oidc").GetProperty("providers")
             .EnumerateArray().Select(p => p.GetProperty("id").GetString()).ToList();
         Assert.Equal(["staff", "partner"], offered);
-        Assert.Equal(HttpStatusCode.NotFound, (await server.CreateClient(new() { AllowAutoRedirect = false }).GetAsync("/console/v1/session/oidc/start")).StatusCode);   // which one?
+        Assert.Equal(HttpStatusCode.NotFound, (await server.CreateClient(new() { AllowAutoRedirect = false }).GetAsync("/_console/api/auth/oidc/start")).StatusCode);   // which one?
 
         staff.Next = new() { ["sub"] = "s-1", ["email"] = "bob@example.com", ["email_verified"] = true };
         partner.Next = new() { ["sub"] = "p-9", ["email"] = "bob@example.com", ["email_verified"] = true };
         var viaStaff = server.CreateClient(new() { AllowAutoRedirect = false });
-        await FollowAsync(viaStaff, staff, "/console/v1/session/oidc/start?provider=staff");
+        await FollowAsync(viaStaff, staff, "/_console/api/auth/oidc/start?provider=staff");
         var viaPartner = server.CreateClient(new() { AllowAutoRedirect = false });
-        await FollowAsync(viaPartner, partner, "/console/v1/session/oidc/start?provider=partner");
-        var a = (await Json(await viaStaff.GetAsync("/console/v1/session/state"))).GetProperty("user").GetProperty("id").GetString();
-        var b = (await Json(await viaPartner.GetAsync("/console/v1/session/state"))).GetProperty("user").GetProperty("id").GetString();
+        await FollowAsync(viaPartner, partner, "/_console/api/auth/oidc/start?provider=partner");
+        var a = (await Json(await viaStaff.GetAsync("/_console/api/auth/state"))).GetProperty("user").GetProperty("id").GetString();
+        var b = (await Json(await viaPartner.GetAsync("/_console/api/auth/state"))).GetProperty("user").GetProperty("id").GetString();
         Assert.Equal(a, b);
 
         // A provider taken off the list: its sessions end, and its secret goes with it.
-        var page = System.Text.Json.Nodes.JsonNode.Parse((await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("settings").GetRawText())!.AsObject();
+        var page = System.Text.Json.Nodes.JsonNode.Parse((await Json(await admin.GetAsync("/_console/api/server/settings"))).GetProperty("settings").GetRawText())!.AsObject();
         page["consoleProviders"] = new System.Text.Json.Nodes.JsonArray(page["consoleProviders"]!.AsArray().First(p => (string?)p!["id"] == "staff")!.DeepClone());
-        await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "No more partners" }));
+        await Json(await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = page, reason = "No more partners" }));
         Assert.Null(await SignedInAsync(viaPartner));
         Assert.Equal("bob@example.com", await SignedInAsync(viaStaff));
-        var secrets = (await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("secrets").EnumerateArray().Select(x => x.GetProperty("name").GetString()).ToList();
+        var secrets = (await Json(await admin.GetAsync("/_console/api/server/settings"))).GetProperty("secrets").EnumerateArray().Select(x => x.GetProperty("name").GetString()).ToList();
         Assert.DoesNotContain("server.consoleSignIn.partner.clientSecret", secrets);
         Directory.Delete(files, recursive: true);
     }
@@ -863,7 +849,7 @@ public class ServerTests(PostgresFixture pg)
             // Renewed with the provider while it lasts there.
             idp.Next = new() { ["sub"] = "u-1", ["email"] = "bob@example.com", ["email_verified"] = true };
             var bob = server.CreateClient(new() { AllowAutoRedirect = false });
-            await FollowAsync(bob, idp, "/console/v1/session/oidc/start");
+            await FollowAsync(bob, idp, "/_console/api/auth/oidc/start");
             Assert.Equal("bob@example.com", await SignedInAsync(bob));
             Assert.Equal("bob@example.com", await SignedInAsync(bob));
             Assert.True(idp.Refreshes >= 2);
@@ -874,17 +860,17 @@ public class ServerTests(PostgresFixture pg)
 
             // Back-channel logout of his session: it ends at once; a session from another sign-in stays.
             var again = server.CreateClient(new() { AllowAutoRedirect = false });
-            await FollowAsync(again, idp, "/console/v1/session/oidc/start");
+            await FollowAsync(again, idp, "/_console/api/auth/oidc/start");
             var other = server.CreateClient(new() { AllowAutoRedirect = false });
-            await FollowAsync(other, idp, "/console/v1/session/oidc/start");
-            Assert.Equal(HttpStatusCode.BadRequest, (await server.CreateClient().PostAsync("/console/v1/session/oidc/backchannel-logout",
+            await FollowAsync(other, idp, "/_console/api/auth/oidc/start");
+            Assert.Equal(HttpStatusCode.BadRequest, (await server.CreateClient().PostAsync("/_console/api/auth/oidc/backchannel-logout",
                 new FormUrlEncodedContent(new Dictionary<string, string> { ["logout_token"] = "not-a-token" }))).StatusCode);
-            Assert.Equal(HttpStatusCode.OK, (await server.CreateClient().PostAsync("/console/v1/session/oidc/backchannel-logout",
+            Assert.Equal(HttpStatusCode.OK, (await server.CreateClient().PostAsync("/_console/api/auth/oidc/backchannel-logout",
                 new FormUrlEncodedContent(new Dictionary<string, string> { ["logout_token"] = idp.LogoutToken(idp.LastSid, null) }))).StatusCode);
             Assert.Null(await SignedInAsync(other));
             Assert.Equal("bob@example.com", await SignedInAsync(again));
             // All of his sessions (by subject).
-            Assert.Equal(HttpStatusCode.OK, (await server.CreateClient().PostAsync("/console/v1/session/oidc/backchannel-logout",
+            Assert.Equal(HttpStatusCode.OK, (await server.CreateClient().PostAsync("/_console/api/auth/oidc/backchannel-logout",
                 new FormUrlEncodedContent(new Dictionary<string, string> { ["logout_token"] = idp.LogoutToken(null, "u-1") }))).StatusCode);
             Assert.Null(await SignedInAsync(again));
 
@@ -902,25 +888,25 @@ public class ServerTests(PostgresFixture pg)
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = await AdminAsync(server);
         await TestProjects.CreateAsync(admin, "clinic", "Clinic", "authentication");
-        await Json(await server.CreateClient().PostAsJsonAsync("/projects/clinic/auth/v1/signUp", new { email = "patient@example.com", password = "correct horse battery" }));
+        await Json(await server.CreateClient().PostAsJsonAsync("/p/clinic/auth/v1/signUp", new { email = "patient@example.com", password = "correct horse battery" }));
 
         // The console's accounts, not the app's users.
-        var users = await Json(await admin.GetAsync("/console/v1/server/auth/users"));
+        var users = await Json(await admin.GetAsync("/_console/api/server/auth/users"));
         Assert.Equal(["admin@example.com"], users.GetProperty("users").EnumerateArray().Select(u => u.GetProperty("email").GetString()!));
-        var appUsers = await Json(await admin.GetAsync("/console/v1/projects/clinic/auth/users"));
+        var appUsers = await Json(await admin.GetAsync("/p/clinic/_console/api/app-auth/users"));
         Assert.Equal(["patient@example.com"], appUsers.GetProperty("users").EnumerateArray().Select(u => u.GetProperty("email").GetString()!));
 
         // Its configuration, templates and sign-in settings are the accounts' own.
-        Assert.True((await Json(await admin.GetAsync("/console/v1/server/auth/config"))).GetProperty("wincheAuth").GetBoolean());
-        Assert.True((await Json(await admin.GetAsync("/console/v1/server/auth/email-templates"))).GetProperty("templates").GetArrayLength() > 0);
-        var signin = await Json(await admin.GetAsync("/console/v1/server/auth/settings/signin"));
+        Assert.True((await Json(await admin.GetAsync("/_console/api/server/auth/config"))).GetProperty("wincheAuth").GetBoolean());
+        Assert.True((await Json(await admin.GetAsync("/_console/api/server/auth/email-templates"))).GetProperty("templates").GetArrayLength() > 0);
+        var signin = await Json(await admin.GetAsync("/_console/api/server/auth/settings/signin"));
         Assert.Equal(8, signin.GetProperty("settings").GetProperty("emailPassword").GetProperty("minLength").GetInt32());   // the console's minimum
 
         // Only server admins.
-        await Json(await admin.PostAsJsonAsync("/console/v1/accounts", new { email = "member@example.com", role = "none", password = "Passw0rd!long" }));   // not a server admin
+        await Json(await admin.PostAsJsonAsync("/_console/api/users", new { email = "member@example.com", role = "none", password = "Passw0rd!long" }));   // not a server admin
         var member = server.CreateClient();
-        await Json(await member.PostAsJsonAsync("/console/v1/session/login", new { email = "member@example.com", password = "Passw0rd!long" }));
-        Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync("/console/v1/server/auth/users")).StatusCode);
+        await Json(await member.PostAsJsonAsync("/_console/api/auth/login", new { email = "member@example.com", password = "Passw0rd!long" }));
+        Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync("/_console/api/server/auth/users")).StatusCode);
         Directory.Delete(files, recursive: true);
     }
 
@@ -930,15 +916,15 @@ public class ServerTests(PostgresFixture pg)
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = await AdminAsync(server);
-        var page = System.Text.Json.Nodes.JsonNode.Parse((await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("settings").GetRawText())!.AsObject();
+        var page = System.Text.Json.Nodes.JsonNode.Parse((await Json(await admin.GetAsync("/_console/api/server/settings"))).GetProperty("settings").GetRawText())!.AsObject();
         page["consoleProviders"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
         {
             ["id"] = "staff", ["enabled"] = true, ["issuer"] = "https://id.example.com/realms/staff", ["clientId"] = "winche-console",
             ["buttonLabel"] = "Sign in with Staff ID", ["trustProviderTwoStep"] = true,
             ["keycloakSync"] = new System.Text.Json.Nodes.JsonObject { ["clientId"] = "winche-sync" },
         });
-        await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "Staff" }));
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/console/v1/server/secrets/server.consoleSignIn.staff.keycloakSync.clientSecret", new { value = "sync-secret" })).StatusCode);
+        await Json(await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = page, reason = "Staff" }));
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/_console/api/server/secrets/server.consoleSignIn.staff.keycloakSync.clientSecret", new { value = "sync-secret" })).StatusCode);
 
         var accounts = server.Services.GetRequiredService<ConsoleAccounts>();
         var area = accounts.Services.GetRequiredService<Winche.Core.SettingsArea<Winche.Auth.Settings.WincheAuthSettings>>();
@@ -957,7 +943,7 @@ public class ServerTests(PostgresFixture pg)
 
         // Taken off Server settings: off the accounts' providers too (its sync stops).
         page["consoleProviders"] = new System.Text.Json.Nodes.JsonArray();
-        await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "No more staff" }));
+        await Json(await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = page, reason = "No more staff" }));
         for (var i = 0; i < 50 && area.Current.Providers.Any(p => p.Name == "staff"); i++) await Task.Delay(100);
         Assert.DoesNotContain(area.Current.Providers, p => p.Name == "staff");
         Directory.Delete(files, recursive: true);
@@ -993,7 +979,7 @@ public class ServerTests(PostgresFixture pg)
         // And it signs people in.
         idp.Next = new() { ["sub"] = "u-1", ["email"] = "bob@example.com", ["email_verified"] = true };
         var bob = after.CreateClient(new() { AllowAutoRedirect = false });
-        await FollowAsync(bob, idp, "/console/v1/session/oidc/start");
+        await FollowAsync(bob, idp, "/_console/api/auth/oidc/start");
         Assert.Equal("bob@example.com", await SignedInAsync(bob));
         Directory.Delete(files, recursive: true);
     }
@@ -1006,18 +992,18 @@ public class ServerTests(PostgresFixture pg)
         var admin = await AdminAsync(server);
         await TestProjects.CreateAsync(admin, "clinic", "Clinic");
 
-        var overview = await Json(await admin.GetAsync("/console/v1/projects/clinic/overview"));
+        var overview = await Json(await admin.GetAsync("/p/clinic/_console/api/overview"));
         Assert.All(overview.GetProperty("products").EnumerateArray(), p => Assert.False(p.GetProperty("on").GetBoolean()));
-        var config = await Json(await admin.GetAsync("/console/v1/projects/clinic/auth/config"));
+        var config = await Json(await admin.GetAsync("/p/clinic/_console/api/app-auth/config"));
         Assert.Equal(0, config.GetProperty("keys").GetArrayLength());
         // No signing keys yet: refused like the rest of Authentication's API, not a server error.
-        var jwks = await server.CreateClient().GetAsync("/projects/clinic/.well-known/jwks.json");
+        var jwks = await server.CreateClient().GetAsync("/p/clinic/.well-known/jwks.json");
         Assert.Equal(HttpStatusCode.BadRequest, jwks.StatusCode);
         Assert.Contains("service-disabled", await jwks.Content.ReadAsStringAsync());
 
         // Started: its keys are there.
-        await StartProductAsync(admin, "/projects/clinic", "authentication");
-        Assert.Equal(HttpStatusCode.OK, (await server.CreateClient().GetAsync("/projects/clinic/.well-known/jwks.json")).StatusCode);
+        await StartProductAsync(admin, "/p/clinic", "authentication");
+        Assert.Equal(HttpStatusCode.OK, (await server.CreateClient().GetAsync("/p/clinic/.well-known/jwks.json")).StatusCode);
         Directory.Delete(files, recursive: true);
     }
 
@@ -1038,12 +1024,12 @@ public class ServerTests(PostgresFixture pg)
             var ann = await auth.CreateUserAsync("ann@clinic.example", "correct horse battery", "Ann");
             var tokens = await auth.SignInAsync("ann@clinic.example", "correct horse battery", Winche.Auth.AuthRequestInfo.Server);
             Assert.Equal(ann.Uid, tokens.User.Uid);
-            Assert.Equal("http://localhost/console/accounts", new Microsoft.IdentityModel.JsonWebTokens.JsonWebToken(tokens.AccessToken).Issuer);
+            Assert.Equal("http://localhost/_console/accounts", new Microsoft.IdentityModel.JsonWebTokens.JsonWebToken(tokens.AccessToken).Issuer);
             Assert.Equal(ann.Uid, (await auth.FindByEmailAsync("ann@clinic.example"))!.Uid);
         }
 
         // The project's app users are another Winche Auth: Ann isn't one of them, and can't sign in to the app.
-        var refused = await server.CreateClient().PostAsJsonAsync("/projects/clinic/auth/v1/signIn", new { email = "ann@clinic.example", password = "correct horse battery" });
+        var refused = await server.CreateClient().PostAsJsonAsync("/p/clinic/auth/v1/signIn", new { email = "ann@clinic.example", password = "correct horse battery" });
         Assert.False(refused.IsSuccessStatusCode);
         // Its tables are in their own schema of the control database.
         await using var conn = new NpgsqlConnection(db);
@@ -1076,10 +1062,10 @@ public class ServerTests(PostgresFixture pg)
         var control = await pg.NewDatabaseAsync();
         await using var server = new ServerFactory(control, files, ("Winche:ProjectsPath", projectsPath), ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(admin, "clinic", "Clinic");
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards" }));
 
         var data = new NpgsqlConnectionStringBuilder(control) { Database = server.Services.GetRequiredService<ProjectHosts>().DatabaseName("wards") }.ConnectionString;
         async Task<List<string>> Tables()
@@ -1095,21 +1081,21 @@ public class ServerTests(PostgresFixture pg)
         Assert.Empty(await Tables());   // nothing started, nothing made
 
         // Starting the database runs its setup in the background; its steps can be followed, then it answers.
-        var started = await admin.PostAsync("/console/v1/projects/wards/project/products/database/start", null);
+        var started = await admin.PostAsync("/p/wards/_console/api/project/products/database/start", null);
         Assert.Equal(HttpStatusCode.Accepted, started.StatusCode);
         var run = await Json(started);
         Assert.Contains(run.GetProperty("steps").EnumerateArray(), s => s.GetProperty("title").GetString() == "Create the document tables and functions");
-        await StartProductAsync(admin, "/projects/wards", "database");
+        await StartProductAsync(admin, "/p/wards", "database");
         var tables = await Tables();
         Assert.Contains("winche_documents", tables);
         Assert.Contains("winche_hook_deliveries", tables);
         Assert.DoesNotContain("auth_users", tables);   // Auth isn't started
         Assert.DoesNotContain("winche_files", tables);
-        var project = await Json(await admin.GetAsync("/console/v1/projects/wards/project"));
+        var project = await Json(await admin.GetAsync("/p/wards/_console/api/project"));
         var database = project.GetProperty("products").EnumerateArray().Single(p => p.GetProperty("id").GetString() == "database");
         Assert.True(database.GetProperty("ready").GetBoolean());
         Assert.DoesNotContain(project.GetProperty("products").EnumerateArray(), p => p.GetProperty("id").GetString() == "hooks");
-        Assert.Equal(HttpStatusCode.NotFound, (await server.CreateClient().GetAsync("/projects/wards/documents/v1/notes/a")).StatusCode);   // answered by the database itself
+        Assert.Equal(HttpStatusCode.NotFound, (await server.CreateClient().GetAsync("/p/wards/documents/v1/notes/a")).StatusCode);   // answered by the database itself
     }
 
     [Fact]
@@ -1119,19 +1105,19 @@ public class ServerTests(PostgresFixture pg)
         var control = await pg.NewDatabaseAsync();
         await using var server = new ServerFactory(control, files, ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         // Never the server's own database.
-        var refused = await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Clinic", id = "clinic",
+        var refused = await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Clinic", id = "clinic",
             database = new { database = new NpgsqlConnectionStringBuilder(control).Database } });
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
-        Assert.Equal(0, (await Json(await admin.GetAsync("/console/v1/projects"))).GetProperty("projects").GetArrayLength());
+        Assert.Equal(0, (await Json(await admin.GetAsync("/_console/api/projects"))).GetProperty("projects").GetArrayLength());
 
         // None named: a database of its own on this server's PostgreSQL.
         await TestProjects.CreateAsync(admin, "clinic", "Clinic", "authentication", "database");
         var app = server.CreateClient();
-        var token = (await Json(await app.PostAsJsonAsync("/projects/clinic/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" }))).GetProperty("accessToken").GetString()!;
-        var where = await Json(await admin.GetAsync("/console/v1/projects/clinic/settings/location/database"));
+        var token = (await Json(await app.PostAsJsonAsync("/p/clinic/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" }))).GetProperty("accessToken").GetString()!;
+        var where = await Json(await admin.GetAsync("/p/clinic/_console/api/data-location"));
         var ownDb = where.GetProperty("database").GetString()!;
         Assert.EndsWith("_p_clinic", ownDb);
         await using (var c = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(control) { Database = ownDb }.ConnectionString))
@@ -1157,17 +1143,17 @@ public class ServerTests(PostgresFixture pg)
         var newDb = where.GetProperty("suggestedDatabase").GetString()!;
 
         // A database already holding tables is refused; a new one on this server is fine.
-        var check = await Json(await admin.PostAsJsonAsync("/console/v1/projects/clinic/settings/location/database/check", new { database = new NpgsqlConnectionStringBuilder(control).Database }));
+        var check = await Json(await admin.PostAsJsonAsync("/p/clinic/_console/api/data-location/check", new { database = new NpgsqlConnectionStringBuilder(control).Database }));
         Assert.False(check.GetProperty("ok").GetBoolean());
-        check = await Json(await admin.PostAsJsonAsync("/console/v1/projects/clinic/settings/location/database/check", new { database = newDb }));
+        check = await Json(await admin.PostAsJsonAsync("/p/clinic/_console/api/data-location/check", new { database = newDb }));
         Assert.True(check.GetProperty("ok").GetBoolean(), check.ToString());
 
-        Assert.Equal(HttpStatusCode.Accepted, (await admin.PostAsJsonAsync("/console/v1/projects/clinic/settings/location/database/move", new { database = newDb })).StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, (await admin.PostAsJsonAsync("/p/clinic/_console/api/data-location/move", new { database = newDb })).StatusCode);
         var sawPause = false;
         JsonElement after = default;
         for (var i = 0; i < 200; i++)
         {
-            var r = await admin.GetAsync("/console/v1/projects/clinic/settings/location/database");
+            var r = await admin.GetAsync("/p/clinic/_console/api/data-location");
             if (r.StatusCode == HttpStatusCode.ServiceUnavailable)
             {
                 Assert.Contains("project-moving", await r.Content.ReadAsStringAsync());
@@ -1181,7 +1167,7 @@ public class ServerTests(PostgresFixture pg)
         Assert.Equal(JsonValueKind.Null, after.GetProperty("lastMoveFailed").ValueKind);
 
         // Everything carries on there: the user signs in, their earlier token still works for the API.
-        await Json(await app.PostAsJsonAsync("/projects/clinic/auth/v1/signIn", new { email = "ann@example.com", password = "correct horse battery" }));
+        await Json(await app.PostAsJsonAsync("/p/clinic/auth/v1/signIn", new { email = "ann@example.com", password = "correct horse battery" }));
         await using (var c = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(control) { Database = newDb }.ConnectionString))
         {
             await c.OpenAsync();
@@ -1190,7 +1176,7 @@ public class ServerTests(PostgresFixture pg)
         }
 
         // Finishing deletes the old database.
-        await admin.PostAsJsonAsync("/console/v1/projects/clinic/settings/location/database/finish", new { deleteOld = true });
+        await admin.PostAsJsonAsync("/p/clinic/_console/api/data-location/finish", new { deleteOld = true });
         await using (var c = new NpgsqlConnection(control))
         {
             await c.OpenAsync();
@@ -1198,8 +1184,8 @@ public class ServerTests(PostgresFixture pg)
             cmd.Parameters.AddWithValue(ownDb);
             Assert.Equal(0L, (long)(await cmd.ExecuteScalarAsync())!);
         }
-        Assert.Equal(JsonValueKind.Null, (await Json(await admin.GetAsync("/console/v1/projects/clinic/settings/location/database"))).GetProperty("previous").ValueKind);
-        await Json(await app.PostAsJsonAsync("/projects/clinic/auth/v1/signIn", new { email = "ann@example.com", password = "correct horse battery" }));
+        Assert.Equal(JsonValueKind.Null, (await Json(await admin.GetAsync("/p/clinic/_console/api/data-location"))).GetProperty("previous").ValueKind);
+        await Json(await app.PostAsJsonAsync("/p/clinic/auth/v1/signIn", new { email = "ann@example.com", password = "correct horse battery" }));
         Assert.NotNull(token);
     }
 
@@ -1211,31 +1197,31 @@ public class ServerTests(PostgresFixture pg)
         var control = await pg.NewDatabaseAsync();
         await using var server = new ServerFactory(control, files, ("Winche:ProjectsPath", projectsPath), ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(admin, "clinic", "Clinic");
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards" }));
-        await StartProductAsync(admin, "/projects/wards", "authentication");
-        await Json(await server.CreateClient().PostAsJsonAsync("/projects/wards/auth/v1/signUp", new { email = "bob@example.com", password = "correct horse battery" }));
-        var oldDb = (await Json(await admin.GetAsync("/console/v1/projects/wards/settings/location/database"))).GetProperty("database").GetString()!;
+        await Json(await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards" }));
+        await StartProductAsync(admin, "/p/wards", "authentication");
+        await Json(await server.CreateClient().PostAsJsonAsync("/p/wards/auth/v1/signUp", new { email = "bob@example.com", password = "correct horse battery" }));
+        var oldDb = (await Json(await admin.GetAsync("/p/wards/_console/api/data-location"))).GetProperty("database").GetString()!;
 
         // "Another server": the test's PostgreSQL by address, user and password.
         var other = new NpgsqlConnectionStringBuilder(control);
         var target = new { database = "wards_elsewhere", host = other.Host, port = other.Port, username = other.Username, password = other.Password, sslMode = "Disable" };
-        Assert.True((await Json(await admin.PostAsJsonAsync("/console/v1/projects/wards/settings/location/database/check", target))).GetProperty("ok").GetBoolean());
-        Assert.Equal(HttpStatusCode.Accepted, (await admin.PostAsJsonAsync("/console/v1/projects/wards/settings/location/database/move", target)).StatusCode);
+        Assert.True((await Json(await admin.PostAsJsonAsync("/p/wards/_console/api/data-location/check", target))).GetProperty("ok").GetBoolean());
+        Assert.Equal(HttpStatusCode.Accepted, (await admin.PostAsJsonAsync("/p/wards/_console/api/data-location/move", target)).StatusCode);
         JsonElement after = default;
         for (var i = 0; i < 200; i++)
         {
-            var r = await admin.GetAsync("/console/v1/projects/wards/settings/location/database");
+            var r = await admin.GetAsync("/p/wards/_console/api/data-location");
             if (r.IsSuccessStatusCode && (after = await Json(r)).GetProperty("previous").ValueKind != JsonValueKind.Null) break;
             await Task.Delay(50);
         }
         Assert.Equal(("wards_elsewhere", other.Host), (after.GetProperty("database").GetString(), after.GetProperty("host").GetString()));
-        await Json(await server.CreateClient().PostAsJsonAsync("/projects/wards/auth/v1/signIn", new { email = "bob@example.com", password = "correct horse battery" }));
+        await Json(await server.CreateClient().PostAsJsonAsync("/p/wards/auth/v1/signIn", new { email = "bob@example.com", password = "correct horse battery" }));
 
         // Finished: the old database is dropped.
-        await admin.PostAsJsonAsync("/console/v1/projects/wards/settings/location/database/finish", new { deleteOld = true });
+        await admin.PostAsJsonAsync("/p/wards/_console/api/data-location/finish", new { deleteOld = true });
         await using (var c = new NpgsqlConnection(control))
         {
             await c.OpenAsync();
@@ -1244,11 +1230,11 @@ public class ServerTests(PostgresFixture pg)
         }
 
         // Pool settings: saved, the project restarted with them, still answering.
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/console/v1/projects/wards/settings/location/database/pool", new { maxConnections = 20, commandTimeoutSeconds = 60 })).StatusCode);
-        Assert.Equal(20, (await Json(await admin.GetAsync("/console/v1/projects/wards/settings/location/database"))).GetProperty("maxConnections").GetInt32());
-        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsJsonAsync("/console/v1/projects/wards/settings/location/database/pool", new { maxConnections = 1 })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/p/wards/_console/api/data-location/pool", new { maxConnections = 20, commandTimeoutSeconds = 60 })).StatusCode);
+        Assert.Equal(20, (await Json(await admin.GetAsync("/p/wards/_console/api/data-location"))).GetProperty("maxConnections").GetInt32());
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsJsonAsync("/p/wards/_console/api/data-location/pool", new { maxConnections = 1 })).StatusCode);
         await Task.Delay(300);
-        await Json(await server.CreateClient().PostAsJsonAsync("/projects/wards/auth/v1/signIn", new { email = "bob@example.com", password = "correct horse battery" }));
+        await Json(await server.CreateClient().PostAsJsonAsync("/p/wards/auth/v1/signIn", new { email = "bob@example.com", password = "correct horse battery" }));
     }
 
     [Fact]
@@ -1259,21 +1245,21 @@ public class ServerTests(PostgresFixture pg)
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), null, ("Winche:ProjectsPath", files));
         var app = server.CreateClient();
         var console = server.CreateClient();
-        await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" });
-        await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" });
+        await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" });
+        await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" });
         await TestProjects.CreateAsync(console, "clinic", "Clinic", "database", "storage", "authentication", "functions", "hooks");
-        var parsed = await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/rules/text/parse", new { text = "match public/{file=**} { allow read, write: if request.auth != null; }" }));
-        await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/rules/storage", new { rulesJson = parsed.GetProperty("rulesJson").GetString(), note = "Public files" }));
+        var parsed = await Json(await console.PostAsJsonAsync("/p/clinic/_console/api/rules/text/parse", new { text = "match public/{file=**} { allow read, write: if request.auth != null; }" }));
+        await Json(await console.PostAsJsonAsync("/p/clinic/_console/api/rules/storage", new { rulesJson = parsed.GetProperty("rulesJson").GetString(), note = "Public files" }));
 
-        var session = await Json(await app.PostAsJsonAsync("/projects/clinic/auth/v1/signUp", new { email = "ben@example.com", password = "correct horse battery" }));
+        var session = await Json(await app.PostAsJsonAsync("/p/clinic/auth/v1/signUp", new { email = "ben@example.com", password = "correct horse battery" }));
         app.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.GetProperty("accessToken").GetString());
         var path = B64("public/hello.txt");
-        await Json(await app.PutAsJsonAsync($"/projects/clinic/files/v1/{path}", new { mimeType = "text/plain", sizeBytes = 5 }));
-        var upload = (await Json(await app.PostAsync($"/projects/clinic/files/v1/{path}:upload", null))).GetProperty("url").GetString()!;
-        Assert.StartsWith("http://localhost/projects/clinic/files/v1/signed/", upload);
+        await Json(await app.PutAsJsonAsync($"/p/clinic/files/v1/{path}", new { mimeType = "text/plain", sizeBytes = 5 }));
+        var upload = (await Json(await app.PostAsync($"/p/clinic/files/v1/{path}:upload", null))).GetProperty("url").GetString()!;
+        Assert.StartsWith("http://localhost/p/clinic/_files/", upload);
         var put = new HttpRequestMessage(HttpMethod.Put, new Uri(upload).PathAndQuery) { Content = new StringContent("hello") };
         Assert.Equal(HttpStatusCode.OK, (await app.SendAsync(put)).StatusCode);
-        await Json(await app.PostAsync($"/projects/clinic/files/v1/{path}:confirm", null));
+        await Json(await app.PostAsync($"/p/clinic/files/v1/{path}:confirm", null));
         // On disk in the project's folder, under its own key: the folder, a generation, the name.
         var stored = Assert.Single(Directory.GetFiles(files, "hello.txt", SearchOption.AllDirectories));
         Assert.Equal("hello", File.ReadAllText(stored));
@@ -1288,28 +1274,28 @@ public class ServerTests(PostgresFixture pg)
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), null, ("Winche:ProjectsPath", files), ("Winche:RequireTwoFactorForSettings", "false"));
         var app = server.CreateClient(new() { AllowAutoRedirect = false });
         var console = server.CreateClient();
-        await Json(await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(console, "clinic", "Clinic", "database");
 
         // Not started: apps are told so, and the console reads nothing.
-        var off = await app.GetAsync("/projects/clinic/assets/v1/channels/production");
+        var off = await app.GetAsync("/p/clinic/assets/v1/channels/production");
         Assert.Contains("service-disabled", await off.Content.ReadAsStringAsync());
-        Assert.Equal(HttpStatusCode.BadRequest, (await console.GetAsync("/console/v1/projects/clinic/assets")).StatusCode);
-        await StartProductAsync(console, "/projects/clinic", "assets");
+        Assert.Equal(HttpStatusCode.BadRequest, (await console.GetAsync("/p/clinic/_console/api/assets")).StatusCode);
+        await StartProductAsync(console, "/p/clinic", "assets");
 
         // Contents first (by hash, once), then the release, which moves the channel.
         var en = "{\"hello\":\"Hello\"}"u8.ToArray();
         var guide = "<p>staff only</p>"u8.ToArray();
         string Hash(byte[] b) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(b));
-        var missing = await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/assets/contents/missing", new { hashes = new[] { Hash(en), Hash(guide) } }));
+        var missing = await Json(await console.PostAsJsonAsync("/p/clinic/_console/api/assets/contents/missing", new { hashes = new[] { Hash(en), Hash(guide) } }));
         Assert.Equal(2, missing.GetProperty("missing").GetArrayLength());
-        Assert.Equal(HttpStatusCode.BadRequest, (await console.PutAsync($"/console/v1/projects/clinic/assets/contents/{Hash(en)}", new ByteArrayContent(en[..5]))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await console.PutAsync($"/p/clinic/_console/api/assets/contents/{Hash(en)}", new ByteArrayContent(en[..5]))).StatusCode);
         foreach (var b in new[] { en, guide })
-            Assert.Equal(HttpStatusCode.NoContent, (await console.PutAsync($"/console/v1/projects/clinic/assets/contents/{Hash(b)}", new ByteArrayContent(b))).StatusCode);
-        var noNote = await console.PostAsJsonAsync("/console/v1/projects/clinic/assets/releases", new { files = new { }, channel = "production" });
+            Assert.Equal(HttpStatusCode.NoContent, (await console.PutAsync($"/p/clinic/_console/api/assets/contents/{Hash(b)}", new ByteArrayContent(b))).StatusCode);
+        var noNote = await console.PostAsJsonAsync("/p/clinic/_console/api/assets/releases", new { files = new { }, channel = "production" });
         Assert.Equal(HttpStatusCode.BadRequest, noNote.StatusCode);
-        var release = await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/assets/releases", new
+        var release = await Json(await console.PostAsJsonAsync("/p/clinic/_console/api/assets/releases", new
         {
             note = "First translations",
             channel = "production",
@@ -1322,43 +1308,43 @@ public class ServerTests(PostgresFixture pg)
         Assert.Equal(1, release.GetProperty("number").GetInt32());
 
         // Rules start as deny-all; published, they decide what apps list and read.
-        Assert.Equal(HttpStatusCode.NotFound, (await app.GetAsync("/projects/clinic/assets/v1/channels/beta")).StatusCode);
-        Assert.Equal(0, (await Json(await app.GetAsync("/projects/clinic/assets/v1/channels/production"))).GetProperty("files").GetArrayLength());
-        var parsed = await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/rules/text/parse", new { text = "match translations/{rest=**} { allow read; }" }));
-        await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/rules/assets", new { rulesJson = parsed.GetProperty("rulesJson").GetString(), note = "Translations are public" }));
-        var listing = await Json(await app.GetAsync("/projects/clinic/assets/v1/channels/production"));
+        Assert.Equal(HttpStatusCode.NotFound, (await app.GetAsync("/p/clinic/assets/v1/channels/beta")).StatusCode);
+        Assert.Equal(0, (await Json(await app.GetAsync("/p/clinic/assets/v1/channels/production"))).GetProperty("files").GetArrayLength());
+        var parsed = await Json(await console.PostAsJsonAsync("/p/clinic/_console/api/rules/text/parse", new { text = "match translations/{rest=**} { allow read; }" }));
+        await Json(await console.PostAsJsonAsync("/p/clinic/_console/api/rules/assets", new { rulesJson = parsed.GetProperty("rulesJson").GetString(), note = "Translations are public" }));
+        var listing = await Json(await app.GetAsync("/p/clinic/assets/v1/channels/production"));
         Assert.Equal("translations/en.json", Assert.Single(listing.GetProperty("files").EnumerateArray()).GetProperty("path").GetString());
-        Assert.Equal(HttpStatusCode.Forbidden, (await app.GetAsync("/projects/clinic/assets/v1/channels/production/files/staff/guide.html")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await app.GetAsync("/p/clinic/assets/v1/channels/production/files/staff/guide.html")).StatusCode);
 
         // A file: a signed link into the project's files folder.
-        var file = await app.GetAsync("/projects/clinic/assets/v1/channels/production/files/translations/en.json");
+        var file = await app.GetAsync("/p/clinic/assets/v1/channels/production/files/translations/en.json");
         Assert.Equal(HttpStatusCode.Redirect, file.StatusCode);
-        Assert.StartsWith("http://localhost/projects/clinic/files/v1/signed/", file.Headers.Location!.ToString());
+        Assert.StartsWith("http://localhost/p/clinic/_files/", file.Headers.Location!.ToString());
         var bytes = await app.GetByteArrayAsync(file.Headers.Location.PathAndQuery);
         Assert.Equal(en, bytes);
         Assert.Single(Directory.GetFiles(files, Hash(en), SearchOption.AllDirectories));
 
         // The console's view, and the overview's card.
-        var page = await Json(await console.GetAsync("/console/v1/projects/clinic/assets"));
+        var page = await Json(await console.GetAsync("/p/clinic/_console/api/assets"));
         Assert.Equal(1, Assert.Single(page.GetProperty("channels").EnumerateArray()).GetProperty("release").GetInt32());
-        var overview = await Json(await console.GetAsync("/console/v1/projects/clinic/overview"));
+        var overview = await Json(await console.GetAsync("/p/clinic/_console/api/overview"));
         Assert.Contains(overview.GetProperty("products").EnumerateArray(), p => p.GetProperty("id").GetString() == "assets" && p.GetProperty("on").GetBoolean());
-        Assert.True((await Json(await console.GetAsync("/console/v1/projects/clinic/access"))).GetProperty("capabilities").GetProperty("assets").GetBoolean());
+        Assert.True((await Json(await console.GetAsync("/p/clinic/_console/api/auth/state"))).GetProperty("capabilities").GetProperty("assets").GetBoolean());
 
         // CI publishes with a token scoped to assets: it reads releases to compare, and publishes; it can't move contents.
-        var token = (await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/tokens", new { name = "ci", scopes = new[] { "assets" }, days = 7 }))).GetProperty("secret").GetString();
+        var token = (await Json(await console.PostAsJsonAsync("/p/clinic/_console/api/tokens", new { name = "ci", scopes = new[] { "assets" }, days = 7 }))).GetProperty("secret").GetString();
         var ci = server.CreateClient();
         ci.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        await Json(await ci.GetAsync("/console/v1/projects/clinic/assets"));
-        await Json(await ci.GetAsync("/console/v1/projects/clinic/assets/releases/1"));
-        Assert.Equal(0, (await Json(await ci.PostAsJsonAsync("/console/v1/projects/clinic/assets/contents/missing", new { hashes = new[] { Hash(en) } }))).GetProperty("missing").GetArrayLength());
-        var second = await Json(await ci.PostAsJsonAsync("/console/v1/projects/clinic/assets/releases", new
+        await Json(await ci.GetAsync("/p/clinic/_console/api/assets"));
+        await Json(await ci.GetAsync("/p/clinic/_console/api/assets/releases/1"));
+        Assert.Equal(0, (await Json(await ci.PostAsJsonAsync("/p/clinic/_console/api/assets/contents/missing", new { hashes = new[] { Hash(en) } }))).GetProperty("missing").GetArrayLength());
+        var second = await Json(await ci.PostAsJsonAsync("/p/clinic/_console/api/assets/releases", new
         {
             note = "From CI", channel = "production",
             files = new Dictionary<string, object> { ["translations/en.json"] = new { hash = Hash(en), size = en.Length, mimeType = "" } },
         }));
         Assert.Equal(2, second.GetProperty("number").GetInt32());
-        Assert.False((await ci.GetAsync("/console/v1/projects/clinic/assets/location")).IsSuccessStatusCode);
+        Assert.False((await ci.GetAsync("/p/clinic/_console/api/assets/location")).IsSuccessStatusCode);
         Directory.Delete(files, recursive: true);
     }
 }
@@ -1380,12 +1366,12 @@ public class ServerEmailTests(PostgresFixture pg)
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
         var console = server.CreateClient();
-        await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" });
-        await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" });
+        await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" });
+        await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" });
         await TestProjects.CreateAsync(console, "clinic", "Clinic", "authentication");
 
         // The project's Authentication sends email to its app users; the console's invites don't use it.
-        var signin = await Json(await console.GetAsync("/console/v1/projects/clinic/auth/settings/signin"));
+        var signin = await Json(await console.GetAsync("/p/clinic/_console/api/app-auth/settings/signin"));
         var settings = System.Text.Json.Nodes.JsonNode.Parse(signin.GetProperty("settings").GetRawText())!;
         settings["email"] = new System.Text.Json.Nodes.JsonObject
         {
@@ -1393,9 +1379,9 @@ public class ServerEmailTests(PostgresFixture pg)
             ["resetLinkHours"] = 1, ["sender"] = "smtp",
             ["smtp"] = new System.Text.Json.Nodes.JsonObject { ["host"] = "127.0.0.1", ["port"] = smtp.Port, ["security"] = "none", ["username"] = "mailer", ["fromAddress"] = "no-reply@clinic.example" },
         };
-        await Json(await console.PutAsJsonAsync("/console/v1/projects/clinic/auth/settings/signin", new { settings, smtpPassword = "pw", reason = "Email" }));
+        await Json(await console.PutAsJsonAsync("/p/clinic/_console/api/app-auth/settings/signin", new { settings, smtpPassword = "pw", reason = "Email" }));
 
-        var invite = await Json(await console.PostAsJsonAsync("/console/v1/invites", new { email = "colleague@example.com", role = "Admin", expiresInHours = 72 }));
+        var invite = await Json(await console.PostAsJsonAsync("/_console/api/invites", new { email = "colleague@example.com", role = "Admin", expiresInHours = 72 }));
         Assert.False(invite.GetProperty("emailed").GetBoolean());
         Assert.Contains("/invite?token=", invite.GetProperty("link").GetString());
         Assert.Empty(smtp.Received);
@@ -1409,12 +1395,12 @@ public class ServerEmailTests(PostgresFixture pg)
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
         var console = server.CreateClient();
-        await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" });
-        await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" });
+        await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" });
+        await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" });
         await TestProjects.CreateAsync(console, "clinic", "Clinic");
 
         // Server settings → Authentication → Settings → Emails to users: the console accounts' SMTP server, its password encrypted.
-        var signin = await Json(await console.GetAsync("/console/v1/server/auth/settings/signin"));
+        var signin = await Json(await console.GetAsync("/_console/api/server/auth/settings/signin"));
         var settings = System.Text.Json.Nodes.JsonNode.Parse(signin.GetProperty("settings").GetRawText())!;
         settings["email"] = new System.Text.Json.Nodes.JsonObject
         {
@@ -1422,10 +1408,10 @@ public class ServerEmailTests(PostgresFixture pg)
             ["resetLinkHours"] = 1, ["sender"] = "smtp",
             ["smtp"] = new System.Text.Json.Nodes.JsonObject { ["host"] = "127.0.0.1", ["port"] = smtp.Port, ["security"] = "none", ["username"] = "console-mailer", ["fromAddress"] = "console@winche.example", ["fromName"] = "Winche" },
         };
-        await Json(await console.PutAsJsonAsync("/console/v1/server/auth/settings/signin", new { settings, smtpPassword = "pw", reason = "Console email" }));
+        await Json(await console.PutAsJsonAsync("/_console/api/server/auth/settings/signin", new { settings, smtpPassword = "pw", reason = "Console email" }));
 
         // Invites go through it.
-        Assert.True((await Json(await console.PostAsJsonAsync("/console/v1/invites", new { email = "colleague@example.com", role = "Admin", expiresInHours = 72 }))).GetProperty("emailed").GetBoolean());
+        Assert.True((await Json(await console.PostAsJsonAsync("/_console/api/invites", new { email = "colleague@example.com", role = "Admin", expiresInHours = 72 }))).GetProperty("emailed").GetBoolean());
         var (user, password, data) = Assert.Single(smtp.Received);
         Assert.Equal(("console-mailer", "pw"), (user, password));
         Assert.Contains("To: colleague@example.com", data);
@@ -1454,12 +1440,12 @@ public class ServerEmailTests(PostgresFixture pg)
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"),
             ("Winche:Email:Provider", "ses"), ("Winche:Email:Region", "eu-west-1"), ("Winche:Email:FromAddress", "no-reply@winche.example"));
         var console = server.CreateClient();
-        await Json(await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(console, "clinic", "Clinic", "authentication");
 
         // Console invites go out with nothing set up: no SMTP server, no keys saved.
-        Assert.True((await Json(await console.PostAsJsonAsync("/console/v1/invites", new { email = "colleague@example.com", role = "Admin", expiresInHours = 72 }))).GetProperty("emailed").GetBoolean());
+        Assert.True((await Json(await console.PostAsJsonAsync("/_console/api/invites", new { email = "colleague@example.com", role = "Admin", expiresInHours = 72 }))).GetProperty("emailed").GetBoolean());
         var invite = Assert.Single(ses.Sent);
         Assert.Equal("colleague@example.com", invite["Destination"]!["ToAddresses"]![0]!.GetValue<string>());
         Assert.Equal("Winche console <no-reply@winche.example>", invite["FromEmailAddress"]!.GetValue<string>());
@@ -1467,18 +1453,18 @@ public class ServerEmailTests(PostgresFixture pg)
         Assert.Contains("Credential=AKIDTESTONLY/", ses.Authorizations[0]);   // signed with the environment's credentials
 
         // A project's sign-in emails: the console offers the server's email, and sending through it needs no setup.
-        var config = await Json(await console.GetAsync("/console/v1/projects/clinic/auth/config"));
+        var config = await Json(await console.GetAsync("/p/clinic/_console/api/app-auth/config"));
         Assert.Equal("Amazon SES (eu-west-1) as no-reply@winche.example", config.GetProperty("serverEmail").GetString());
-        var signin = await Json(await console.GetAsync("/console/v1/projects/clinic/auth/settings/signin"));
+        var signin = await Json(await console.GetAsync("/p/clinic/_console/api/app-auth/settings/signin"));
         var settings = System.Text.Json.Nodes.JsonNode.Parse(signin.GetProperty("settings").GetRawText())!;
         settings["email"] = new System.Text.Json.Nodes.JsonObject
         {
             ["enabled"] = true, ["appName"] = "Clinic", ["sendVerificationOnSignUp"] = false, ["maxPerAddressPerHour"] = 5, ["verifyLinkHours"] = 24,
             ["resetLinkHours"] = 1, ["sender"] = "app",
         };
-        await Json(await console.PutAsJsonAsync("/console/v1/projects/clinic/auth/settings/signin", new { settings, reason = "Email through the server" }));
-        var user = await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/auth/users", new { email = "ann@example.com", password = "Ann-Passw0rd!" }));
-        Assert.True((await console.PostAsync($"/console/v1/projects/clinic/auth/users/{user.GetProperty("uid").GetString()}/sendPasswordReset", null)).IsSuccessStatusCode);
+        await Json(await console.PutAsJsonAsync("/p/clinic/_console/api/app-auth/settings/signin", new { settings, reason = "Email through the server" }));
+        var user = await Json(await console.PostAsJsonAsync("/p/clinic/_console/api/app-auth/users", new { email = "ann@example.com", password = "Ann-Passw0rd!" }));
+        Assert.True((await console.PostAsync($"/p/clinic/_console/api/app-auth/users/{user.GetProperty("uid").GetString()}/sendPasswordReset", null)).IsSuccessStatusCode);
         for (var i = 0; i < 100 && ses.Sent.Count < 2; i++) await Task.Delay(100);   // sent in the background
         var reset = ses.Sent[1];
         Assert.Equal("ann@example.com", reset["Destination"]!["ToAddresses"]![0]!.GetValue<string>());
@@ -1493,34 +1479,34 @@ public class ServerEmailTests(PostgresFixture pg)
         var projectsPath = Directory.CreateTempSubdirectory("winche-server-projects-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:ProjectsPath", projectsPath), ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(admin, "clinic", "Clinic");
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards", products = new[] { "storage" } }));
-        await Json(await admin.PostAsync("/console/v1/projects/wards/project/products/storage/start", null));
-        for (var i = 0; i < 100 && !(await Json(await admin.GetAsync("/console/v1/projects/wards/project"))).GetProperty("products").EnumerateArray().Any(p => p.GetProperty("id").GetString() == "storage" && p.GetProperty("ready").GetBoolean()); i++)
+        await Json(await admin.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards", products = new[] { "storage" } }));
+        await Json(await admin.PostAsync("/p/wards/_console/api/project/products/storage/start", null));
+        for (var i = 0; i < 100 && !(await Json(await admin.GetAsync("/p/wards/_console/api/project"))).GetProperty("products").EnumerateArray().Any(p => p.GetProperty("id").GetString() == "storage" && p.GetProperty("ready").GetBoolean()); i++)
             await Task.Delay(100);
 
         // Bob is the project's admin, not the server's.
-        var added = await Json(await admin.PostAsJsonAsync("/console/v1/projects/wards/members", new { email = "bob@example.com", role = "Admin" }));
+        var added = await Json(await admin.PostAsJsonAsync("/p/wards/_console/api/members", new { email = "bob@example.com", role = "Admin" }));
         var code = System.Web.HttpUtility.ParseQueryString(new Uri(added.GetProperty("link").GetString()!).Query)["code"];
-        await admin.PostAsJsonAsync("/console/v1/session/reset-password", new { code, newPassword = "Bob-Passw0rd!long" });
+        await admin.PostAsJsonAsync("/p/wards/_console/api/auth/reset-password", new { code, newPassword = "Bob-Passw0rd!long" });
         var bob = server.CreateClient();
-        await Json(await bob.PostAsJsonAsync("/console/v1/session/login", new { email = "bob@example.com", password = "Bob-Passw0rd!long" }));
+        await Json(await bob.PostAsJsonAsync("/p/wards/_console/api/auth/login", new { email = "bob@example.com", password = "Bob-Passw0rd!long" }));
 
         var keyless = new { kind = "s3", s3 = new { bucket = "server-bucket", region = "eu-west-1" } };
-        var refused = await bob.PostAsJsonAsync("/console/v1/projects/wards/settings/location/files/test", new { location = keyless });
+        var refused = await bob.PostAsJsonAsync("/p/wards/_console/api/settings/storage/location/test", new { location = keyless });
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
         Assert.Contains("only a server admin", await refused.Content.ReadAsStringAsync());
-        refused = await bob.PostAsJsonAsync("/console/v1/projects/wards/settings/location/files/move", new { location = keyless, reason = "Mine now" });
+        refused = await bob.PostAsJsonAsync("/p/wards/_console/api/settings/storage/location/move", new { location = keyless, reason = "Mine now" });
         Assert.Contains("only a server admin", await refused.Content.ReadAsStringAsync());
 
         // With a key of its own, his test is run (and fails here: there's no such bucket), not refused.
-        var keyed = await bob.PostAsJsonAsync("/console/v1/projects/wards/settings/location/files/test",
+        var keyed = await bob.PostAsJsonAsync("/p/wards/_console/api/settings/storage/location/test",
             new { location = new { kind = "s3", s3 = new { bucket = "wards-bucket", region = "eu-west-1", serviceUrl = "http://127.0.0.1:9", accessKey = "AKIDWARDS", forcePathStyle = true } }, secretKey = "s" });
         Assert.Equal(HttpStatusCode.OK, keyed.StatusCode);
         // The server admin may use the server's own credentials.
-        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsJsonAsync("/console/v1/projects/wards/settings/location/files/test",
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsJsonAsync("/p/wards/_console/api/settings/storage/location/test",
             new { location = new { kind = "s3", s3 = new { bucket = "server-bucket", region = "eu-west-1", serviceUrl = "http://127.0.0.1:9", forcePathStyle = true } } })).StatusCode);
         Directory.Delete(files, recursive: true);
     }
@@ -1531,17 +1517,17 @@ public class ServerEmailTests(PostgresFixture pg)
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
         var console = server.CreateClient();
-        await Json(await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(console, "clinic", "Clinic", "database", "authentication");
         var app = server.CreateClient();
 
         async Task<(string Uid, System.Net.WebSockets.WebSocket Socket)> Connect(string email)
         {
-            var session = await Json(await app.PostAsJsonAsync("/projects/clinic/auth/v1/signUp", new { email, password = "correct horse battery" }));
+            var session = await Json(await app.PostAsJsonAsync("/p/clinic/auth/v1/signUp", new { email, password = "correct horse battery" }));
             var token = session.GetProperty("accessToken").GetString()!;
             var ws = server.Server.CreateWebSocketClient();
-            var socket = await ws.ConnectAsync(new Uri(server.Server.BaseAddress, $"/projects/clinic/documents/v1/ws?access_token={token}"), CancellationToken.None);
+            var socket = await ws.ConnectAsync(new Uri(server.Server.BaseAddress, $"/p/clinic/documents/v1/ws?access_token={token}"), CancellationToken.None);
             return (session.GetProperty("user").GetProperty("uid").GetString()!, socket);
         }
 
@@ -1562,11 +1548,11 @@ public class ServerEmailTests(PostgresFixture pg)
 
         var (ann, annSocket) = await Connect("ann@example.com");
         Assert.Equal(System.Net.WebSockets.WebSocketState.Open, annSocket.State);
-        await Json(await console.PostAsJsonAsync($"/console/v1/projects/clinic/auth/users/{ann}/disabled", new { disabled = true }));
+        await Json(await console.PostAsJsonAsync($"/p/clinic/_console/api/app-auth/users/{ann}/disabled", new { disabled = true }));
         Assert.Equal((System.Net.WebSockets.WebSocketCloseStatus)4401, await ClosedWith(annSocket));
 
         var (bob, bobSocket) = await Connect("bob@example.com");
-        Assert.True((await console.DeleteAsync($"/console/v1/projects/clinic/auth/users/{bob}")).IsSuccessStatusCode);
+        Assert.True((await console.DeleteAsync($"/p/clinic/_console/api/app-auth/users/{bob}")).IsSuccessStatusCode);
         Assert.Equal((System.Net.WebSockets.WebSocketCloseStatus)4401, await ClosedWith(bobSocket));
         Directory.Delete(files, recursive: true);
     }
@@ -1579,14 +1565,14 @@ public class ServerEmailTests(PostgresFixture pg)
         var projectsPath = Directory.CreateTempSubdirectory("winche-server-projects-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"), ("Winche:ProjectsPath", projectsPath));
         var console = server.CreateClient();
-        await Json(await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(console, "clinic", "Clinic");
-        await Json(await console.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards", products = new[] { "functions" } }));
-        await Json(await console.PostAsync("/console/v1/projects/wards/project/products/functions/start", null));
-        for (var i = 0; i < 100 && !(await Json(await console.GetAsync("/console/v1/projects/wards/project"))).GetProperty("products").EnumerateArray().Any(p => p.GetProperty("id").GetString() == "functions" && p.GetProperty("ready").GetBoolean()); i++)
+        await Json(await console.PostAsJsonAsync("/_console/api/projects", new { name = "Wards", id = "wards", products = new[] { "functions" } }));
+        await Json(await console.PostAsync("/p/wards/_console/api/project/products/functions/start", null));
+        for (var i = 0; i < 100 && !(await Json(await console.GetAsync("/p/wards/_console/api/project"))).GetProperty("products").EnumerateArray().Any(p => p.GetProperty("id").GetString() == "functions" && p.GetProperty("ready").GetBoolean()); i++)
             await Task.Delay(100);
-        await Json(await console.PostAsJsonAsync("/console/v1/projects/wards/functions/deploy", new { note = "Hook", files = new Dictionary<string, string>
+        await Json(await console.PostAsJsonAsync("/p/wards/_console/api/functions/deploy", new { note = "Hook", files = new Dictionary<string, string>
         {
             ["index.ts"] = """
                 import { http } from "@winche/functions";
@@ -1594,8 +1580,8 @@ public class ServerEmailTests(PostgresFixture pg)
                 """,
         } }));
         var anyone = server.CreateClient();
-        var answer = await Json(await anyone.PostAsync("/projects/wards/functions/v1/http/hook/x", new StringContent("hello")));
-        Assert.Equal(("POST", "/projects/wards/functions/v1/http/hook/x", "hello"),
+        var answer = await Json(await anyone.PostAsync("/p/wards/functions/v1/http/hook/x", new StringContent("hello")));
+        Assert.Equal(("POST", "/p/wards/functions/v1/http/hook/x", "hello"),
             (answer.GetProperty("method").GetString(), answer.GetProperty("path").GetString(), answer.GetProperty("body").GetString()));
         Directory.Delete(files, recursive: true);
     }
@@ -1607,22 +1593,22 @@ public class ServerEmailTests(PostgresFixture pg)
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(admin, "clinic", "Clinic", "functions");
 
         var font = new byte[2_000_000];
         new Random(7).NextBytes(font);
         var text = "Hallo"u8.ToArray();
         string Hash(byte[] b) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(b));
-        var missing = await Json(await admin.PostAsJsonAsync("/console/v1/projects/clinic/functions/resources/missing", new { hashes = new[] { Hash(font), Hash(text) } }));
+        var missing = await Json(await admin.PostAsJsonAsync("/p/clinic/_console/api/functions/resources/missing", new { hashes = new[] { Hash(font), Hash(text) } }));
         Assert.Equal(2, missing.GetProperty("missing").GetArrayLength());
 
         // A torn upload is refused; whole ones are kept, once.
-        var torn = await admin.PutAsync($"/console/v1/projects/clinic/functions/resources/{Hash(font)}", new ByteArrayContent(font[..1000]));
+        var torn = await admin.PutAsync($"/p/clinic/_console/api/functions/resources/{Hash(font)}", new ByteArrayContent(font[..1000]));
         Assert.Equal(HttpStatusCode.BadRequest, torn.StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/console/v1/projects/clinic/functions/resources/{Hash(font)}", new ByteArrayContent(font))).StatusCode);
-        missing = await Json(await admin.PostAsJsonAsync("/console/v1/projects/clinic/functions/resources/missing", new { hashes = new[] { Hash(font), Hash(text) } }));
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/p/clinic/_console/api/functions/resources/{Hash(font)}", new ByteArrayContent(font))).StatusCode);
+        missing = await Json(await admin.PostAsJsonAsync("/p/clinic/_console/api/functions/resources/missing", new { hashes = new[] { Hash(font), Hash(text) } }));
         Assert.Equal([Hash(text)], missing.GetProperty("missing").EnumerateArray().Select(h => h.GetString()));
 
         var code = new Dictionary<string, string>
@@ -1633,15 +1619,15 @@ public class ServerEmailTests(PostgresFixture pg)
                 """,
         };
         var resources = new Dictionary<string, object> { ["fonts/a.ttf"] = new { hash = Hash(font), size = font.Length }, ["de/hello.txt"] = new { hash = Hash(text), size = text.Length } };
-        var refused = await admin.PostAsJsonAsync("/console/v1/projects/clinic/functions/deploy", new { note = "Too soon", files = code, resources });
+        var refused = await admin.PostAsJsonAsync("/p/clinic/_console/api/functions/deploy", new { note = "Too soon", files = code, resources });
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
         Assert.Contains("resources/de/hello.txt", await refused.Content.ReadAsStringAsync());
 
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/console/v1/projects/clinic/functions/resources/{Hash(text)}", new ByteArrayContent(text))).StatusCode);
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects/clinic/functions/deploy", new { note = "Resources", files = code, resources }));
-        var page = await Json(await admin.GetAsync("/console/v1/projects/clinic/functions"));
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/p/clinic/_console/api/functions/resources/{Hash(text)}", new ByteArrayContent(text))).StatusCode);
+        await Json(await admin.PostAsJsonAsync("/p/clinic/_console/api/functions/deploy", new { note = "Resources", files = code, resources }));
+        var page = await Json(await admin.GetAsync("/p/clinic/_console/api/functions"));
         Assert.Equal(["de/hello.txt", "fonts/a.ttf"], page.GetProperty("resources").EnumerateArray().Select(a => a.GetProperty("path").GetString()));
-        var ran = await Json(await admin.PostAsJsonAsync("/console/v1/projects/clinic/functions/run", new { name = "read" }));
+        var ran = await Json(await admin.PostAsJsonAsync("/p/clinic/_console/api/functions/run", new { name = "read" }));
         Assert.Equal(("Hallo", 2_000_000), (ran.GetProperty("result").GetProperty("text").GetString(), ran.GetProperty("result").GetProperty("font").GetInt32()));
         Directory.Delete(files, recursive: true);
     }
@@ -1653,62 +1639,62 @@ public class ServerEmailTests(PostgresFixture pg)
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(admin, "wards", "Wards", "functions", "storage");
-        var added = await Json(await admin.PostAsJsonAsync("/console/v1/projects/wards/members", new { email = "bob@example.com", role = "Admin" }));
+        var added = await Json(await admin.PostAsJsonAsync("/p/wards/_console/api/members", new { email = "bob@example.com", role = "Admin" }));
         var code = System.Web.HttpUtility.ParseQueryString(new Uri(added.GetProperty("link").GetString()!).Query)["code"];
-        await admin.PostAsJsonAsync("/console/v1/session/reset-password", new { code, newPassword = "Bob-Passw0rd!long" });
+        await admin.PostAsJsonAsync("/p/wards/_console/api/auth/reset-password", new { code, newPassword = "Bob-Passw0rd!long" });
         var bob = server.CreateClient();   // the project's admin, not the server's
-        await Json(await bob.PostAsJsonAsync("/console/v1/session/login", new { email = "bob@example.com", password = "Bob-Passw0rd!long" }));
+        await Json(await bob.PostAsJsonAsync("/p/wards/_console/api/auth/login", new { email = "bob@example.com", password = "Bob-Passw0rd!long" }));
 
-        var sources = await Json(await bob.GetAsync("/console/v1/projects/wards/secrets/sources"));
+        var sources = await Json(await bob.GetAsync("/p/wards/_console/api/secrets/sources"));
         Assert.Equal(["aws-sm", "aws-ssm"], sources.GetProperty("sources").EnumerateArray().Select(x => x.GetProperty("name").GetString()));
         Assert.False(sources.GetProperty("appCredentials").GetBoolean());
         var key = Assert.Single(sources.GetProperty("keys").EnumerateArray());
         Assert.Equal(("secrets.source.aws", false), (key.GetProperty("name").GetString(), key.GetProperty("isSet").GetBoolean()));
-        Assert.True((await Json(await admin.GetAsync("/console/v1/projects/wards/secrets/sources"))).GetProperty("appCredentials").GetBoolean());
+        Assert.True((await Json(await admin.GetAsync("/p/wards/_console/api/secrets/sources"))).GetProperty("appCredentials").GetBoolean());
 
         // Read with the server's credentials: only its admin may.
         var reference = new { reference = "aws-ssm:/wards/mail-key" };
-        var refused = await bob.PutAsJsonAsync("/console/v1/projects/wards/functions/secrets/MAIL_KEY", reference);
+        var refused = await bob.PutAsJsonAsync("/p/wards/_console/api/functions/secrets/MAIL_KEY", reference);
         Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
         Assert.Contains("server's own credentials", await refused.Content.ReadAsStringAsync());
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/console/v1/projects/wards/functions/secrets/MAIL_KEY", reference)).StatusCode);
-        var listed = (await Json(await bob.GetAsync("/console/v1/projects/wards/functions/secrets"))).GetProperty("secrets").EnumerateArray().Single(x => x.GetProperty("name").GetString() == "MAIL_KEY");
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/p/wards/_console/api/functions/secrets/MAIL_KEY", reference)).StatusCode);
+        var listed = (await Json(await bob.GetAsync("/p/wards/_console/api/functions/secrets"))).GetProperty("secrets").EnumerateArray().Single(x => x.GetProperty("name").GetString() == "MAIL_KEY");
         Assert.Equal("aws-ssm:/wards/mail-key", listed.GetProperty("reference").GetString());
 
         // A bucket's secret key may be a reference too: the same rule.
         var bucket = new { kind = "s3", s3 = new { bucket = "wards-bucket", region = "eu-west-1", serviceUrl = "http://127.0.0.1:9", accessKey = "AKIDWARDS", forcePathStyle = true } };
-        Assert.Equal(HttpStatusCode.Forbidden, (await bob.PostAsJsonAsync("/console/v1/projects/wards/settings/location/files/test",
+        Assert.Equal(HttpStatusCode.Forbidden, (await bob.PostAsJsonAsync("/p/wards/_console/api/settings/storage/location/test",
             new { location = bucket, secretKeyReference = "aws-ssm:/wards/bucket-key" })).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await bob.PostAsJsonAsync("/console/v1/projects/wards/settings/location/files/test",
+        Assert.Equal(HttpStatusCode.BadRequest, (await bob.PostAsJsonAsync("/p/wards/_console/api/settings/storage/location/test",
             new { location = bucket, secretKey = "s", secretKeyReference = "aws-ssm:/wards/bucket-key" })).StatusCode);
 
         // With the project's own AWS key, its admins may (and the key is never shown).
-        Assert.Equal(HttpStatusCode.BadRequest, (await bob.PutAsJsonAsync("/console/v1/projects/wards/secrets/keys/secrets.source.aws",
+        Assert.Equal(HttpStatusCode.BadRequest, (await bob.PutAsJsonAsync("/p/wards/_console/api/secrets/keys/secrets.source.aws",
             new { values = new Dictionary<string, string> { ["accessKeyId"] = "AKIDWARDS" } })).StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, (await bob.PutAsJsonAsync("/console/v1/projects/wards/secrets/keys/secrets.source.aws",
+        Assert.Equal(HttpStatusCode.NoContent, (await bob.PutAsJsonAsync("/p/wards/_console/api/secrets/keys/secrets.source.aws",
             new { values = new Dictionary<string, string> { ["accessKeyId"] = "AKIDWARDS", ["secretAccessKey"] = "wards-secret", ["region"] = "eu-west-2" } })).StatusCode);
-        var withKey = await bob.GetStringAsync("/console/v1/projects/wards/secrets/sources");
+        var withKey = await bob.GetStringAsync("/p/wards/_console/api/secrets/sources");
         Assert.DoesNotContain("wards-secret", withKey);
         Assert.Contains("\"isSet\":true", withKey);
-        Assert.Equal(HttpStatusCode.NoContent, (await bob.PutAsJsonAsync("/console/v1/projects/wards/functions/secrets/SES_SECRET",
+        Assert.Equal(HttpStatusCode.NoContent, (await bob.PutAsJsonAsync("/p/wards/_console/api/functions/secrets/SES_SECRET",
             new { reference = "aws-sm:arn:aws:secretsmanager:eu-west-2:123456789012:secret:wards/ses-AbCdEf#secretAccessKey" })).StatusCode);
 
         // What isn't a reference here says why; a value still works.
-        var unknown = await bob.PutAsJsonAsync("/console/v1/projects/wards/functions/secrets/OTHER", new { reference = "vault:/x" });
+        var unknown = await bob.PutAsJsonAsync("/p/wards/_console/api/functions/secrets/OTHER", new { reference = "vault:/x" });
         Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
         Assert.Contains("use aws-sm or aws-ssm", await unknown.Content.ReadAsStringAsync());
-        var tried = await Json(await bob.PostAsJsonAsync("/console/v1/projects/wards/secrets/test", new { reference = "aws-sm:arn:aws:s3:::bucket" }));
+        var tried = await Json(await bob.PostAsJsonAsync("/p/wards/_console/api/secrets/test", new { reference = "aws-sm:arn:aws:s3:::bucket" }));
         Assert.False(tried.GetProperty("ok").GetBoolean());
         Assert.Contains("isn't a Secrets Manager ARN", tried.GetProperty("problem").GetString());
-        Assert.Equal(HttpStatusCode.NoContent, (await bob.PutAsJsonAsync("/console/v1/projects/wards/functions/secrets/OTHER", new { value = "plain" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await bob.PutAsJsonAsync("/p/wards/_console/api/functions/secrets/OTHER", new { value = "plain" })).StatusCode);
         // The Secrets page's list of what the products keep: functions' own and the source keys are listed elsewhere.
-        var kept = await Json(await bob.GetAsync("/console/v1/projects/wards/secrets"));
+        var kept = await Json(await bob.GetAsync("/p/wards/_console/api/secrets"));
         Assert.True(kept.GetProperty("available").GetBoolean());
         Assert.DoesNotContain(kept.GetProperty("secrets").EnumerateArray(), x => x.GetProperty("name").GetString()!.StartsWith("functions.secret.") || x.GetProperty("name").GetString()!.StartsWith("secrets.source."));
-        Assert.Equal(HttpStatusCode.NoContent, (await bob.DeleteAsync("/console/v1/projects/wards/secrets/keys/secrets.source.aws")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await bob.DeleteAsync("/p/wards/_console/api/secrets/keys/secrets.source.aws")).StatusCode);
         Directory.Delete(files, recursive: true);
     }
 
@@ -1719,10 +1705,10 @@ public class ServerEmailTests(PostgresFixture pg)
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = server.CreateClient();
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/_console/api/auth/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(admin, "clinic", "Clinic", "functions");
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects/clinic/functions/deploy", new { note = "Jobs", files = new Dictionary<string, string>
+        await Json(await admin.PostAsJsonAsync("/p/clinic/_console/api/functions/deploy", new { note = "Jobs", files = new Dictionary<string, string>
         {
             ["index.ts"] = """
                 import { callable, schedule } from "@winche/functions";
@@ -1732,7 +1718,7 @@ public class ServerEmailTests(PostgresFixture pg)
         } }));
         async Task<(int Max, int Quick, int Backfill)> Times()
         {
-            var page = await Json(await admin.GetAsync("/console/v1/projects/clinic/functions"));
+            var page = await Json(await admin.GetAsync("/p/clinic/_console/api/functions"));
             int T(string n) => page.GetProperty("current").GetProperty("functions").EnumerateArray().Single(f => f.GetProperty("name").GetString() == n).GetProperty("timeoutSeconds").GetInt32();
             return (page.GetProperty("maxTimeoutSeconds").GetInt32(), T("quick"), T("backfill"));
         }
@@ -1740,40 +1726,40 @@ public class ServerEmailTests(PostgresFixture pg)
 
         // The project: a longer default, and the backfill's own time, up to the server's longest.
         var settings = System.Text.Json.Nodes.JsonNode.Parse("""{ "defaultTimeoutSeconds": 120, "timeouts": { "backfill": 1800 } }""")!;
-        var refused = await admin.PutAsJsonAsync("/console/v1/projects/clinic/settings/functions", new { settings, reason = "Longer backfill" });
+        var refused = await admin.PutAsJsonAsync("/p/clinic/_console/api/settings/functions", new { settings, reason = "Longer backfill" });
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
         Assert.Contains("backfill: 1 second to 9 minutes", await refused.Content.ReadAsStringAsync());
 
         // The server allows longer runs: in force at once, with no restart.
-        var page = await Json(await admin.GetAsync("/console/v1/server/settings"));
+        var page = await Json(await admin.GetAsync("/_console/api/server/settings"));
         var server1 = System.Text.Json.Nodes.JsonNode.Parse(page.GetProperty("settings").GetRawText())!.AsObject();
         server1["functionsMaxMinutes"] = 61;
-        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = server1, reason = "x" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = server1, reason = "x" })).StatusCode);
         server1["functionsMaxMinutes"] = 45;
-        await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = server1, reason = "Long backfills" }));
+        await Json(await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = server1, reason = "Long backfills" }));
         for (var i = 0; i < 100 && (await Times()).Max != 2700; i++) await Task.Delay(100);
-        await Json(await admin.PutAsJsonAsync("/console/v1/projects/clinic/settings/functions", new { settings, reason = "Longer backfill" }));
+        await Json(await admin.PutAsJsonAsync("/p/clinic/_console/api/settings/functions", new { settings, reason = "Longer backfill" }));
         for (var i = 0; i < 100 && (await Times()).Quick != 120; i++) await Task.Delay(100);
         Assert.Equal((2700, 120, 1800), await Times());
 
         // Runs at once and memory: the server's limits reach the project at once; the functions memory is reported.
         Assert.True(page.GetProperty("functionsMemory").GetProperty("totalMb").GetInt32() > 0);
         server1["functionsMaxConcurrency"] = 0;
-        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = server1, reason = "x" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = server1, reason = "x" })).StatusCode);
         server1["functionsMaxConcurrency"] = 8;
         server1["functionsMaxMemoryMb"] = 512;
-        await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = server1, reason = "Smaller tasks" }));
-        for (var i = 0; i < 100 && (await Json(await admin.GetAsync("/console/v1/projects/clinic/functions"))).GetProperty("maxConcurrency").GetInt32() != 8; i++) await Task.Delay(100);
-        var limits = await Json(await admin.GetAsync("/console/v1/projects/clinic/functions"));
+        await Json(await admin.PutAsJsonAsync("/_console/api/server/settings", new { settings = server1, reason = "Smaller tasks" }));
+        for (var i = 0; i < 100 && (await Json(await admin.GetAsync("/p/clinic/_console/api/functions"))).GetProperty("maxConcurrency").GetInt32() != 8; i++) await Task.Delay(100);
+        var limits = await Json(await admin.GetAsync("/p/clinic/_console/api/functions"));
         Assert.Equal((8, 512), (limits.GetProperty("maxConcurrency").GetInt32(), limits.GetProperty("maxMemoryMb").GetInt32()));
 
         // quick's instances on this server: a callable keeps one loaded.
-        var instances = await Json(await admin.GetAsync("/console/v1/projects/clinic/functions/quick/instances"));
+        var instances = await Json(await admin.GetAsync("/p/clinic/_console/api/functions/quick/instances"));
         Assert.Equal(1, instances.GetProperty("limits").GetProperty("minInstances").GetInt32());
         Assert.Equal(8, instances.GetProperty("limits").GetProperty("maxInstances").GetInt32());   // the default 10, held to the server's 8
         Assert.False(instances.GetProperty("process").GetProperty("own").GetBoolean());
         Assert.Equal(0, instances.GetProperty("otherServers").GetArrayLength());   // one server
-        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/console/v1/projects/clinic/functions/nothing/instances")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/p/clinic/_console/api/functions/nothing/instances")).StatusCode);
         Directory.Delete(files, recursive: true);
     }
 }

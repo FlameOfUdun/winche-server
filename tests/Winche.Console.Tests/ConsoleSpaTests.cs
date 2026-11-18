@@ -15,10 +15,10 @@ public class ConsoleSpaTests(PostgresFixture fx) : IAsyncLifetime
         using var app = new ConsoleAppFactory(fx);
         using var client = app.CreateClient();
 
-        var resp = await client.GetAsync("/console");
+        var resp = await client.GetAsync("/_console");
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         var html = await resp.Content.ReadAsStringAsync();
-        Assert.Contains("<base href=\"/console/\">", html);   // no path base here
+        Assert.Contains("<base href=\"/_console/\">", html);   // no path base here
         Assert.Contains("id=\"root\"", html);
     }
 
@@ -28,7 +28,7 @@ public class ConsoleSpaTests(PostgresFixture fx) : IAsyncLifetime
         using var app = new ConsoleAppFactory(fx);
         using var client = app.CreateClient();
 
-        var resp = await client.GetAsync("/console");
+        var resp = await client.GetAsync("/_console");
         var html = await resp.Content.ReadAsStringAsync();
         // Cloudflare Rocket Loader rewrites type="module" and breaks the SPA; the bootstrap script tag
         // must carry the data-cfasync="false" opt-out so module loading survives behind Cloudflare.
@@ -41,7 +41,7 @@ public class ConsoleSpaTests(PostgresFixture fx) : IAsyncLifetime
         using var app = new ConsoleAppFactory(fx);
         using var client = app.CreateClient();
 
-        var resp = await client.GetAsync("/console/data/users");   // client-side route
+        var resp = await client.GetAsync("/_console/data/users");   // client-side route
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         Assert.Contains("id=\"root\"", await resp.Content.ReadAsStringAsync());
     }

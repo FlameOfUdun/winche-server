@@ -7,8 +7,8 @@ using Winche.Console.Identity;
 
 namespace Winche.Console.Api;
 
-/// <summary>Invite management (Admin) under <c>/invites</c> + anonymous acceptance under
-/// <c>/invites/accept</c>. The user account is created only on accept.</summary>
+/// <summary>Invite management (Admin) under <c>/api/invites</c> + anonymous acceptance under
+/// <c>/api/invites/accept</c>. The user account is created only on accept.</summary>
 public static class InviteEndpoints
 {
     public sealed record CreateInviteRequest(string Email, string Role, string? FirstName, string? LastName,
@@ -17,7 +17,7 @@ public static class InviteEndpoints
 
     public static IEndpointRouteBuilder MapInviteEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/invites").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var group = app.MapGroup("/api/invites").RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         group.MapGet("/", async (ConsoleStore db) =>
         {
@@ -103,7 +103,7 @@ public static class InviteEndpoints
             return Results.NoContent();
         });
 
-        var accept = app.MapGroup("/invites/accept");
+        var accept = app.MapGroup("/api/invites/accept");
 
         accept.MapGet("/", async (string? token, ConsoleStore db, ConsoleInviteTokens tokens, ConsoleAccounts accounts, CancellationToken ct) =>
         {

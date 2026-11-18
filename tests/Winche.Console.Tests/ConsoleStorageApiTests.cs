@@ -32,16 +32,16 @@ public class ConsoleStorageApiTests(PostgresFixture fx) : IAsyncLifetime
         await client.SetupAdminAsync();
         await client.LoginAsync();
 
-        var browse = await client.GetAsync("/console/v1/files/browse?path=");
+        var browse = await client.GetAsync("/_console/api/storage/browse?path=");
         Assert.Equal(HttpStatusCode.OK, browse.StatusCode);
         Assert.Contains("docs", await browse.Content.ReadAsStringAsync());   // "docs" appears as a folder
 
-        var get = await client.GetAsync($"/console/v1/files/files/{B64("docs/a.txt")}");
+        var get = await client.GetAsync($"/_console/api/storage/files/{B64("docs/a.txt")}");
         Assert.Equal(HttpStatusCode.OK, get.StatusCode);
 
-        var del = await client.DeleteAsync($"/console/v1/files/files/{B64("docs/a.txt")}");
+        var del = await client.DeleteAsync($"/_console/api/storage/files/{B64("docs/a.txt")}");
         Assert.Equal(HttpStatusCode.NoContent, del.StatusCode);
-        var after = await client.GetAsync($"/console/v1/files/files/{B64("docs/a.txt")}");
+        var after = await client.GetAsync($"/_console/api/storage/files/{B64("docs/a.txt")}");
         Assert.Equal(HttpStatusCode.NotFound, after.StatusCode);
     }
 
@@ -61,13 +61,13 @@ public class ConsoleStorageApiTests(PostgresFixture fx) : IAsyncLifetime
         await client.SetupAdminAsync();
         await client.LoginAsync();
 
-        var del = await client.DeleteAsync($"/console/v1/files/directories/{B64("docs")}");
+        var del = await client.DeleteAsync($"/_console/api/storage/directories/{B64("docs")}");
         Assert.Equal(HttpStatusCode.NoContent, del.StatusCode);
 
         // Everything under docs/ is gone; the sibling directory is untouched.
-        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/console/v1/files/files/{B64("docs/a.txt")}")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/console/v1/files/files/{B64("docs/sub/b.txt")}")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"/console/v1/files/files/{B64("other/c.txt")}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/_console/api/storage/files/{B64("docs/a.txt")}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/_console/api/storage/files/{B64("docs/sub/b.txt")}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"/_console/api/storage/files/{B64("other/c.txt")}")).StatusCode);
     }
 
     [Fact]
@@ -80,24 +80,24 @@ public class ConsoleStorageApiTests(PostgresFixture fx) : IAsyncLifetime
         await client.LoginAsync();
 
         // Create the record + get a presigned upload URL (the SPA would PUT the bytes to it).
-        var up = await client.PostAsJsonAsync("/console/v1/files/upload-url",
+        var up = await client.PostAsJsonAsync("/_console/api/storage/upload-url",
             new { path = "uploads/report.pdf", mimeType = "application/pdf", sizeBytes = 1024, metadata = new { author = "alice" } });
         Assert.Equal(HttpStatusCode.OK, up.StatusCode);
         Assert.Contains("uploadUrl", await up.Content.ReadAsStringAsync());
 
         // Confirm marks the upload complete; the record is then browsable.
-        var confirm = await client.PostAsJsonAsync("/console/v1/files/confirm", new { path = "uploads/report.pdf" });
+        var confirm = await client.PostAsJsonAsync("/_console/api/storage/confirm", new { path = "uploads/report.pdf" });
         Assert.Equal(HttpStatusCode.OK, confirm.StatusCode);
-        var get = await client.GetAsync($"/console/v1/files/files/{B64("uploads/report.pdf")}");
+        var get = await client.GetAsync($"/_console/api/storage/files/{B64("uploads/report.pdf")}");
         Assert.Equal(HttpStatusCode.OK, get.StatusCode);
 
         // Presigned download URL.
-        var dl = await client.GetAsync($"/console/v1/files/download-url?path={Uri.EscapeDataString("uploads/report.pdf")}");
+        var dl = await client.GetAsync($"/_console/api/storage/download-url?path={Uri.EscapeDataString("uploads/report.pdf")}");
         Assert.Equal(HttpStatusCode.OK, dl.StatusCode);
         Assert.Contains("downloadUrl", await dl.Content.ReadAsStringAsync());
 
         // Edit metadata.
-        var meta = await client.PostAsJsonAsync("/console/v1/files/metadata",
+        var meta = await client.PostAsJsonAsync("/_console/api/storage/metadata",
             new { path = "uploads/report.pdf", metadata = new { author = "bob", reviewed = true } });
         Assert.Equal(HttpStatusCode.OK, meta.StatusCode);
         Assert.Contains("bob", await meta.Content.ReadAsStringAsync());

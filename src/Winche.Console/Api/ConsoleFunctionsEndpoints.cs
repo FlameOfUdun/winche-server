@@ -58,7 +58,7 @@ public static class ConsoleFunctionsEndpoints
 
     public static IEndpointRouteBuilder MapConsoleFunctionsEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/functions").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var group = app.MapGroup("/api/functions").RequireAuthorization(ConsoleRoles.AdminPolicy);
         var ci = new ConsoleCiScope(ConsoleCiScope.Functions);   // what a CI token may call
 
         group.MapGet("", async (WincheFunctions functions, FunctionsOptions options, IServiceProvider sp, CancellationToken ct) =>

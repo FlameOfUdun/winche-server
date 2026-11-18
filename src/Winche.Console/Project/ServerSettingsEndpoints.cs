@@ -67,7 +67,7 @@ public static class ServerSettingsEndpoints
 
     internal static IEndpointRouteBuilder MapConsoleServerSettingsEndpoints(this IEndpointRouteBuilder app, Options.ConsoleOptions options)
     {
-        var group = app.MapGroup("/server").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        var group = app.MapGroup("/api/server").RequireAuthorization(ConsoleRoles.AdminPolicy);
 
         group.MapGet("/settings", async (HttpContext http, CancellationToken ct) =>
         {
@@ -143,7 +143,7 @@ public static class ServerSettingsEndpoints
                 ? await options.ServerSettings!.ConsoleProviderSecretAsync(s.Id, ct) : body.ClientSecret;
             return Results.Json(new
             {
-                url = "v1/session/oidc/start?test=" + Uri.EscapeDataString(Identity.ConsoleOidc.ProtectTest(http.RequestServices, s, secret)),
+                url = "api/auth/oidc/start?test=" + Uri.EscapeDataString(Identity.ConsoleOidc.ProtectTest(http.RequestServices, s, secret)),
                 callbackUrl = options.ServerSettings!.ConsoleSignInCallbackUrl,
             });
         });

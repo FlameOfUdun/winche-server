@@ -35,14 +35,14 @@ public class ConsoleHistoryTests(PostgresFixture fx) : IAsyncLifetime
         await admin.SetupAdminAsync();
         await admin.LoginAsync();
 
-        await Json(await admin.PutAsJsonAsync($"/console/v1/documents/documents/{B64("people/p1")}",
+        await Json(await admin.PutAsJsonAsync($"/_console/api/database/documents/{B64("people/p1")}",
             new { fields = new { name = new { stringValue = "Ann" } } }));
-        await Json(await admin.PutAsJsonAsync($"/console/v1/documents/documents/{B64("people/p1")}",
+        await Json(await admin.PutAsJsonAsync($"/_console/api/database/documents/{B64("people/p1")}",
             new { fields = new { name = new { stringValue = "Annie" }, phone = new { stringValue = "123" } } }));
-        await Json(await admin.PutAsJsonAsync($"/console/v1/documents/documents/{B64("teams/t1")}",
+        await Json(await admin.PutAsJsonAsync($"/_console/api/database/documents/{B64("teams/t1")}",
             new { fields = new { name = new { stringValue = "Red" } } }));
 
-        var history = await Json(await admin.GetAsync("/console/v1/documents/history?path=people/p1"));
+        var history = await Json(await admin.GetAsync("/_console/api/database/history?path=people/p1"));
         var entries = history.GetProperty("entries").EnumerateArray().ToArray();
         Assert.Equal(2, entries.Length);
         Assert.Equal("modified", entries[0].GetProperty("type").GetString());
@@ -53,12 +53,12 @@ public class ConsoleHistoryTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Equal("Annie", fields[0].GetProperty("after").GetProperty("stringValue").GetString());
         Assert.Equal("added", entries[1].GetProperty("type").GetString());
 
-        var under = await Json(await admin.GetAsync("/console/v1/documents/history?under=teams"));
+        var under = await Json(await admin.GetAsync("/_console/api/database/history?under=teams"));
         Assert.Equal(["teams/t1"], under.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("path").GetString()!));
-        var paged = await Json(await admin.GetAsync($"/console/v1/documents/history?limit=1&before={entries[0].GetProperty("seq").GetInt64()}"));
+        var paged = await Json(await admin.GetAsync($"/_console/api/database/history?limit=1&before={entries[0].GetProperty("seq").GetInt64()}"));
         Assert.Equal("people/p1", paged.GetProperty("entries")[0].GetProperty("path").GetString());
 
-        var state = await Json(await admin.GetAsync("/console/v1/session/state"));
+        var state = await Json(await admin.GetAsync("/_console/api/auth/state"));
         Assert.True(state.GetProperty("capabilities").GetProperty("history").GetBoolean());
     }
 
@@ -71,9 +71,9 @@ public class ConsoleHistoryTests(PostgresFixture fx) : IAsyncLifetime
         await app.Services.GetRequiredService<Winche.Console.Identity.ConsoleAccounts>().CreateAsync("viewer@example.com", "Passw0rd!", null, null, ConsoleRoles.Viewer);
         using var client = app.CreateClient();
         await client.LoginAsync("viewer@example.com", "Passw0rd!");
-        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/console/v1/documents/history")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/_console/api/database/history")).StatusCode);
 
         using var anon = app.CreateClient();
-        Assert.Equal(HttpStatusCode.Unauthorized, (await anon.GetAsync("/console/v1/documents/history")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anon.GetAsync("/_console/api/database/history")).StatusCode);
     }
 }

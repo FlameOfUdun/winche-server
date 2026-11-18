@@ -113,7 +113,7 @@ app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(async () =>
         {
             try
             {
-                (await http.GetAsync($"{ServerOptions.ProjectsPrefix}/{host.Project.Id}/.well-known/winche")).Dispose();
+                (await http.GetAsync($"/p/{host.Project.Id}/.well-known/winche")).Dispose();
                 if (host.App.Services.GetService<Winche.Functions.WincheFunctions>() is { } functions)
                 {
                     await functions.RefreshAsync();
