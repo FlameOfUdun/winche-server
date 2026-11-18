@@ -1596,7 +1596,7 @@ public class ServerEmailTests(PostgresFixture pg)
         await Json(await console.PostAsJsonAsync("/console/v1/projects/wards/functions/deploy", new { note = "Hook", files = new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { http } from "@winche/functions";
+                import { http } from "@winche/functions"; import * as admin from "@winche/admin";
                 export const hook = http.onRequest(async (req) => ({ method: req.method, path: new URL(req.url).pathname, body: await req.text() }));
                 """,
         } }));
@@ -1635,8 +1635,9 @@ public class ServerEmailTests(PostgresFixture pg)
         var code = new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable } from "@winche/functions";
-                export const read = callable(async (_d, ctx) => ({ text: await ctx.resources.readText("de/hello.txt"), font: (await ctx.resources.read("fonts/a.ttf"))?.length }));
+                import { callable, resources } from "@winche/functions";
+                const hello = resources.define("de/hello.txt"), font = resources.define("fonts/a.ttf");
+                export const read = callable(async () => ({ text: await hello.text(), font: (await font.bytes())?.length }));
                 """,
         };
         var resources = new Dictionary<string, object> { ["fonts/a.ttf"] = new { hash = Hash(font), size = font.Length }, ["de/hello.txt"] = new { hash = Hash(text), size = text.Length } };
@@ -1732,7 +1733,7 @@ public class ServerEmailTests(PostgresFixture pg)
         await Json(await admin.PostAsJsonAsync("/console/v1/projects/clinic/functions/deploy", new { note = "Jobs", files = new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { callable, schedule } from "@winche/functions";
+                import { callable, schedule } from "@winche/functions"; import * as admin from "@winche/admin";
                 export const quick = callable(async () => 1);
                 export const backfill = schedule("0 3 * * *", async () => {}, { timeoutSeconds: 480 });
                 """,

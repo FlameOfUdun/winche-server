@@ -291,7 +291,8 @@ public static class WincheConsoleExtensions
         if (isService?.IsService(typeof(Winche.Functions.WincheFunctions)) == true)
         {
             group.MapConsoleFunctionsEndpoints();
-            group.MapConsolePagesEndpoints();   // the project's own pages and their actions
+            group.MapConsolePagesEndpoints();   // the project's own pages
+            if (!options.ServerConsole) group.MapConsoleAdminEndpoints();   // @winche/admin from pages and other servers
         }
 
         if (options.AnyLogs)

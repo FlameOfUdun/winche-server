@@ -60,9 +60,9 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Contains("doesn't build", await refused.Content.ReadAsStringAsync());
 
         string Code(string greeting) => $$"""
-            import { callable } from "@winche/functions";
+            import { callable } from "@winche/functions"; import * as admin from "@winche/admin";
             export const hello = callable(async (data: { name: string }, ctx) => {
-              const n = await ctx.documents.collection("people").count();
+              const n = await admin.documents.collection("people").count();
               console.log("people:", n);
               return `{{greeting}} ${data.name} (${ctx.caller?.uid ?? "server"})`;
             });
@@ -101,8 +101,9 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 }) return;   // deploying needs Deno
 
         await Json(await client.PostAsJsonAsync("/console/v1/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = """
-            import { callable } from "@winche/functions";
-            export const keyLength = callable(async (_d, ctx) => ctx.secrets.get("MAIL_KEY").length, { secrets: ["MAIL_KEY"] });
+            import { callable, secrets } from "@winche/functions";
+            const mailKey = secrets.define("MAIL_KEY");
+            export const keyLength = callable(async () => mailKey.value().length, { secrets: [mailKey] });
             """ }, note = "Secrets" }));
         var list = await Json(await client.GetAsync("/console/v1/functions/secrets"));
         Assert.True(list.GetProperty("available").GetBoolean());
@@ -124,7 +125,7 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Console_pages_are_listed_by_role_served_sandboxed_and_their_actions_check_the_role()
+    public async Task Console_pages_are_listed_by_role_served_sandboxed_and_the_admin_api_checks_the_role()
     {
         using var app = new ConsoleAppFactory(fx);
         using var admin = app.CreateClient();
@@ -135,15 +136,13 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         await Json(await admin.PostAsJsonAsync("/console/v1/functions/deploy", new { note = "Pages", files = new Dictionary<string, string>
         {
             ["index.ts"] = """
-                import { consolePage, consoleAction } from "@winche/functions";
-                export const reports = consolePage({ title: "Reports", files: "console/reports", icon: "chart-bar" });
-                export const tools = consolePage({ title: "Tools", files: "console/tools", minRole: "admin" });
-                export const summary = consoleAction(async (_d, ctx) => ({ by: ctx.console?.user.email, role: ctx.console?.user.role }), { minRole: "viewer" });
-                export const wipe = consoleAction(async () => "wiped");
-                export const broken = consoleAction(async () => { throw new Error("The mail server refused the key."); }, { minRole: "viewer" });
+                import { pages, callable } from "@winche/functions";
+                export const reports = pages({ title: "Reports", files: "console/reports", icon: "chart-bar" });
+                export const tools = pages({ title: "Tools", files: "console/tools", minRole: "admin" });
+                export const whoami = callable(async (_d, ctx) => ctx.caller?.uid ?? "nobody");
                 """,
             ["console/reports/index.html"] = "<!doctype html><html><head><title>R</title></head><body><script src=\"app.js\"></script></body></html>",
-            ["console/reports/app.js"] = "winche.ready.then(() => winche.call('summary'));",
+            ["console/reports/app.js"] = "console.log('reports')",
             ["console/reports/sub/more.html"] = "<html><head></head><body>more</body></html>",
             ["console/tools/index.html"] = "<p>tools</p>",
         } }));
@@ -180,20 +179,32 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
             Assert.Equal("*", (await frame.SendAsync(module)).Headers.GetValues("Access-Control-Allow-Origin").Single());
         Assert.False((await frame.GetAsync(url + "../tools/index.html")).IsSuccessStatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await frame.GetAsync(url + "..%2F..%2Ftools%2Findex.html")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await frame.GetAsync(url.Replace("/reports/", "/reports/x").TrimEnd('/') + "/")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await frame.GetAsync(url.Replace("/view/", "/view/x"))).StatusCode);   // a tampered link
         Assert.Equal(HttpStatusCode.NotFound, (await frame.GetAsync(url.Replace("/reports/", "/tools/"))).StatusCode);   // a link is for one page
-        Assert.Equal(HttpStatusCode.Unauthorized, (await frame.PostAsJsonAsync("/console/v1/pages/actions/summary", new { data = (object?)null })).StatusCode);
+        // @winche/admin from a page (relayed by the console) or another server: the caller's role decides.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await frame.PostAsJsonAsync("/console/v1/admin", new { op = "db.get", args = new { path = "notes/a" } })).StatusCode);
+        await admin.PostAsJsonAsync("/console/v1/accounts", new { email = "m@example.com", role = "Member", password = "Passw0rd!" });
+        using var member = app.CreateClient();
+        await member.LoginAsync("m@example.com", "Passw0rd!");
+        static object Add(string text) => new { op = "db.add", args = new { collection = "notes", fields = new { text = new { stringValue = text } } } };
 
-        var ran = await Json(await viewer.PostAsJsonAsync("/console/v1/pages/actions/summary", new { data = (object?)null }));
-        Assert.Equal(("v@example.com", "viewer"), (ran.GetProperty("data").GetProperty("by").GetString(), ran.GetProperty("data").GetProperty("role").GetString()));
-        var refused = await viewer.PostAsJsonAsync("/console/v1/pages/actions/wipe", new { data = (object?)null });
-        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
-        Assert.Contains("needs the admin role", await refused.Content.ReadAsStringAsync());
-        Assert.Equal("wiped", (await Json(await admin.PostAsJsonAsync("/console/v1/pages/actions/wipe", new { data = (object?)null }))).GetProperty("data").GetString());
+        var denied = await viewer.PostAsJsonAsync("/console/v1/admin", Add("by viewer"));
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.Contains("db.add needs the member role in this project (yours: viewer)", await denied.Content.ReadAsStringAsync());
+        var added = await Json(await member.PostAsJsonAsync("/console/v1/admin", Add("by member")));
+        var path = added.GetProperty("result").GetProperty("document").GetProperty("path").GetString()!;
+        var read = await Json(await viewer.PostAsJsonAsync("/console/v1/admin", new { op = "db.get", args = new { path } }));
+        Assert.Equal("by member", read.GetProperty("result").GetProperty("document").GetProperty("fields").GetProperty("text").GetProperty("stringValue").GetString());
+        var history = await Json(await admin.GetAsync($"/console/v1/documents/history?path={path}"));
+        Assert.Equal("console:m@example.com", history.GetProperty("entries")[0].GetProperty("actor").GetString());   // the member's write
 
-        // A failure says why to the console's people (apps get "The function failed.").
-        var broken = await viewer.PostAsJsonAsync("/console/v1/pages/actions/broken", new { data = (object?)null });
-        Assert.False(broken.IsSuccessStatusCode);
-        Assert.Contains("The mail server refused the key.", await broken.Content.ReadAsStringAsync());
+        // Calling functions is an admin's, and never a page's (callables are the apps').
+        static object Call() => new { op = "functions.call", args = new { name = "whoami" } };
+        Assert.Equal(HttpStatusCode.Forbidden, (await member.PostAsJsonAsync("/console/v1/admin", Call())).StatusCode);
+        Assert.Equal("nobody", (await Json(await admin.PostAsJsonAsync("/console/v1/admin", Call()))).GetProperty("result").GetString());
+        using (var fromPage = new HttpRequestMessage(HttpMethod.Post, "/console/v1/admin") { Content = JsonContent.Create(Call()), Headers = { { "X-Winche-Page", "reports" } } })
+            Assert.Equal(HttpStatusCode.Forbidden, (await admin.SendAsync(fromPage)).StatusCode);
+        var missing = await viewer.PostAsJsonAsync("/console/v1/admin", new { op = "db.get", args = new { path = "notes" } });
+        Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);   // the binding's own refusal, with its code
     }
 }
