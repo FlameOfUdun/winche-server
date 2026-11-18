@@ -392,6 +392,13 @@ public class ServerTests(PostgresFixture pg)
         Assert.Equal(HttpStatusCode.Forbidden, (await cli.GetAsync("/console/v1/projects/wards/members")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await cli.GetAsync("/console/v1/projects/clinic/project")).StatusCode);
         Assert.Equal(["wards"], (await Json(await cli.GetAsync("/console/v1/projects"))).GetProperty("projects").EnumerateArray().Select(p => p.GetProperty("id").GetString()).ToArray());
+        // The same token works for @winche/admin from another server (initializeAdmin): his role in Wards limits it.
+        await StartProductAsync(admin, "/projects/wards", "database");
+        var note = new { op = "db.add", args = new { collection = "notes", fields = new { by = new { stringValue = "bob's script" } } } };
+        var noted = await Json(await cli.PostAsJsonAsync("/console/v1/projects/wards/admin", note));
+        Assert.StartsWith("notes/", noted.GetProperty("result").GetProperty("document").GetProperty("path").GetString());
+        Assert.Equal(HttpStatusCode.Forbidden, (await cli.PostAsJsonAsync("/console/v1/projects/clinic/admin", note)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await server.CreateClient().PostAsJsonAsync("/console/v1/projects/wards/admin", note)).StatusCode);
 
         // The server admin's CLI makes projects (winche projects:create).
         var adminApproved = await Json(await admin.PostAsJsonAsync("/console/v1/cli/approve", new { challenge, port = 9005, state = "a", name = "winche CLI on desk" }));
