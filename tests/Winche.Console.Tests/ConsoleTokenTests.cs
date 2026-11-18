@@ -75,12 +75,14 @@ public class ConsoleTokenTests(PostgresFixture fx) : IAsyncLifetime
         // A session of the account: its access token is the user, with their role here.
         using var cli = Bearer(app, login.GetProperty("accessToken").GetString()!);
         await Json(await cli.GetAsync("/console/v1/rules/database/versions"));
-        // It can't approve another CLI (only a person in the browser can), but it makes CI tokens (winche tokens:create);
-        // a CI token can't.
+        // It can't approve another CLI (only a person in the browser can), but it makes service accounts (winche
+        // accounts:create); a service account can't.
         Assert.Equal(HttpStatusCode.Forbidden, (await cli.PostAsJsonAsync("/console/v1/cli/approve", new { challenge, port = 9005, state = "x" })).StatusCode);
-        var made = await Json(await cli.PostAsJsonAsync("/console/v1/tokens", new { name = "x", scopes = new[] { "rules" }, days = 1 }));
-        using var ci = Bearer(app, made.GetProperty("secret").GetString()!);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await ci.PostAsJsonAsync("/console/v1/tokens", new { name = "y", scopes = new[] { "rules" }, days = 1 })).StatusCode);   // not one of its scopes
+        var account = (await Json(await cli.PostAsJsonAsync("/console/v1/service-accounts", new { name = "cli-made-" + Guid.NewGuid().ToString("N")[..8], scopes = new[] { "rules" } }))).GetProperty("id").GetString();
+        var key = (await Json(await cli.PostAsJsonAsync($"/console/v1/service-accounts/{account}/keys", new { days = 1 }))).GetProperty("secret").GetString();
+        var access = (await Json(await anon.PostAsJsonAsync("/console/v1/service-accounts/token", new { key }))).GetProperty("accessToken").GetString()!;
+        using var ci = Bearer(app, access);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await ci.PostAsJsonAsync("/console/v1/service-accounts", new { name = "y", scopes = new[] { "rules" } })).StatusCode);   // not one of its scopes
 
         // It's renewed with its refresh token (which turns over), like any sign-in.
         var refresh = login.GetProperty("refreshToken").GetString()!;
@@ -133,29 +135,43 @@ public class ConsoleTokenTests(PostgresFixture fx) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_ci_token_only_does_what_its_scopes_allow_and_stops_when_revoked()
+    public async Task A_ci_token_becomes_a_service_accounts_key_and_works_only_through_the_exchange()
     {
         using var app = new ConsoleAppFactory(fx);
         using var admin = app.CreateClient();
         await admin.SetupAdminAsync();
         await admin.LoginAsync();
 
-        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync("/console/v1/tokens", new { name = "x", scopes = new[] { "everything" }, days = 30 })).StatusCode);
-        var made = await Json(await admin.PostAsJsonAsync("/console/v1/tokens", new { name = "gitlab-main", scopes = new[] { "rules" }, days = 30 }));
-        var secret = made.GetProperty("secret").GetString()!;
-        Assert.StartsWith("wct_", secret);
-        using var ci = Bearer(app, secret);
+        // A CI token as an earlier version kept it (wct_<id>_<secret>, the secret's hash).
+        var store = app.Services.GetRequiredService<Winche.Console.Identity.ConsoleTokenStore>();
+        await store.CreateCodeAsync(new string('a', 43), "u1", "admin@example.com", "Admin", "make the tables");
+        var db = app.Services.GetRequiredKeyedService<NpgsqlDataSource>("WincheConfigOptions");
+        var (id, secret) = (Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(24)));
+        await using (var cmd = db.CreateCommand("""
+            INSERT INTO winche_console_tokens (id, kind, name, user_id, user_email, role, scopes, hash, created_at, expires_at)
+            VALUES ($1, 'ci', 'gitlab-' || $1, 'u1', 'admin@example.com', 'Admin', ARRAY['rules'], $2, now(), now() + interval '30 days')
+            """))
+        {
+            cmd.Parameters.AddWithValue(id);
+            cmd.Parameters.AddWithValue(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
+            await cmd.ExecuteNonQueryAsync();
+        }
+        var token = $"wct_{id}_{secret}";
 
-        await Json(await ci.GetAsync("/console/v1/rules/database/versions"));                                  // rules: yes
-        Assert.Equal(HttpStatusCode.Unauthorized, (await ci.GetAsync("/console/v1/tokens")).StatusCode);       // anything else: no
-        Assert.Equal(HttpStatusCode.Unauthorized, (await ci.GetAsync("/console/v1/auth/config")).StatusCode);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await Bearer(app, secret[..^1] + "x").GetAsync("/console/v1/rules/database/versions")).StatusCode);
+        // It's no longer accepted as it is, but exchanged it's the account gitlab-<id>, deploying rules only.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Bearer(app, token).GetAsync("/console/v1/rules/database/versions")).StatusCode);
+        using var anon = app.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions { HandleCookies = false });
+        var exchanged = await Json(await anon.PostAsJsonAsync("/console/v1/service-accounts/token", new { key = token }));
+        Assert.Equal($"gitlab-{id}", exchanged.GetProperty("account").GetProperty("name").GetString());
+        using var ci = Bearer(app, exchanged.GetProperty("accessToken").GetString()!);
+        await Json(await ci.GetAsync("/console/v1/rules/database/versions"));                                          // rules: yes
+        Assert.Equal(HttpStatusCode.Unauthorized, (await ci.GetAsync("/console/v1/auth/config")).StatusCode);          // anything else: no
+        var listed = (await Json(await admin.GetAsync("/console/v1/service-accounts"))).GetProperty("accounts").EnumerateArray().Single(a => a.GetProperty("name").GetString() == $"gitlab-{id}");
+        Assert.Equal(($"gitlab-{id}", "rules", "admin@example.com"), (listed.GetProperty("name").GetString(), listed.GetProperty("scopes")[0].GetString(), listed.GetProperty("createdBy").GetString()));
+        Assert.Equal(id, listed.GetProperty("keys")[0].GetProperty("id").GetString());
 
-        var listed = (await Json(await admin.GetAsync("/console/v1/tokens"))).GetProperty("tokens").EnumerateArray().Single();
-        Assert.Equal(("ci", "gitlab-main", "rules"), (listed.GetProperty("kind").GetString(), listed.GetProperty("name").GetString(), listed.GetProperty("scopes")[0].GetString()));
-        Assert.Equal(JsonValueKind.String, listed.GetProperty("lastUsedAt").ValueKind);
-
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync($"/console/v1/tokens/{listed.GetProperty("id").GetString()}")).StatusCode);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await ci.GetAsync("/console/v1/rules/database/versions")).StatusCode);
+        // Revoking the key ends it.
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync($"/console/v1/service-accounts/{listed.GetProperty("id").GetString()}/keys/{id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anon.PostAsJsonAsync("/console/v1/service-accounts/token", new { key = token })).StatusCode);
     }
 }

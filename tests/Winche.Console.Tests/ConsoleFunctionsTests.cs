@@ -80,12 +80,14 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         var versions = await Json(await client.GetAsync("/console/v1/functions/versions"));
         Assert.Equal([3, 2, 1], versions.GetProperty("versions").EnumerateArray().Select(v => v.GetProperty("version").GetInt32()));
 
-        // CI: a token with the functions scope deploys (named in the versions); it can't run functions or do anything else.
-        var made = await Json(await client.PostAsJsonAsync("/console/v1/tokens", new { name = "gitlab-main", scopes = new[] { "functions" }, days = 30 }));
-        using var ci = app.CreateClient();
-        ci.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", made.GetProperty("secret").GetString());
+        // CI: a service account with the functions scope deploys (named in the versions); it can't run functions or do anything else.
+        var account = (await Json(await client.PostAsJsonAsync("/console/v1/service-accounts", new { name = "gitlab-functions", scopes = new[] { "functions" } }))).GetProperty("id").GetString();
+        var key = (await Json(await client.PostAsJsonAsync($"/console/v1/service-accounts/{account}/keys", new { days = 30 }))).GetProperty("secret").GetString();
+        using var ci = app.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions { HandleCookies = false });
+        var access = (await Json(await ci.PostAsJsonAsync("/console/v1/service-accounts/token", new { key }))).GetProperty("accessToken").GetString();
+        ci.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", access);
         var deployed = await Json(await ci.PostAsJsonAsync("/console/v1/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = Code("Hey") }, note = "From CI" }));
-        Assert.Equal((4, "gitlab-main (CI token by admin@example.com)"), (deployed.GetProperty("version").GetInt32(), deployed.GetProperty("by").GetString()));
+        Assert.Equal((4, "gitlab-functions (service account)"), (deployed.GetProperty("version").GetInt32(), deployed.GetProperty("by").GetString()));
         Assert.Equal(HttpStatusCode.Unauthorized, (await ci.PostAsJsonAsync("/console/v1/functions/run", new { name = "hello" })).StatusCode);
         // Deploy keys are gone (nothing answers there: the SPA's fallback only serves GET).
         Assert.Contains((await client.PostAsync("/console/v1/functions/deploy-key", null)).StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });

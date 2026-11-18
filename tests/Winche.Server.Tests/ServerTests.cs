@@ -408,8 +408,8 @@ public class ServerTests(PostgresFixture pg)
         var adminCli = server.CreateClient();
         adminCli.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminSession.GetProperty("accessToken").GetString());
         Assert.Equal("beds", (await Json(await adminCli.PostAsJsonAsync("/console/v1/projects", new { name = "Beds", id = "beds" }))).GetProperty("id").GetString());
-        // Its settings and CI tokens need two-step sign-in like the browser's (winche 2fa enable).
-        var refused = await adminCli.PostAsJsonAsync("/console/v1/projects/beds/tokens", new { name = "gitlab", scopes = new[] { "rules" }, days = 7 });
+        // Its settings and service accounts need two-step sign-in like the browser's (winche 2fa enable).
+        var refused = await adminCli.PostAsJsonAsync("/console/v1/projects/beds/service-accounts", new { name = "gitlab", scopes = new[] { "rules" } });
         Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
         Assert.Contains("TWO_FACTOR_REQUIRED", await refused.Content.ReadAsStringAsync());
 
@@ -1360,9 +1360,11 @@ public class ServerTests(PostgresFixture pg)
         Assert.Contains(overview.GetProperty("products").EnumerateArray(), p => p.GetProperty("id").GetString() == "assets" && p.GetProperty("on").GetBoolean());
         Assert.True((await Json(await console.GetAsync("/console/v1/projects/clinic/access"))).GetProperty("capabilities").GetProperty("assets").GetBoolean());
 
-        // CI publishes with a token scoped to assets: it reads releases to compare, and publishes; it can't move contents.
-        var token = (await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/tokens", new { name = "ci", scopes = new[] { "assets" }, days = 7 }))).GetProperty("secret").GetString();
+        // CI publishes as a service account scoped to assets: it reads releases to compare, and publishes; it can't move contents.
+        var account = (await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/service-accounts", new { name = "ci", scopes = new[] { "assets" } }))).GetProperty("id").GetString();
+        var key = (await Json(await console.PostAsJsonAsync($"/console/v1/projects/clinic/service-accounts/{account}/keys", new { days = 7 }))).GetProperty("secret").GetString();
         var ci = server.CreateClient();
+        var token = (await Json(await ci.PostAsJsonAsync("/console/v1/projects/clinic/service-accounts/token", new { key }))).GetProperty("accessToken").GetString();
         ci.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         await Json(await ci.GetAsync("/console/v1/projects/clinic/assets"));
         await Json(await ci.GetAsync("/console/v1/projects/clinic/assets/releases/1"));

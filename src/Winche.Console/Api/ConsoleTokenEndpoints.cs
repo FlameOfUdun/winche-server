@@ -10,8 +10,8 @@ using Winche.Console.Tabs;
 namespace Winche.Console.Api;
 
 /// <summary>
-/// <c>winche login</c> for consoles with their own accounts (a browser approval, then a PKCE code exchange), CI tokens
-/// for admins, and revoking either.
+/// <c>winche login</c> for consoles with their own accounts (a browser approval, then a PKCE code exchange). Tokens for
+/// CI and other servers are service accounts' (<see cref="ServiceAccountEndpoints"/>).
 /// </summary>
 public static class ConsoleTokenEndpoints
 {
@@ -20,14 +20,13 @@ public static class ConsoleTokenEndpoints
     public sealed record DeviceRequest(string? Challenge, string? Name);
     public sealed record PollRequest(string? DeviceCode);
     public sealed record ExchangeRequest(string? Code, string? Verifier);
-    public sealed record CreateRequest(string? Name, string[]? Scopes, int? Days);
 
     private static IResult Problem(string message) => ConsoleErrors.Problem("tokens", message, null);
 
     private static string? Email(ClaimsPrincipal u) => u.FindFirstValue(ClaimTypes.Email) ?? u.FindFirstValue("email");
     private static string UserId(ClaimsPrincipal u) => u.FindFirstValue(ClaimTypes.NameIdentifier) ?? u.FindFirstValue("sub") ?? "";
     private static bool ByToken(ClaimsPrincipal u) => u.FindFirstValue(ConsoleTokenHandler.TokenKindClaim) is not null;   // a token or the CLI, not a browser
-    private static bool ByCiToken(ClaimsPrincipal u) => u.FindFirstValue(ConsoleTokenHandler.TokenKindClaim) == "ci";
+    private static bool ByCiToken(ClaimsPrincipal u) => u.FindFirstValue(ConsoleTokenHandler.TokenKindClaim) == "service";
 
     public sealed record RefreshRequest(string? RefreshToken, string? Name = null);
 
@@ -40,12 +39,6 @@ public static class ConsoleTokenEndpoints
         accessToken = t.AccessToken, refreshToken = t.RefreshToken, expiresAt = t.ExpiresAt,
         user = t.User.Email ?? t.User.Uid,
     });
-
-    private static object Info(ConsoleToken t) => new
-    {
-        id = t.Id, kind = t.Kind, name = t.Name, user = t.UserEmail ?? t.UserId, role = t.Role, scopes = t.Scopes,
-        createdAt = t.CreatedAt, expiresAt = t.ExpiresAt, lastUsedAt = t.LastUsedAt,
-    };
 
     /// <param name="signIn">The CLI's sign-in (<c>cli/…</c>): the server's, not a project's.</param>
     public static IEndpointRouteBuilder MapConsoleTokenEndpoints(this IEndpointRouteBuilder app, ConsoleOptions options, bool signIn = true)
@@ -130,47 +123,6 @@ public static class ConsoleTokenEndpoints
                 return Results.NoContent();
             }).AllowAnonymous();
         }
-
-        // ── the caller's own token (winche logout) ──────────────────────────────────────────────────────────────
-        app.MapDelete("/tokens/current", async (HttpContext http, ConsoleTokenStore store, CancellationToken ct) =>
-        {
-            if (http.User.FindFirstValue(ConsoleTokenHandler.TokenIdClaim) is not { } id) return Problem("This request wasn't made with a token.");
-            await store.RevokeAsync(id, ct);
-            return Results.NoContent();
-        }).RequireAuthorization(ConsoleRoles.ViewerPolicy).WithMetadata(new ConsoleCiScope(ConsoleCiScope.Functions), new ConsoleCiScope(ConsoleCiScope.Rules));
-
-        // ── admins: CI tokens (a project's: the server's console has none) ──────────────────────────────────────────
-        if (options.ServerConsole) return app;
-        var admin = app.MapGroup("/tokens").RequireAuthorization(ConsoleRoles.AdminPolicy);
-
-        admin.MapGet("", async (ConsoleTokenStore store, CancellationToken ct) => Results.Json(new
-        {
-            available = store.Available,
-            scopes = ConsoleCiScope.All,
-            tokens = (await store.ListAsync(ct)).Select(Info),
-        }));
-
-        // A person makes them: in the browser, or signed in with the CLI (winche tokens:create); a CI token can't.
-        admin.MapPost("", async (CreateRequest body, HttpContext http, ConsoleTokenStore store, CancellationToken ct) =>
-        {
-            if (ByCiToken(http.User)) return Results.Forbid();
-            if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
-            if (!store.Available) return Problem("CI tokens need AddWincheConfig(…) (where they're kept).");
-            if (string.IsNullOrWhiteSpace(body.Name) || body.Name.Trim().Length > 80) return Problem("Name the token (where it's used, e.g. gitlab-main).");
-            var scopes = (body.Scopes ?? []).Distinct().ToArray();
-            if (scopes.Length == 0 || scopes.Any(s => !ConsoleCiScope.All.Contains(s))) return Problem($"Choose what it may deploy: {string.Join(", ", ConsoleCiScope.All)}.");
-            if (body.Days is not (>= 1 and <= 730)) return Problem("A CI token lasts 1 day to 2 years.");
-            var (token, secret) = await store.CreateAsync("ci", body.Name.Trim(), UserId(http.User), Email(http.User) ?? http.User.Identity?.Name,
-                ConsoleRoles.Admin, scopes, TimeSpan.FromDays(body.Days.Value), ct);
-            return Results.Json(new { token = Info(token), secret });
-        });
-
-        admin.MapDelete("/{id}", async (string id, HttpContext http, ConsoleTokenStore store, CancellationToken ct) =>
-        {
-            if (ByCiToken(http.User)) return Results.Forbid();
-            if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
-            return await store.RevokeAsync(id, ct) ? Results.NoContent() : Results.NotFound();
-        });
 
         return app;
     }

@@ -12,15 +12,7 @@ using Winche.Console.Options;
 
 namespace Winche.Console.Identity;
 
-/// <summary>
-/// A console API token: <c>cli</c> (made when someone approves <c>winche login</c> in the browser; acts as them, with
-/// their role as it is now) or <c>ci</c> (made by an admin for CI; named, limited to <see cref="Scopes"/>, and never
-/// more than its maker can do).
-/// </summary>
-public sealed record ConsoleToken(string Id, string Kind, string Name, string UserId, string? UserEmail, string Role,
-    IReadOnlyList<string> Scopes, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, DateTimeOffset? LastUsedAt);
-
-/// <summary>Marks an endpoint a CI token with <see cref="Scope"/> may call (CI tokens can call nothing else).</summary>
+/// <summary>Marks an endpoint a service account with deploy scope <see cref="Scope"/> may call (they can call nothing else).</summary>
 public sealed record ConsoleCiScope(string Scope)
 {
     public const string Functions = "functions", Rules = "rules", Indexes = "indexes", Assets = "assets";
@@ -28,8 +20,8 @@ public sealed record ConsoleCiScope(string Scope)
 }
 
 /// <summary>
-/// The console's API tokens and the one-time codes of the CLI's browser sign-in, in the project's config database
-/// (<c>AddWincheConfig</c>). Tokens are <c>wct_&lt;id&gt;_&lt;secret&gt;</c>; only the secret's hash is kept.
+/// The one-time codes of the CLI's sign-in, in the project's config database (<c>AddWincheConfig</c>). The CI tokens
+/// it kept before (<c>wct_…</c>) became service accounts' keys (<see cref="ServiceAccountStore"/>).
 /// </summary>
 public sealed class ConsoleTokenStore
 {
@@ -101,81 +93,6 @@ public sealed class ConsoleTokenStore
 
     private static byte[] Hash(string secret) => SHA256.HashData(Encoding.UTF8.GetBytes(secret));
     private static string Random(int bytes) => Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(bytes));
-
-    /// <summary>A new token; the returned string is shown once.</summary>
-    public async Task<(ConsoleToken Token, string Secret)> CreateAsync(string kind, string name, string userId, string? email, string role,
-        IReadOnlyList<string> scopes, TimeSpan lifetime, CancellationToken ct = default)
-    {
-        await EnsureAsync(ct);
-        var id = Random(8);
-        var secret = Random(24);
-        var now = _time.GetUtcNow();
-        await using var cmd = Db.CreateCommand($"""
-            INSERT INTO {Tokens} (id, kind, name, user_id, user_email, role, scopes, hash, created_at, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            """);
-        foreach (var p in new object?[] { id, kind, name, userId, (object?)email ?? DBNull.Value, role, scopes.ToArray(), Hash(secret), now, now + lifetime })
-            cmd.Parameters.Add(new NpgsqlParameter { Value = p ?? DBNull.Value });
-        await cmd.ExecuteNonQueryAsync(ct);
-        return (new ConsoleToken(id, kind, name, userId, email, role, scopes, now, now + lifetime, null), $"{Prefix}{id}_{secret}");
-    }
-
-    /// <summary>The live token <paramref name="bearer"/> is, or null (wrong, expired, revoked).</summary>
-    public async Task<ConsoleToken?> FindAsync(string bearer, CancellationToken ct = default)
-    {
-        if (_db is null || !bearer.StartsWith(Prefix, StringComparison.Ordinal)) return null;
-        var parts = bearer[Prefix.Length..].Split('_', 2);
-        if (parts is not [{ Length: 16 } id, { Length: 48 } secret]) return null;
-        await EnsureAsync(ct);
-        await using var cmd = Db.CreateCommand($"""
-            SELECT id, kind, name, user_id, user_email, role, scopes, created_at, expires_at, last_used_at, hash
-            FROM {Tokens} WHERE id = $1 AND revoked_at IS NULL AND expires_at > now()
-            """);
-        cmd.Parameters.AddWithValue(id);
-        ConsoleToken? token = null;
-        await using (var r = await cmd.ExecuteReaderAsync(ct))
-        {
-            if (!await r.ReadAsync(ct)) return null;
-            if (!CryptographicOperations.FixedTimeEquals(r.GetFieldValue<byte[]>(10), Hash(secret))) return null;
-            token = Read(r);
-        }
-        // Last use, at most once a minute.
-        if (token.LastUsedAt is null || _time.GetUtcNow() - token.LastUsedAt > TimeSpan.FromMinutes(1))
-        {
-            await using var touch = Db.CreateCommand($"UPDATE {Tokens} SET last_used_at = now() WHERE id = $1");
-            touch.Parameters.AddWithValue(id);
-            await touch.ExecuteNonQueryAsync(ct);
-        }
-        return token;
-    }
-
-    private static ConsoleToken Read(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3),
-        r.IsDBNull(4) ? null : r.GetString(4), r.GetString(5), r.GetFieldValue<string[]>(6), r.GetFieldValue<DateTimeOffset>(7),
-        r.GetFieldValue<DateTimeOffset>(8), r.IsDBNull(9) ? null : r.GetFieldValue<DateTimeOffset>(9));
-
-    /// <summary>The live tokens, newest first.</summary>
-    public async Task<IReadOnlyList<ConsoleToken>> ListAsync(CancellationToken ct = default)
-    {
-        if (_db is null) return [];
-        await EnsureAsync(ct);
-        await using var cmd = Db.CreateCommand($"""
-            SELECT id, kind, name, user_id, user_email, role, scopes, created_at, expires_at, last_used_at
-            FROM {Tokens} WHERE revoked_at IS NULL AND expires_at > now() ORDER BY created_at DESC
-            """);
-        var list = new List<ConsoleToken>();
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct)) list.Add(Read(r));
-        return list;
-    }
-
-    /// <summary>Revokes token <paramref name="id"/>; false when there's no such live token.</summary>
-    public async Task<bool> RevokeAsync(string id, CancellationToken ct = default)
-    {
-        await EnsureAsync(ct);
-        await using var cmd = Db.CreateCommand($"UPDATE {Tokens} SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL");
-        cmd.Parameters.AddWithValue(id);
-        return await cmd.ExecuteNonQueryAsync(ct) > 0;
-    }
 
     /// <summary>A one-time code (5 minutes) for the CLI's sign-in, redeemed with the PKCE verifier of <paramref name="challenge"/>.</summary>
     public async Task<string> CreateCodeAsync(string challenge, string userId, string? email, string role, string name, CancellationToken ct = default)
@@ -285,9 +202,8 @@ public sealed class ConsoleTokenStore
 
 /// <summary>
 /// Signs in requests carrying a bearer token: the CLI's sign-in (<c>winche login</c>: an access token of a session in the
-/// console's accounts, renewed with its refresh token), which acts as its account with its role here now; or a CI token
-/// (<c>wct_…</c>), which acts as itself, with the lower of its role and its maker's, and only on endpoints marked with
-/// one of its scopes (<see cref="ConsoleCiScope"/>). Either stops working once its account is turned off or removed.
+/// console's accounts, renewed with its refresh token), which acts as its account with its role here now; or a service
+/// account's access token (<c>wsa_…</c>), which acts as the account.
 /// </summary>
 internal sealed class ConsoleTokenHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
     : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
@@ -301,46 +217,9 @@ internal sealed class ConsoleTokenHandler(IOptionsMonitor<AuthenticationSchemeOp
         if (!header.StartsWith("Bearer ", StringComparison.Ordinal)) return AuthenticateResult.NoResult();
         var raw = header[7..].Trim();
         if (raw.StartsWith(ServiceAccountTokens.Prefix, StringComparison.Ordinal)) return await ServiceAccountAsync(raw);
-        if (!raw.StartsWith(ConsoleTokenStore.Prefix, StringComparison.Ordinal))
-            return raw.Count(c => c == '.') == 2 ? await SessionAsync(raw) : AuthenticateResult.NoResult();
-        var store = Context.RequestServices.GetRequiredService<ConsoleTokenStore>();
-        if (await store.FindAsync(header[7..].Trim(), Context.RequestAborted) is not { } token)
-            return AuthenticateResult.Fail("That token isn't valid (wrong, expired or revoked): run winche login, or make a new CI token.");
-
-        var console = Context.RequestServices.GetRequiredService<ConsoleOptions>();
-        var role = token.Role;
-        string? email = token.UserEmail;
-        {
-            var accounts = Context.RequestServices.GetRequiredService<ConsoleAccounts>();
-            var user = await accounts.FindAsync(token.UserId, Context.RequestAborted);
-            if (user is not { Active: true }) return AuthenticateResult.Fail("The token's user is no longer in the console.");
-            // Its role here now: the account's, or (a created project) its membership's.
-            var now = await Api.AuthEndpoints.RoleHereAsync(user, console, Context.RequestServices);
-            if (now is null) return AuthenticateResult.Fail("The token's user has no console role.");
-            role = Lower(token.Role, now);
-            email = user.Email;
-        }
-
-        // (Tokens are CI tokens: the CLI's sign-in is an account session, above.)
-        {
-            var allowed = Context.GetEndpoint()?.Metadata.GetOrderedMetadata<ConsoleCiScope>() ?? [];
-            if (!allowed.Any(s => token.Scopes.Contains(s.Scope)))
-                return AuthenticateResult.Fail($"The CI token '{token.Name}' can only deploy ({string.Join(", ", token.Scopes)}).");
-        }
-
-        var claims = new List<Claim>
-        {
-            new(ClaimTypes.NameIdentifier, token.UserId),
-            new(TokenIdClaim, token.Id),
-            new(TokenKindClaim, token.Kind),
-            new(ClaimTypes.Role, RoleName(role, console)),
-            // Its role here is settled (the lower of its own and its maker's in this project): never read as an account's.
-            new(Project.ProjectRoleClaims.DoneClaim, role),
-        };
-        // The version history names the token and who made it: "gitlab-main (CI token by ann@example.com)".
-        claims.Add(new Claim(ClaimTypes.Name, $"{token.Name} (CI token by {token.UserEmail ?? token.UserId})"));
-        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme, ClaimTypes.Name, ClaimTypes.Role));
-        return AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme));
+        if (raw.StartsWith(ConsoleTokenStore.Prefix, StringComparison.Ordinal) || raw.StartsWith(ServiceAccountStore.KeyPrefix, StringComparison.Ordinal))
+            return AuthenticateResult.Fail("That's a service account's key: exchange it for an access token first (service-accounts/token; the CLI and @winche/admin do it).");
+        return raw.Count(c => c == '.') == 2 ? await SessionAsync(raw) : AuthenticateResult.NoResult();
     }
 
     public const string ServiceAccountClaim = "winche_service_account";

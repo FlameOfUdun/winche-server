@@ -76,6 +76,34 @@ public sealed class ServiceAccountStore
         """,
     ];
 
+    /// <summary>
+    /// CI tokens (from before service accounts) become accounts with deploy scopes, each with its token as its key: a
+    /// pipeline's WINCHE_TOKEN keeps working (the CLI exchanges it), and the tokens themselves are no longer accepted.
+    /// Run when the store starts (no new CI tokens are made, so again is harmless).
+    /// </summary>
+    private static readonly string MoveCiTokens = $"""
+        DO $$
+        BEGIN
+          IF to_regclass('{ConsoleTokenStore.Tokens}') IS NOT NULL THEN
+            INSERT INTO {Accounts} (id, name, role, scopes, created_by, created_by_email, created_at, last_used_at)
+              SELECT t.id, t.name, NULL, t.scopes, t.user_id, t.user_email, t.created_at, t.last_used_at
+              FROM {ConsoleTokenStore.Tokens} t WHERE t.kind = 'ci' AND t.revoked_at IS NULL AND t.expires_at > now()
+              ON CONFLICT (name) DO NOTHING;
+            INSERT INTO {Accounts} (id, name, role, scopes, created_by, created_by_email, created_at, last_used_at)
+              SELECT t.id, t.name || '-' || left(t.id, 6), NULL, t.scopes, t.user_id, t.user_email, t.created_at, t.last_used_at
+              FROM {ConsoleTokenStore.Tokens} t WHERE t.kind = 'ci' AND t.revoked_at IS NULL AND t.expires_at > now()
+                AND NOT EXISTS (SELECT 1 FROM {Accounts} a WHERE a.id = t.id)
+              ON CONFLICT DO NOTHING;
+            INSERT INTO {Keys} (id, account_id, hash, created_by, created_at, expires_at, last_used_at)
+              SELECT t.id, t.id, t.hash, coalesce(t.user_email, t.user_id), t.created_at, t.expires_at, t.last_used_at
+              FROM {ConsoleTokenStore.Tokens} t WHERE t.kind = 'ci' AND t.revoked_at IS NULL AND t.expires_at > now()
+                AND EXISTS (SELECT 1 FROM {Accounts} a WHERE a.id = t.id)
+              ON CONFLICT (id) DO NOTHING;
+            UPDATE {ConsoleTokenStore.Tokens} SET revoked_at = now() WHERE kind = 'ci' AND revoked_at IS NULL;
+          END IF;
+        END $$;
+        """;
+
     private readonly NpgsqlDataSource? _db;
     private readonly TimeProvider _time;
     private bool _ready;
@@ -95,6 +123,7 @@ public sealed class ServiceAccountStore
     {
         if (_ready) return;
         await Winche.Core.WincheSchema.EnsureAsync(Db, "service-accounts", Schema, ct);
+        await using (var move = Db.CreateCommand(MoveCiTokens)) await move.ExecuteNonQueryAsync(ct);
         _ready = true;
     }
 
