@@ -36,27 +36,26 @@ await admin.functions.call("recompute", { ward: "a" });
 Products: `documents`, `files`, `auth` (the app's users), `assets`, `functions.call`. The API is the one `ctx` has
 today.
 
-### Functions: data from the SDK, `request` for the call
+### Functions: data from the SDK, `ctx` for the call
 
-A function's second argument stops being `ctx`. It describes the call only, and data comes from the SDK, already signed
-in as the server inside functions:
+A function's `ctx` (its second argument everywhere: callables, HTTP functions, triggers, schedules, console actions)
+describes the call only; data comes from the SDK, already signed in as the server inside functions:
 
 ```ts
 import { documents } from "@winche/admin";
 import { callable } from "@winche/functions";
 
-export const hello = callable(async (data, request) => {
-  request.log("by", request.caller?.uid);
-  return (await documents.doc(`profiles/${request.caller!.uid}`).get()).data();
+export const hello = callable(async (data, ctx) => {
+  ctx.log("by", ctx.caller?.uid);
+  return (await documents.doc(`profiles/${ctx.caller!.uid}`).get()).data();
 });
 ```
 
-- **`request`** (callables, HTTP functions, console actions): `caller` (the app user), `console.user` (console
-  actions), `log`, `secrets`, `resources`. Triggers (documents, files, schedules) get **`event`** instead: what
-  happened, its `params`, `log`, `secrets`, `resources`.
-- **Secrets and resources stay with the function** (`request.secrets`, `request.resources`): found where the function
-  is written, given in tests with the call, and tracked per function. The SDK never has them, so pages and other
-  servers can't read secrets.
+- **`ctx`:** `name` (the function's export name; today's `functionName`), `caller` (the app user, for callables),
+  `console.user` (console actions), `log`, `secrets` (those the function declared), `resources` (the deployment's
+  `resources/` folder). Triggers keep their event as the first argument.
+- **Secrets and resources stay on `ctx`:** found where the function is written, given in tests with the call, and
+  tracked per function. The SDK never has them, so pages and other servers can't read secrets.
 - **A clean break:** `ctx.documents`, `ctx.files`, `ctx.auth`, `ctx.assets` are removed; a deployment that uses them is
   refused with what to import instead.
 
@@ -77,17 +76,17 @@ Nothing else limits a page: what it shows, asks or does with what it reads is it
 Access rules protect the apps' paths. The SDK, signed in as the server, an account or a console person, doesn't apply
 them (roles do instead).
 
-A function called by an app user can choose to act as that user: `admin.as(request.caller)` (or
+A function called by an app user can choose to act as that user: `admin.as(ctx.caller)` (or
 `admin.as({ uid, claims })`) is the same SDK, but every documents and files call is checked against the project's rules for that user, exactly as
 if the app had made it. The plain SDK stays available beside it:
 
 ```ts
 import * as admin from "@winche/admin";
 
-export const leaveWard = callable(async (data, request) => {
-  const asUser = admin.as(request.caller);
-  await asUser.documents.doc(`wards/${data.ward}/members/${request.caller.uid}`).delete();   // the rules decide
-  await admin.documents.collection("audit").add({ who: request.caller.uid, left: data.ward }); // the function's own record
+export const leaveWard = callable(async (data, ctx) => {
+  const asUser = admin.as(ctx.caller);
+  await asUser.documents.doc(`wards/${data.ward}/members/${ctx.caller.uid}`).delete();   // the rules decide
+  await admin.documents.collection("audit").add({ who: ctx.caller.uid, left: data.ward }); // the function's own record
 });
 ```
 
@@ -122,20 +121,20 @@ The SDK gets and refreshes its access token; calls go to `/console/v1/projects/<
   session; the page never holds it.
 - **Acting as a user:** the functions runtime passes `as(user)` calls with that identity; the database and storage
   evaluate their rules for it.
-- **Functions:** the context becomes `request` (or `event`); its data members are removed (the deploy refuses code that
-  uses them, naming the import to use).
+- **Functions:** `ctx` loses its data members (the deploy refuses code that uses them, naming the import to use);
+  `functionName` becomes `name`.
 
 ## Steps
 
 1. **The SDK package** (`@winche/admin`): the API from `ctx` today, one transport interface; in functions, signed in as
-   the server. `request` and `event` replace `ctx` (keeping `secrets` and `resources`). Tests: the same suite run
+   the server. `ctx` keeps the call's facts, `secrets` and `resources` (`functionName` → `name`). Tests: the same suite run
    against each transport.
 2. **The console's project API** fills the SDK's gaps (transactions, batches, cursors, uploads).
 3. **Pages:** the SDK's page transport over the console's channel; the console relays calls as the person.
    `@winche/console-page` and the pages template removed.
 4. **Other servers:** the token transport (with `docs/service-accounts.md`'s accounts).
 5. **`admin.as(user)`:** the rules applied to a function's calls for a given user.
-6. **Docs and release:** functions SDK (a major version: `ctx` is gone), CLI (pages), console, server. Upgrading notes:
+6. **Docs and release:** functions SDK (a major version: data leaves `ctx`), CLI (pages), console, server. Upgrading notes:
    each `ctx.x` and its import.
 
 ## Open questions
