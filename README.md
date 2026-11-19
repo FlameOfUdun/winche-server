@@ -166,7 +166,9 @@ and a deploy reaches every task within seconds.
   credentials and region (`AWS_REGION`, the task's role), which only server admins may choose.
 - **Assets:** versioned content apps read (translations, pages, media): numbered releases published from the CLI
   (`winche assets deploy`, or a service account with the `assets` scope), channels apps follow (moving one back is a
-  rollback), and rules per path. Kept in the project's files folder unless the console moves them to a bucket.
+  rollback), and rules per path. Kept in the project's files folder unless the console moves them to a bucket. Large
+  files can stay on a CDN that signs links (CloudFront, **Assets → Settings → CDNs**, its private key a value or a
+  reference to AWS): releases name them by address, apps never see it and get links that work for a few minutes.
 - **Project pages:** pages of the project's own in the console's sidebar: its HTML, JS and CSS, deployed with its
   functions, shown in a sandboxed frame, reading and writing the project's data with @winche-technologies/winche-admin as the person
   who opened it (their role limits it). See Winche.Functions' README.

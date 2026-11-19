@@ -24,6 +24,9 @@ public static class ConsoleAssetsEndpoints
     public sealed record HashesRequest(List<string>? Hashes);
     public sealed record PublishRequest(Dictionary<string, AssetFile>? Files, string? Note, string? Channel);
     public sealed record ChannelRequest(int? Release);
+    public sealed record UrlsRequest(List<string>? Urls);
+    public sealed record CdnRequest(string? BaseUrl, string? KeyPairId, int? LinkMinutes, string? PrivateKey, string? PrivateKeyReference, string? Reason);
+    public sealed record CdnTestRequest(string? Url);
     public sealed record LocationRequest(ArchiveLocation? Location, string? SecretKey, string? Reason, string? SecretKeyReference = null);
 
     internal static bool Capability(ConsoleOptions options, ConsoleRole? role) => options.AssetsTab is { } t && role is { } r && r >= t.MinRole;
@@ -74,7 +77,7 @@ public static class ConsoleAssetsEndpoints
                 ? Results.Json(new
                 {
                     number = r.Number, note = r.Note, by = r.By, at = r.At, size = r.TotalSize,
-                    files = r.Files.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => new { path = f.Key, hash = f.Value.Hash, size = f.Value.Size, mimeType = f.Value.MimeType }),
+                    files = r.Files.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => new { path = f.Key, hash = f.Value.Hash, size = f.Value.Size, mimeType = f.Value.MimeType, url = f.Value.Url }),
                 })
                 : Refused(new AssetsException("not-found", $"There's no release {number}.")))).WithMetadata(ci);
 
@@ -98,6 +101,10 @@ public static class ConsoleAssetsEndpoints
             return Results.NoContent();
         })).WithMetadata(ci).WithMetadata(new Microsoft.AspNetCore.Mvc.DisableRequestSizeLimitAttribute());   // the limits setting decides
 
+        // CDN files: each one's hash and size, read by the server through a signed link (once per version of the file).
+        admin.MapPost("/cdn/files", (UrlsRequest body, WincheAssets assets, CancellationToken ct) => Run(async () =>
+            Results.Json(new { files = await assets.InspectCdnFilesAsync(body.Urls ?? [], ct) }))).WithMetadata(ci);
+
         admin.MapPost("/releases", (PublishRequest body, HttpContext http, WincheAssets assets, CancellationToken ct) => Run(async () =>
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
@@ -119,6 +126,86 @@ public static class ConsoleAssetsEndpoints
             await assets.RemoveChannelAsync(name, ct);
             return Results.NoContent();
         })).WithMetadata(ci);
+
+        // CDNs releases may name files on (with UseSettings): their address, key pair, link time and private key.
+        admin.MapGet("/cdns", async (WincheAssets assets, IServiceProvider sp, CancellationToken ct) =>
+        {
+            var secrets = sp.GetService<SecretStore>() is { Available: true } s ? s : null;
+            var list = new List<object>();
+            foreach (var c in assets.Cdns)
+            {
+                var info = secrets is null ? null : await secrets.InfoAsync(c.SecretName, ct);
+                list.Add(new { c.Id, c.Kind, c.BaseUrl, c.KeyPairId, c.LinkMinutes,
+                    key = info is null ? null : new { setAt = info.SetAt, setBy = info.SetBy, reference = info.Reference?.ToString() } });
+            }
+            return Results.Json(new
+            {
+                cdns = list,
+                editable = sp.GetService<SettingsStore>() is not null && sp.GetService<SettingsArea<AssetCdnSettings>>() is not null,
+                secretsAvailable = secrets is not null,
+            }, SettingsArea.Json);
+        });
+
+        admin.MapPut("/cdns/{id}", (string id, CdnRequest body, HttpContext http, WincheAssets assets, IServiceProvider sp, CancellationToken ct) => Run(async () =>
+        {
+            if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
+            if (sp.GetService<SettingsArea<AssetCdnSettings>>() is not { } area || sp.GetService<SettingsStore>() is not { } store)
+                return Problem("CDNs are set in the app's code here.");
+            if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why: it goes in the settings history.");
+            var cdn = new AssetCdn { Id = id, BaseUrl = body.BaseUrl?.Trim() ?? "", KeyPairId = body.KeyPairId?.Trim() ?? "", LinkMinutes = body.LinkMinutes ?? 10 };
+            if (!cdn.BaseUrl.EndsWith('/')) cdn = cdn with { BaseUrl = cdn.BaseUrl + "/" };
+            if (cdn.Problems() is { Count: > 0 } p) return Problem(string.Join(" ", p));
+            var secrets = sp.GetService<SecretStore>() is { Available: true } s ? s : null;
+            var giving = !string.IsNullOrWhiteSpace(body.PrivateKey) || !string.IsNullOrWhiteSpace(body.PrivateKeyReference);
+            if (giving)
+            {
+                if (secrets is null) return Problem("Keeping a private key needs the master key.");
+                var (pem, unreadable) = await ConsoleSecretsEndpoints.KeyFromAsync(sp, body.PrivateKey, body.PrivateKeyReference, http, ct);
+                if (unreadable is not null) return unreadable;
+                try { using var rsa = System.Security.Cryptography.RSA.Create(); rsa.ImportFromPem(AssetCdnSigner.Pem(pem!)); }
+                catch (ArgumentException) { return Problem("The private key isn't an RSA key in PEM (-----BEGIN PRIVATE KEY----- or RSA PRIVATE KEY)."); }
+                if (await ConsoleSecretsEndpoints.SetAsync(secrets, cdn.SecretName, body.PrivateKey, body.PrivateKeyReference, http, ct) is { } notSet) return notSet;
+            }
+            else if (secrets is null || await secrets.InfoAsync(cdn.SecretName, ct) is null) return Problem("Give its private key (or where to read it from).");
+            var others = area.Current.Cdns.Where(c => c.Id != id);
+            var next = area.Current with { Cdns = [.. others, cdn] };
+            await store.SaveAsync(AssetCdnSettings.Area, System.Text.Json.JsonSerializer.SerializeToNode(next, SettingsArea.Json)!, Who(http.User), body.Reason.Trim(), ct);
+            return Results.NoContent();
+        }));
+
+        admin.MapDelete("/cdns/{id}", (string id, string? reason, HttpContext http, WincheAssets assets, IServiceProvider sp, CancellationToken ct) => Run(async () =>
+        {
+            if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
+            if (sp.GetService<SettingsArea<AssetCdnSettings>>() is not { } area || sp.GetService<SettingsStore>() is not { } store)
+                return Problem("CDNs are set in the app's code here.");
+            if (area.Current.Cdns.FirstOrDefault(c => c.Id == id) is not { } cdn) return Refused(new AssetsException("not-found", $"There's no CDN {id}."));
+            // Apps still reading a channel's release on it would get nothing.
+            foreach (var channel in await assets.ChannelsAsync(ct))
+                if (await assets.ReleaseAsync(channel.Release, ct) is { } r && r.Files.Values.Any(f => f.Url is { } u && cdn.Serves(u)))
+                    return Problem($"Release {r.Number} on {channel.Name} has files on {id}: publish one without them first.");
+            await store.SaveAsync(AssetCdnSettings.Area, System.Text.Json.JsonSerializer.SerializeToNode(area.Current with { Cdns = [.. area.Current.Cdns.Where(c => c.Id != id)] }, SettingsArea.Json)!,
+                Who(http.User), string.IsNullOrWhiteSpace(reason) ? $"Removed the CDN {id}" : reason.Trim(), ct);
+            if (sp.GetService<SecretStore>() is { Available: true } secrets) await secrets.DeleteAsync(cdn.SecretName, ct);
+            return Results.NoContent();
+        }));
+
+        // A file on a CDN, through a link signed now: does the CDN take the key?
+        admin.MapPost("/cdns/{id}/test", (string id, CdnTestRequest body, AssetCdnSigner signer, CancellationToken ct) => Run(async () =>
+        {
+            if (string.IsNullOrWhiteSpace(body.Url)) return Problem("Give the address of a file on it.");
+            if (signer.For(body.Url.Trim()) is not { } cdn || cdn.Id != id) return Problem($"That address isn't under {id}'s base address.");
+            try
+            {
+                using var response = await signer.GetAsync(body.Url.Trim(), HttpMethod.Head, ct);
+                return Results.Json(new
+                {
+                    ok = response.IsSuccessStatusCode, status = (int)response.StatusCode,
+                    message = response.IsSuccessStatusCode ? "The CDN took the signed link." : response.StatusCode == System.Net.HttpStatusCode.Forbidden
+                        ? "The CDN refused the signed link: check the key pair id, and that the distribution trusts its key group." : $"The CDN answered {(int)response.StatusCode}.",
+                });
+            }
+            catch (HttpRequestException ex) { return Results.Json(new { ok = false, status = 0, message = $"The CDN can't be reached ({ex.Message})." }); }
+        }));
 
         // Where contents are kept (with UseSettings): test a place, move there, cancel. Not for CI tokens.
         admin.MapGet("/location", (AssetArchives archives, AssetMoves moves, IServiceProvider sp) => Results.Json(new

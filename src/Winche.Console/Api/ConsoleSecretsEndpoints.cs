@@ -77,6 +77,7 @@ internal static class ConsoleSecretsEndpoints
             _ when storage.TryGetValue(i.Name, out var where) => ("Storage", $"Secret key of {where}", "/storage/settings"),
             _ when assets.TryGetValue(i.Name, out var where) => ("Assets", $"Secret key of {where}", "/assets/settings"),
             _ when parts is ["storage", "location", _, "secretKey"] => ("Storage", "Secret key of a location no longer used", null),
+            _ when parts is ["assets", "cdn", var cdn, "privateKey"] => ("Assets", $"Private key of the CDN {cdn} (signs its links)", "/assets/settings"),
             _ when parts is ["hooks", var hook, "signingSecret"] => ("Webhooks", $"Signing secret of the webhook {hook} (made by Winche)", null),
             _ => ("Other", i.Name, null),
         };
