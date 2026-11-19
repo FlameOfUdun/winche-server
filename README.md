@@ -159,6 +159,11 @@ and a deploy reaches every task within seconds.
   documents, files, users and assets. You write them in your editor and deploy them with the CLI (`winche functions
   deploy`, or a service account). The console shows each one with what it does, runs callables, lists each trigger's runs, sets
   each function's run time, and keeps every deploy in its change history (Settings → Change history) to roll back to.
+- **Plugins:** packages of functions from npm a project installs instead of writing them (`winche plugins:install`,
+  or `"plugins"` in winche.json), each copy under an id with its own settings and secrets (`<ID>__<NAME>`); its
+  functions are `<id>.<name>`. Installing, changing, upgrading and removing one are functions versions, in the change
+  history with the code. The console API is `/console/v1/projects/<id>/functions/plugins`; the server needs to reach
+  the npm registry (it already does for functions' packages). See Winche.Functions' README (Plugins).
 - **Secrets:** the API keys and passwords functions read (`secrets.define`), and those the products keep (the SMTP
   password, a sync's or provider's client secret, a bucket's key), on one page. Each is a value kept encrypted and never
   shown again, or a reference read from AWS Secrets Manager or Parameter Store (`aws-ssm:/app/key`, with Test). A

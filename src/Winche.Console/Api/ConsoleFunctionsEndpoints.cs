@@ -20,7 +20,8 @@ namespace Winche.Console.Api;
 /// </summary>
 public static class ConsoleFunctionsEndpoints
 {
-    public sealed record DeployRequest(Dictionary<string, string>? Files, string? Note, Dictionary<string, ResourceEntry>? Resources = null);
+    /// <param name="Plugins">The plugins winche.json lists, when it lists them: the deployment has exactly these. Null keeps the ones installed.</param>
+    public sealed record DeployRequest(Dictionary<string, string>? Files, string? Note, Dictionary<string, ResourceEntry>? Resources = null, List<PluginRequest>? Plugins = null);
     public sealed record ResourcesRequest(List<string>? Hashes);
     public sealed record NoteRequest(string? Note);
     public sealed record RunRequest(string? Name, JsonElement? Data, string? AsUid);
@@ -37,7 +38,7 @@ public static class ConsoleFunctionsEndpoints
     {
         name = f.Name, kind = f.Trigger.Kind, events = f.Trigger.Events, path = f.Trigger.Path, cron = f.Trigger.Cron, timeZone = f.Trigger.TimeZone,
         description = f.Trigger.Describe(), timeoutSeconds = functions?.TimeoutFor(f) ?? f.TimeoutSeconds, codeTimeoutSeconds = f.CodeTimeoutSeconds,
-        secrets = f.Secrets ?? [],
+        secrets = f.Secrets ?? [], plugin = f.Plugin,
         about = f.About, input = f.Input?.DeepClone(), output = f.Output?.DeepClone(), example = f.ExampleInput,
         // Its instances: what's in force (and from where: setting, code, default), and what its code says.
         limits = functions is null || f.Trigger.Kind == "before" ? null : Limits(functions.LimitsFor(f)),
@@ -54,6 +55,7 @@ public static class ConsoleFunctionsEndpoints
     private static object Version(Deployment d, WincheFunctions? functions = null) => new
     {
         version = d.Version, note = d.Note, by = d.By, at = d.At, rolledBackFrom = d.RolledBackFrom, functions = d.Functions.Select(f => Info(f, functions)),
+        plugins = d.PluginList.Select(p => new { id = p.Id, package = p.Package, version = p.Version, source = p.Source }),
     };
 
     public static IEndpointRouteBuilder MapConsoleFunctionsEndpoints(this IEndpointRouteBuilder app)
@@ -118,7 +120,11 @@ public static class ConsoleFunctionsEndpoints
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
             if (string.IsNullOrWhiteSpace(body.Note)) return Problem("Say what changed: it goes in the version list.");
-            try { return Results.Json(Version(await functions.DeployAsync(body.Files ?? [], body.Note.Trim(), Who(http.User), ct, resources: body.Resources))); }
+            try
+            {
+                var plugins = body.Plugins is null ? null : await functions.ResolveDeployPluginsAsync(body.Plugins, Who(http.User), ct);
+                return Results.Json(Version(await functions.DeployAsync(body.Files ?? [], body.Note.Trim(), Who(http.User), ct, resources: body.Resources, plugins: plugins)));
+            }
             catch (FunctionDeployException ex) { return Problem(ex.Message, ex.Problems); }
             catch (FunctionsUnavailableException ex) { return Problem(ex.Message); }
         }).WithMetadata(ci);
@@ -204,6 +210,7 @@ public static class ConsoleFunctionsEndpoints
             });
         });
 
+        group.MapConsolePluginsEndpoints(ci);
         return app;
     }
 }
