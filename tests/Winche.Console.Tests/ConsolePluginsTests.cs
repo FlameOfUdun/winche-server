@@ -14,6 +14,12 @@ public class ConsolePluginsTests(PostgresFixture fx) : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await fx.ResetAuthAsync();
+        await ClearAsync();
+    }
+
+    /// <summary>No deployment left for the next test's app to start the functions runtime for (its log line would be counted).</summary>
+    private async Task ClearAsync()
+    {
         await using var conn = new NpgsqlConnection(fx.ConnectionString);
         await conn.OpenAsync();
         await using var cmd = new NpgsqlCommand("""
@@ -25,7 +31,7 @@ public class ConsolePluginsTests(PostgresFixture fx) : IAsyncLifetime
         await cmd.ExecuteNonQueryAsync();
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public Task DisposeAsync() => ClearAsync();
 
     private static async Task<JsonElement> Json(HttpResponseMessage resp)
     {
@@ -61,6 +67,11 @@ public class ConsolePluginsTests(PostgresFixture fx) : IAsyncLifetime
         var options = app.Services.GetRequiredService<Winche.Functions.FunctionsOptions>();
         options.ProvidedPlugins["greeter-plugin"] = Plugin("1.0.0");
 
+        options.PluginRegistry = "http://127.0.0.1:9/";   // nothing there: no npm in tests
+        options.PluginCatalog = ["greeter-plugin", "not-a-plugin"];
+        var catalog = (await Json(await client.GetAsync("/console/v1/functions/plugins/catalog"))).GetProperty("plugins");
+        Assert.Equal(("Greeter", "1.0.0"), (catalog[0].GetProperty("title").GetString(), catalog[0].GetProperty("version").GetString()));
+        Assert.Equal(JsonValueKind.String, catalog[1].GetProperty("problem").ValueKind);   // listed, but npm (or the server) can't give it
         var package = await Json(await client.GetAsync("/console/v1/functions/plugins/package?name=greeter-plugin"));
         Assert.Equal(("1.0.0", "Greeter", "GREETING"), (package.GetProperty("version").GetString(), package.GetProperty("manifest").GetProperty("title").GetString(),
             package.GetProperty("manifest").GetProperty("settings")[0].GetProperty("name").GetString()));
@@ -74,6 +85,7 @@ public class ConsolePluginsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Equal("Hi Ann (1.0.0)", run.GetProperty("result").GetString());
 
         var list = (await Json(await client.GetAsync("/console/v1/functions/plugins"))).GetProperty("plugins")[0];
+        Assert.True(list.GetProperty("curated").GetBoolean());
         Assert.Equal(("hello", "console", false, "HELLO__API_KEY"), (list.GetProperty("id").GetString(), list.GetProperty("source").GetString(),
             list.GetProperty("update").GetBoolean(), list.GetProperty("secretsNeeded")[0].GetString()));
         var page = await Json(await client.GetAsync("/console/v1/functions"));

@@ -19,6 +19,7 @@ internal sealed class FunctionsLongestRun(ServerSettingsProvider settings, Funct
         o.MaxConcurrency = s.FunctionsMaxConcurrency;
         o.SharedProcessMemoryMb = s.FunctionsSharedProcessMb;
         o.MaxProcesses = s.FunctionsMaxProcesses;
+        o.PluginCatalog = s.PluginCatalog;
     }
 
     public Task StartAsync(CancellationToken ct)

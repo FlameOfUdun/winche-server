@@ -128,6 +128,8 @@ internal static class ProjectApp
                 foreach (var dir in Directory.EnumerateDirectories(packages, "*", SearchOption.AllDirectories))
                     if (File.Exists(Path.Combine(dir, "package.json")))
                         o.ProvidedPackages[Path.GetRelativePath(packages, dir).Replace('\\', '/')] = dir;   // e.g. @winche-technologies/winche-admin
+            if (server.FunctionPluginsPath is { Length: > 0 } plugins && Directory.Exists(plugins))
+                ProvidedPlugins.Add(o, plugins);
             FunctionsLongestRun.Apply(o, settings.Current);   // the server's limits; followed below
             o.UseSettings();   // Functions → Settings: the project's default and each function's own time
         });

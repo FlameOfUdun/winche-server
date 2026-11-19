@@ -85,6 +85,9 @@ public sealed class ServerOptions
     /// <summary>The most functions processes per project (default 4: the shared one and isolated functions' own).</summary>
     public int FunctionsMaxProcesses { get; set; } = 4;
 
+    /// <summary>The plugin packages (npm names) the console offers projects (<c>Winche__PluginCatalog__0</c>, …).</summary>
+    public List<string> PluginCatalog { get; set; } = [];
+
     /// <summary>
     /// The deno program that runs functions, only when running the server outside its image (the image installs deno
     /// and has it on the PATH). Not a console setting.
@@ -97,6 +100,13 @@ public sealed class ServerOptions
     /// can't reach npm (<c>Winche__FunctionPackagesPath</c>). Unset: projects name their packages themselves.
     /// </summary>
     public string? FunctionPackagesPath { get; set; }
+
+    /// <summary>
+    /// A folder of plugin packages (each a folder with its package.json and winche-plugin.json) this server provides
+    /// over npm, by their names: for servers that can't reach npm, or plugins of your own not published there
+    /// (<c>Winche__FunctionPluginsPath</c>).
+    /// </summary>
+    public string? FunctionPluginsPath { get; set; }
 
 
     /// <summary>

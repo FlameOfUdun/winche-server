@@ -31,8 +31,9 @@ public static class ConsolePluginsEndpoints
         secrets = m.Secrets.Select(s => new { name = s.Key, label = s.Value.Label, description = s.Value.Description, required = s.Value.Required }),
     };
 
-    private static object Installed(PluginInstallInfo i) => new
+    private static object Installed(PluginInstallInfo i, FunctionsOptions options) => new
     {
+        curated = options.PluginCatalog.Contains(i.Install.Package),
         id = i.Install.Id, package = i.Install.Package, version = i.Install.Version, latest = i.Latest,
         update = i.Latest is { } l && l != i.Install.Version,
         settings = i.Install.Settings, source = i.Install.Source, by = i.Install.By, at = i.Install.At,
@@ -55,13 +56,35 @@ public static class ConsolePluginsEndpoints
         catch (HttpRequestException ex) { return Problem($"npm can't be reached ({ex.Message})."); }
     }
 
+    /// <summary>Catalog packages looked up lately (their newest version), for ten minutes.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (PluginPackage Package, DateTimeOffset At)> Catalog = new(StringComparer.Ordinal);
+
     public static void MapConsolePluginsEndpoints(this RouteGroupBuilder group, ConsoleCiScope ci)
     {
         // What's installed, with each copy's newest version (npm, or the server's own folder) and the secrets it still needs.
-        group.MapGet("/plugins", async (bool? updates, WincheFunctions functions, CancellationToken ct) =>
+        group.MapGet("/plugins", async (bool? updates, WincheFunctions functions, FunctionsOptions options, CancellationToken ct) =>
         {
             await functions.RefreshAsync(ct);
-            return Results.Json(new { plugins = (await functions.PluginsAsync(updates != false, ct)).Select(Installed) });
+            return Results.Json(new { plugins = (await functions.PluginsAsync(updates != false, ct)).Select(i => Installed(i, options)) });
+        }).WithMetadata(ci);
+
+        // The plugins this server offers (Server settings → Plugins): each one's newest version and what it is.
+        group.MapGet("/plugins/catalog", async (FunctionsOptions options, PluginPackages packages, CancellationToken ct) =>
+        {
+            var list = await Task.WhenAll(options.PluginCatalog.Select(async name =>
+            {
+                try
+                {
+                    var p = Catalog.TryGetValue(name, out var hit) && hit.At > DateTimeOffset.UtcNow.AddMinutes(-10) ? hit.Package
+                        : (Catalog[name] = (await packages.GetAsync(name, null, ct), DateTimeOffset.UtcNow)).Package;
+                    return (object)new { package = name, version = p.Version, title = p.Manifest.Title, description = p.Manifest.Description, icon = p.Manifest.Icon, problem = (string?)null };
+                }
+                catch (Exception ex) when (ex is FunctionDeployException or HttpRequestException)
+                {
+                    return new { package = name, version = (string?)null, title = name, description = (string?)null, icon = (string?)null, problem = (string?)ex.Message };
+                }
+            }));
+            return Results.Json(new { plugins = list });
         }).WithMetadata(ci);
 
         // A package before installing or upgrading it: its version and its winche-plugin.json.

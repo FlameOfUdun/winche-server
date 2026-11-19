@@ -48,6 +48,12 @@ public sealed record ServerSettings
     public int FunctionsMaxProcesses { get; init; } = 4;
 
     /// <summary>
+    /// The plugin packages (npm names) the console offers projects to install: the ones this server's admins trust.
+    /// Projects' admins may install others, warned first.
+    /// </summary>
+    public IReadOnlyList<string> PluginCatalog { get; init; } = [];
+
+    /// <summary>
     /// The identity providers people can sign in to the console with, besides email and password (always there). Each
     /// one's client secret is the secret <see cref="Winche.Console.Identity.ConsoleOidcSettings.SecretFor"/> its id.
     /// </summary>
@@ -84,6 +90,7 @@ public sealed record ServerSettings
         FunctionsMaxConcurrency = o.FunctionsMaxConcurrency,
         FunctionsSharedProcessMb = o.FunctionsSharedProcessMb,
         FunctionsMaxProcesses = o.FunctionsMaxProcesses,
+        PluginCatalog = [.. o.PluginCatalog.Select(p => p.Trim()).Where(p => p.Length > 0).Distinct()],
         ConsoleProviders = o.ConsoleSignIn is { Issuer.Length: > 0 } c
             ?
             [
@@ -111,6 +118,8 @@ public sealed record ServerSettings
             problems.Add($"The shared process's limit is 128 MB to {budget} MB (this server's functions memory).");
         if (FunctionsMaxConcurrency is < 1 or > 256) problems.Add("Functions running at once is 1 to 256 per project.");
         if (FunctionsMaxProcesses is < 1 or > 16) problems.Add("Functions processes per project are 1 to 16.");
+        foreach (var p in PluginCatalog) if (Winche.Functions.PluginIds.PackageProblem(p) is { } bad) problems.Add($"Plugins: {bad}");
+        if (PluginCatalog.Count > 50) problems.Add("The plugin catalog has at most 50 packages.");
         problems.AddRange(Winche.Console.Identity.ConsoleOidcSettings.Problems(ConsoleProviders));
         return problems;
     }
