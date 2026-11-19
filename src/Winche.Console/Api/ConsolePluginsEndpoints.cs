@@ -105,7 +105,8 @@ public static class ConsolePluginsEndpoints
         // Plugin packages: the server's folders and npm's (keyword winche-plugin), with whether the server offers each.
         group.MapGet("/plugins/search", async (string? q, PluginPackages packages, FunctionsOptions options, CancellationToken ct) =>
             Results.Json(new { results = (await packages.SearchAsync(q, ct)).Select(r => new { package = r.Package, version = r.Version, description = r.Description,
-                publisher = r.Publisher, at = r.At, provided = r.Provided, curated = options.PluginCatalog.Contains(r.Package) }) }));
+                publisher = r.Publisher, at = r.At, provided = r.Provided, curated = options.PluginCatalog.Contains(r.Package),
+                downloads = r.Downloads, popularity = r.Popularity }) }));
 
         // The plugins this server offers (Server settings → Plugins): each one's newest version and what it is.
         group.MapGet("/plugins/catalog", async (FunctionsOptions options, PluginPackages packages, CancellationToken ct) =>
