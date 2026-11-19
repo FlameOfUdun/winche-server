@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Winche.Console.Identity;
+using Microsoft.Extensions.DependencyInjection;
 using Winche.Functions;
 
 namespace Winche.Console.Api;
@@ -23,13 +24,25 @@ public static class ConsolePluginsEndpoints
 
     private static IResult Problem(string message, IReadOnlyList<string>? problems = null) => ConsoleErrors.Problem("functions", message, problems);
 
+    private static object? Condition(PluginCondition? c) => c is null ? null : new { setting = c.Setting, @is = c.Is?.DeepClone(), set = c.Set };
+
     private static object Manifest(PluginManifest m) => new
     {
-        title = m.Title, description = m.Description, icon = m.Icon, access = m.Access,
+        title = m.Title, description = m.Description, icon = m.Icon, access = m.Access, billing = m.Billing,
         settings = m.Settings.Select(s => new { name = s.Key, label = s.Value.Label, description = s.Value.Description, type = s.Value.Type,
-            required = s.Value.Required, @default = s.Value.Default?.DeepClone(), options = s.Value.Options }),
-        secrets = m.Secrets.Select(s => new { name = s.Key, label = s.Value.Label, description = s.Value.Description, required = s.Value.Required }),
+            required = s.Value.Required, @default = s.Value.Default?.DeepClone(), options = s.Value.Options, section = s.Value.Section, showIf = Condition(s.Value.ShowIf) }),
+        secrets = m.Secrets.Select(s => new { name = s.Key, label = s.Value.Label, description = s.Value.Description, required = s.Value.Required, showIf = Condition(s.Value.ShowIf) }),
+        setup = m.Setup.Select(s => new { text = s.Text, showIf = Condition(s.ShowIf) }),
     };
+
+    private static object About(PluginAbout a) => new
+    {
+        description = a.Description, author = a.Author, homepage = a.Homepage, repository = a.Repository, license = a.License, readme = a.Readme,
+    };
+
+    /// <summary>Where the project's HTTP functions answer (a plugin's setup steps name its functions' addresses).</summary>
+    private static string FunctionsUrl(HttpContext http) =>
+        Winche.Console.Apps.AppSetup.BaseUrlOf(http.Request).TrimEnd('/') + "/functions/v1/http";
 
     private static object Installed(PluginInstallInfo i, FunctionsOptions options) => new
     {
@@ -62,11 +75,29 @@ public static class ConsolePluginsEndpoints
     public static void MapConsolePluginsEndpoints(this RouteGroupBuilder group, ConsoleCiScope ci)
     {
         // What's installed, with each copy's newest version (npm, or the server's own folder) and the secrets it still needs.
-        group.MapGet("/plugins", async (bool? updates, WincheFunctions functions, FunctionsOptions options, CancellationToken ct) =>
+        group.MapGet("/plugins", async (bool? updates, HttpContext http, WincheFunctions functions, FunctionsOptions options, CancellationToken ct) =>
         {
             await functions.RefreshAsync(ct);
-            return Results.Json(new { plugins = (await functions.PluginsAsync(updates != false, ct)).Select(i => Installed(i, options)) });
+            return Results.Json(new { plugins = (await functions.PluginsAsync(updates != false, ct)).Select(i => Installed(i, options)), functionsUrl = FunctionsUrl(http) });
         }).WithMetadata(ci);
+
+        // One copy's changes, newest first (each a functions version).
+        group.MapGet("/plugins/{id}/history", async (string id, WincheFunctions functions, CancellationToken ct) =>
+            Results.Json(new { history = (await functions.PluginHistoryAsync(id, ct)).Select(h => new { version = h.Version, what = h.What, note = h.Note, by = h.By, at = h.At, rolledBackFrom = h.RolledBackFrom }) }));
+
+        // A package's versions, newest first.
+        group.MapGet("/plugins/versions", async (string? name, PluginPackages packages, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(name)) return Problem("Give the package's name.");
+            try { return Results.Json(new { versions = (await packages.VersionsAsync(name.Trim(), ct)).Select(v => new { version = v.Version, at = v.At }) }); }
+            catch (FunctionDeployException ex) { return Problem(ex.Message, ex.Problems); }
+            catch (HttpRequestException ex) { return Problem($"npm can't be reached ({ex.Message})."); }
+        });
+
+        // Plugin packages: the server's folders and npm's (keyword winche-plugin), with whether the server offers each.
+        group.MapGet("/plugins/search", async (string? q, PluginPackages packages, FunctionsOptions options, CancellationToken ct) =>
+            Results.Json(new { results = (await packages.SearchAsync(q, ct)).Select(r => new { package = r.Package, version = r.Version, description = r.Description,
+                publisher = r.Publisher, at = r.At, provided = r.Provided, curated = options.PluginCatalog.Contains(r.Package) }) }));
 
         // The plugins this server offers (Server settings → Plugins): each one's newest version and what it is.
         group.MapGet("/plugins/catalog", async (FunctionsOptions options, PluginPackages packages, CancellationToken ct) =>
@@ -77,24 +108,26 @@ public static class ConsolePluginsEndpoints
                 {
                     var p = Catalog.TryGetValue(name, out var hit) && hit.At > DateTimeOffset.UtcNow.AddMinutes(-10) ? hit.Package
                         : (Catalog[name] = (await packages.GetAsync(name, null, ct), DateTimeOffset.UtcNow)).Package;
-                    return (object)new { package = name, version = p.Version, title = p.Manifest.Title, description = p.Manifest.Description, icon = p.Manifest.Icon, problem = (string?)null };
+                    return (object)new { package = name, version = p.Version, title = p.Manifest.Title, description = p.Manifest.Description ?? p.About.Description, icon = p.Manifest.Icon,
+                        author = p.About.Author, problem = (string?)null };
                 }
                 catch (Exception ex) when (ex is FunctionDeployException or HttpRequestException)
                 {
-                    return new { package = name, version = (string?)null, title = name, description = (string?)null, icon = (string?)null, problem = (string?)ex.Message };
+                    return new { package = name, version = (string?)null, title = name, description = (string?)null, icon = (string?)null, author = (string?)null, problem = (string?)ex.Message };
                 }
             }));
             return Results.Json(new { plugins = list });
         }).WithMetadata(ci);
 
         // A package before installing or upgrading it: its version and its winche-plugin.json.
-        group.MapGet("/plugins/package", async (string? name, string? version, PluginPackages packages, CancellationToken ct) =>
+        group.MapGet("/plugins/package", async (string? name, string? version, HttpContext http, PluginPackages packages, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(name)) return Problem("Give the package's name.");
             try
             {
                 var p = await packages.GetAsync(name.Trim(), string.IsNullOrWhiteSpace(version) ? null : version.Trim(), ct);
-                return Results.Json(new { package = p.Name, version = p.Version, manifest = Manifest(p.Manifest) });
+                return Results.Json(new { package = p.Name, version = p.Version, manifest = Manifest(p.Manifest), about = About(p.About),
+                    curated = http.RequestServices.GetRequiredService<FunctionsOptions>().PluginCatalog.Contains(p.Name) });
             }
             catch (FunctionDeployException ex) { return Problem(ex.Message, ex.Problems); }
             catch (HttpRequestException ex) { return Problem($"npm can't be reached ({ex.Message})."); }

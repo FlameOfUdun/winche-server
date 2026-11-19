@@ -49,6 +49,7 @@ public class ConsolePluginsTests(PostgresFixture fx) : IAsyncLifetime
             { "title": "Greeter", "settings": { "GREETING": { "label": "Greeting", "required": true } },
               "secrets": { "API_KEY": { "label": "API key" } }, "access": ["Calls nothing; says hello."] }
             """);
+        File.WriteAllText(Path.Combine(dir, "README.md"), "# Greeter");
         File.WriteAllText(Path.Combine(dir, "index.js"), $$"""
             import { callable, plugin } from "@winche-technologies/winche-functions";
             export default plugin((p) => ({ greet: callable(async (d) => `${p.setting("GREETING")} ${d.name} ({{version}})`) }));
@@ -107,6 +108,17 @@ public class ConsolePluginsTests(PostgresFixture fx) : IAsyncLifetime
             plugins = new[] { new { id = "hello", package = "greeter-plugin", version = "1.1.0", settings = new Dictionary<string, string> { ["GREETING"] = "Hello" } }, new { id = "hey", package = "greeter-plugin", version = (string?)null, settings = new Dictionary<string, string> { ["GREETING"] = "Hey" } } },
         }));
         Assert.Equal(["hello:console", "hey:deploy"], deployed.GetProperty("plugins").EnumerateArray().Select(p => $"{p.GetProperty("id").GetString()}:{p.GetProperty("source").GetString()}"));
+
+        // The pages about a package and a copy: its README, versions, search, history, and where its functions answer.
+        var about = await Json(await client.GetAsync("/console/v1/functions/plugins/package?name=greeter-plugin"));
+        Assert.Equal("# Greeter", about.GetProperty("about").GetProperty("readme").GetString());
+        Assert.True(about.GetProperty("curated").GetBoolean());
+        Assert.Equal("1.1.0", (await Json(await client.GetAsync("/console/v1/functions/plugins/versions?name=greeter-plugin"))).GetProperty("versions")[0].GetProperty("version").GetString());
+        var search = (await Json(await client.GetAsync("/console/v1/functions/plugins/search?q=greet"))).GetProperty("results");
+        Assert.Equal(("greeter-plugin", true), (search[0].GetProperty("package").GetString(), search[0].GetProperty("provided").GetBoolean()));
+        var history = (await Json(await client.GetAsync("/console/v1/functions/plugins/hello/history"))).GetProperty("history");
+        Assert.Equal(["1.0.0 → 1.1.0", "Settings changed: GREETING", "Installed greeter-plugin 1.0.0"], history.EnumerateArray().Select(h => h.GetProperty("what").GetString()));
+        Assert.EndsWith("/functions/v1/http", (await Json(await client.GetAsync("/console/v1/functions/plugins"))).GetProperty("functionsUrl").GetString());
 
         await Json(await client.DeleteAsync("/console/v1/functions/plugins/hello?secrets=remove"));
         var secrets = await (await client.GetAsync("/console/v1/functions/secrets")).Content.ReadAsStringAsync();
