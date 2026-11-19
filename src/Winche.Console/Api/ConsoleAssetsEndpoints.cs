@@ -25,7 +25,7 @@ public static class ConsoleAssetsEndpoints
     public sealed record PublishRequest(Dictionary<string, AssetFile>? Files, string? Note, string? Channel, string? Source = null);
     public sealed record ChannelRequest(int? Release);
     public sealed record UrlsRequest(List<string>? Urls);
-    public sealed record CdnRequest(string? BaseUrl, string? KeyPairId, int? LinkMinutes, string? PrivateKey, string? PrivateKeyReference, string? Reason);
+    public sealed record CdnRequest(string? BaseUrl, string? KeyPairId, int? LinkMinutes, string? PrivateKey, string? PrivateKeyReference, string? Reason, string? Kind = null);
     public sealed record CdnTestRequest(string? Url);
     public sealed record LocationRequest(ArchiveLocation? Location, string? SecretKey, string? Reason, string? SecretKeyReference = null);
 
@@ -184,12 +184,14 @@ public static class ConsoleAssetsEndpoints
             if (sp.GetService<SettingsArea<AssetCdnSettings>>() is not { } area || sp.GetService<SettingsStore>() is not { } store)
                 return Problem("CDNs are set in the app's code here.");
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why: it goes in the settings history.");
-            var cdn = new AssetCdn { Id = id, BaseUrl = body.BaseUrl?.Trim() ?? "", KeyPairId = body.KeyPairId?.Trim() ?? "", LinkMinutes = body.LinkMinutes ?? 10 };
+            var cdn = new AssetCdn { Id = id, Kind = string.IsNullOrWhiteSpace(body.Kind) ? "cloudfront" : body.Kind.Trim(), BaseUrl = body.BaseUrl?.Trim() ?? "",
+                KeyPairId = body.KeyPairId?.Trim() ?? "", LinkMinutes = body.LinkMinutes ?? 10 };
             if (!cdn.BaseUrl.EndsWith('/')) cdn = cdn with { BaseUrl = cdn.BaseUrl + "/" };
             if (cdn.Problems() is { Count: > 0 } p) return Problem(string.Join(" ", p));
             var secrets = sp.GetService<SecretStore>() is { Available: true } s ? s : null;
-            var giving = !string.IsNullOrWhiteSpace(body.PrivateKey) || !string.IsNullOrWhiteSpace(body.PrivateKeyReference);
-            if (giving)
+            var giving = cdn.Signs && (!string.IsNullOrWhiteSpace(body.PrivateKey) || !string.IsNullOrWhiteSpace(body.PrivateKeyReference));
+            if (!cdn.Signs) { if (secrets is not null) await secrets.DeleteAsync(cdn.SecretName, ct); }   // a public CDN keeps no key
+            else if (giving)
             {
                 if (secrets is null) return Problem("Keeping a private key needs the master key.");
                 var (pem, unreadable) = await ConsoleSecretsEndpoints.KeyFromAsync(sp, body.PrivateKey, body.PrivateKeyReference, http, ct);
@@ -232,8 +234,9 @@ public static class ConsoleAssetsEndpoints
                 return Results.Json(new
                 {
                     ok = response.IsSuccessStatusCode, status = (int)response.StatusCode,
-                    message = response.IsSuccessStatusCode ? "The CDN took the signed link." : response.StatusCode == System.Net.HttpStatusCode.Forbidden
-                        ? "The CDN refused the signed link: check the key pair id, and that the distribution trusts its key group." : $"The CDN answered {(int)response.StatusCode}.",
+                    message = response.IsSuccessStatusCode ? (cdn.Signs ? "The CDN took the signed link." : "The CDN served it.") : response.StatusCode == System.Net.HttpStatusCode.Forbidden
+                        ? (cdn.Signs ? "The CDN refused the signed link: check the key pair id, and that the distribution trusts its key group." : "The CDN refused it: is it public?")
+                        : $"The CDN answered {(int)response.StatusCode}.",
                 });
             }
             catch (HttpRequestException ex) { return Results.Json(new { ok = false, status = 0, message = $"The CDN can't be reached ({ex.Message})." }); }
