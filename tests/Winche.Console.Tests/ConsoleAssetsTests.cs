@@ -56,6 +56,15 @@ public class ConsoleAssetsTests(PostgresFixture fx) : IAsyncLifetime
         var channel = release.GetProperty("channel").GetString()!;
         Assert.Equal(2, release.GetProperty("files").GetInt32());
 
+        // The console's list of what's live on the channel, and a file's bytes for its preview.
+        var live = await Json(await client.GetAsync($"/console/v1/assets/channels/{channel}/files"));
+        var number = release.GetProperty("number").GetInt32();
+        Assert.Equal(number, live.GetProperty("release").GetInt32());
+        Assert.Equal(["members/notes.txt", "public/hello.txt"], live.GetProperty("files").EnumerateArray().Select(f => f.GetProperty("path").GetString()));
+        Assert.All(live.GetProperty("files").EnumerateArray(), f => Assert.Equal(number, f.GetProperty("since").GetInt32()));
+        Assert.Equal($"hello {stamp}", await client.GetStringAsync($"/console/v1/assets/releases/{number}/content/public/hello.txt"));
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/console/v1/assets/releases/{number}/content/nope.txt")).StatusCode);
+
         // Apps: the channel lists the release, and files are read through the assets rules.
         using var anon = app.CreateClient();
         var listing = await Json(await anon.GetAsync($"/assets/v1/channels/{channel}"));

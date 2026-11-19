@@ -81,6 +81,38 @@ public static class ConsoleAssetsEndpoints
                 })
                 : Refused(new AssetsException("not-found", $"There's no release {number}.")))).WithMetadata(ci);
 
+        // The files apps get on a channel now: its release's files, each with the release its content arrived in.
+        group.MapGet("/channels/{name}/files", (string name, WincheAssets assets, CancellationToken ct) => Run(async () =>
+        {
+            var channel = (await assets.ChannelsAsync(ct)).FirstOrDefault(c => c.Name == name);
+            if (channel is null || await assets.ReleaseAsync(channel.Release, ct) is not { } live)
+                return Refused(new AssetsException("not-found", $"There's no channel {name}."));
+            var since = live.Files.ToDictionary(f => f.Key, _ => live.Number, StringComparer.Ordinal);
+            var open = new HashSet<string>(since.Keys, StringComparer.Ordinal);
+            foreach (var older in (await assets.ReleasesAsync(100, ct)).Where(r => r.Number < live.Number).OrderByDescending(r => r.Number).Take(50))
+            {
+                if (open.Count == 0) break;
+                if (await assets.ReleaseAsync(older.Number, ct) is not { } r) continue;
+                foreach (var path in open.ToList())
+                    if (r.Files.TryGetValue(path, out var f) && f.Hash == live.Files[path].Hash) since[path] = r.Number;
+                    else open.Remove(path);
+            }
+            return Results.Json(new
+            {
+                channel = channel.Name, release = live.Number, publishedAt = live.At, note = live.Note, by = live.By, size = live.TotalSize,
+                files = live.Files.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => new
+                {
+                    path = f.Key, hash = f.Value.Hash, size = f.Value.Size, mimeType = f.Value.MimeType, url = f.Value.Url, since = since[f.Key],
+                }),
+            });
+        })).WithMetadata(ci);
+
+        // A file's bytes, with the server's rights (the console's preview); one on a CDN is fetched through a signed link.
+        group.MapGet("/releases/{number:int}/content/{**path}", (int number, string path, WincheAssets assets, CancellationToken ct) => Run(async () =>
+            await assets.OpenAsync(number, path, ct) is { } opened
+                ? Results.Stream(opened.Content, string.IsNullOrEmpty(opened.File.MimeType) ? "application/octet-stream" : opened.File.MimeType)
+                : Refused(new AssetsException("not-found", $"There's no {path} in release {number}."))));
+
         group.MapGet("/releases/{from:int}/diff/{to:int}", (int from, int to, WincheAssets assets, CancellationToken ct) =>
             Run(async () => Results.Json(await assets.DiffAsync(from, to, ct)))).WithMetadata(ci);
 
