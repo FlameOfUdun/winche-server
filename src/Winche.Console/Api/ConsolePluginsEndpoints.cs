@@ -40,9 +40,17 @@ public static class ConsolePluginsEndpoints
         description = a.Description, author = a.Author, homepage = a.Homepage, repository = a.Repository, license = a.License, readme = a.Readme,
     };
 
-    /// <summary>Where the project's HTTP functions answer (a plugin's setup steps name its functions' addresses).</summary>
-    private static string FunctionsUrl(HttpContext http) =>
-        Winche.Console.Apps.AppSetup.BaseUrlOf(http.Request).TrimEnd('/') + "/functions/v1/http";
+    /// <summary>
+    /// Where the project's HTTP functions answer, as apps and other services reach them (a plugin's setup steps name its
+    /// functions' addresses): the project's address, not the console's (…/console/v1/projects/&lt;id&gt; → …/projects/&lt;id&gt;).
+    /// </summary>
+    internal static string FunctionsUrl(HttpContext http)
+    {
+        var base_ = Winche.Console.Apps.AppSetup.BaseUrlOf(http.Request).TrimEnd('/');
+        var at = base_.IndexOf("/console/v1/projects/", StringComparison.Ordinal);
+        if (at >= 0) base_ = base_[..at] + "/projects/" + base_[(at + "/console/v1/projects/".Length)..];
+        return base_ + "/functions/v1/http";
+    }
 
     private static object Installed(PluginInstallInfo i, FunctionsOptions options) => new
     {

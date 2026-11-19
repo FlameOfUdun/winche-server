@@ -118,7 +118,9 @@ public class ConsolePluginsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Equal(("greeter-plugin", true), (search[0].GetProperty("package").GetString(), search[0].GetProperty("provided").GetBoolean()));
         var history = (await Json(await client.GetAsync("/console/v1/functions/plugins/hello/history"))).GetProperty("history");
         Assert.Equal(["1.0.0 → 1.1.0", "Settings changed: GREETING", "Installed greeter-plugin 1.0.0"], history.EnumerateArray().Select(h => h.GetProperty("what").GetString()));
-        Assert.EndsWith("/functions/v1/http", (await Json(await client.GetAsync("/console/v1/functions/plugins"))).GetProperty("functionsUrl").GetString());
+        var functionsUrl = (await Json(await client.GetAsync("/console/v1/functions/plugins"))).GetProperty("functionsUrl").GetString()!;
+        Assert.EndsWith("/functions/v1/http", functionsUrl);
+        Assert.DoesNotContain("/console/", functionsUrl);   // the address apps and other services use, not the console's
 
         await Json(await client.DeleteAsync("/console/v1/functions/plugins/hello?secrets=remove"));
         var secrets = await (await client.GetAsync("/console/v1/functions/secrets")).Content.ReadAsStringAsync();
