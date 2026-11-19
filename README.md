@@ -169,6 +169,8 @@ and a deploy reaches every task within seconds.
   rollback), and rules per path. Kept in the project's files folder unless the console moves them to a bucket. Large
   files can stay on a CDN that signs links (CloudFront, **Assets → Settings → CDNs**, its private key a value or a
   reference to AWS): releases name them by address, apps never see it and get links that work for a few minutes.
+  **Assets → Files** lists what apps get on each channel, with previews; admins can make a release there too (add,
+  replace or take out files), and a later deploy from the repository's folder asks before taking those out.
 - **Project pages:** pages of the project's own in the console's sidebar: its HTML, JS and CSS, deployed with its
   functions, shown in a sandboxed frame, reading and writing the project's data with @winche-technologies/winche-admin as the person
   who opened it (their role limits it). See Winche.Functions' README.

@@ -22,7 +22,7 @@ namespace Winche.Console.Api;
 public static class ConsoleAssetsEndpoints
 {
     public sealed record HashesRequest(List<string>? Hashes);
-    public sealed record PublishRequest(Dictionary<string, AssetFile>? Files, string? Note, string? Channel);
+    public sealed record PublishRequest(Dictionary<string, AssetFile>? Files, string? Note, string? Channel, string? Source = null);
     public sealed record ChannelRequest(int? Release);
     public sealed record UrlsRequest(List<string>? Urls);
     public sealed record CdnRequest(string? BaseUrl, string? KeyPairId, int? LinkMinutes, string? PrivateKey, string? PrivateKeyReference, string? Reason);
@@ -45,7 +45,7 @@ public static class ConsoleAssetsEndpoints
         catch (AssetsException ex) { return Refused(ex); }
     }
 
-    private static object Summary(AssetReleaseSummary r) => new { number = r.Number, note = r.Note, by = r.By, at = r.At, files = r.FileCount, size = r.TotalSize };
+    private static object Summary(AssetReleaseSummary r) => new { number = r.Number, note = r.Note, by = r.By, at = r.At, files = r.FileCount, size = r.TotalSize, source = r.Source };
 
     private static object Channel(AssetChannel c) => new { name = c.Name, release = c.Release, updatedAt = c.UpdatedAt, by = c.By };
 
@@ -76,7 +76,7 @@ public static class ConsoleAssetsEndpoints
             await assets.ReleaseAsync(number, ct) is { } r
                 ? Results.Json(new
                 {
-                    number = r.Number, note = r.Note, by = r.By, at = r.At, size = r.TotalSize,
+                    number = r.Number, note = r.Note, by = r.By, at = r.At, size = r.TotalSize, source = r.Source,
                     files = r.Files.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => new { path = f.Key, hash = f.Value.Hash, size = f.Value.Size, mimeType = f.Value.MimeType, url = f.Value.Url }),
                 })
                 : Refused(new AssetsException("not-found", $"There's no release {number}.")))).WithMetadata(ci);
@@ -99,7 +99,7 @@ public static class ConsoleAssetsEndpoints
             }
             return Results.Json(new
             {
-                channel = channel.Name, release = live.Number, publishedAt = live.At, note = live.Note, by = live.By, size = live.TotalSize,
+                channel = channel.Name, release = live.Number, publishedAt = live.At, note = live.Note, by = live.By, size = live.TotalSize, source = live.Source,
                 files = live.Files.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => new
                 {
                     path = f.Key, hash = f.Value.Hash, size = f.Value.Size, mimeType = f.Value.MimeType, url = f.Value.Url, since = since[f.Key],
@@ -141,7 +141,7 @@ public static class ConsoleAssetsEndpoints
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
             if (string.IsNullOrWhiteSpace(body.Note)) return Problem("Say what changed: it goes in the release list.");
-            var release = await assets.PublishAsync(new AssetPublishRequest(body.Files ?? [], body.Note, string.IsNullOrWhiteSpace(body.Channel) ? null : body.Channel.Trim()), Who(http.User), ct);
+            var release = await assets.PublishAsync(new AssetPublishRequest(body.Files ?? [], body.Note, string.IsNullOrWhiteSpace(body.Channel) ? null : body.Channel.Trim(), body.Source), Who(http.User), ct);
             return Results.Json(new { number = release.Number, note = release.Note, by = release.By, at = release.At, files = release.Files.Count, size = release.TotalSize, channel = body.Channel });
         })).WithMetadata(ci);
 
