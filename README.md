@@ -98,7 +98,7 @@ Environment variables (or `appsettings.json`, section `Winche`):
 | `Winche__FunctionPluginsPath` | Optional: a folder of plugin packages (each a folder with its `package.json`, `winche-plugin.json` and built files) the server provides instead of npm: for servers that can't reach npm, or plugins of your own. Several versions of one can sit side by side (one folder each); the newest is offered. |
 | `Winche__PluginCatalog__0`, `__1`, … | Optional: the plugin packages the console offers projects (the ones you trust). Also in **Server settings → Plugins**. Projects' admins can still install others, warned first. |
 | `Winche__StopTimeoutSeconds` | How long a stop (SIGTERM) waits for requests and function runs going on to end (default 30). Give the container at least as long. |
-| `Winche__ProjectsPath` | Projects' files on disk, each under `<id>/files`, until they're moved to a bucket (default `/data/projects`: mount a volume). |
+| `Winche__ProjectsPath` | Projects' files on disk, each under `<id>/files`, until they're moved to a bucket (default `/data/projects`: mount a volume). The image runs as uid **1654**: a named volume is fine as it is, but a folder mounted from the host (`-v /srv/winche:/data`) must belong to it (`chown -R 1654:1654 /srv/winche`). The server checks at start and refuses to start, saying so, when it can't write there. |
 | `Winche__Email__Provider`, `__Region`, `__FromAddress` | Optional: the server's own email, `ses` (Amazon SES), e.g. region `eu-west-1`, from `no-reply@example.com` (verified in SES); `__FromName` sets the name, else each project's app name. **No keys are kept**: the AWS credentials of the server's environment are used (`AWS_*` variables, the ECS task's role, the instance's profile). Console emails go through it with nothing to set up, and projects can choose it for their sign-in emails (**Authentication → Settings → Emails to users → The server's email**). |
 
 Several servers can share one database: settings, rules and webhooks follow within seconds, and console sign-ins
@@ -274,6 +274,10 @@ PostgreSQL server is backed up there.
 
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
+
+**3.1.2:** a project whose creation fails part-way is undone (a retry works); the server checks at start that it can
+write to its data folder; file errors are said plainly in the console and CLI. Nothing to change, but a host folder
+mounted on `/data` must belong to uid 1654.
 
 **3.1.1:** plugins from npm install on a server whose npm cache is older than the SDK they need (Winche.Functions
 3.1.1). Nothing to change.

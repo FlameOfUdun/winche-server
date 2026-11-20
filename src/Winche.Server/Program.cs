@@ -56,6 +56,13 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectHosts>()); 
 builder.Services.AddSingleton<ServerConsoleApp>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerConsoleApp>());
 
+// The folders it writes to must be writable, or projects fail to start later with errors that don't say why.
+if (Winche.Console.Api.ServerFolders.Problems([server.ProjectsPath, Environment.GetEnvironmentVariable("DENO_DIR") ?? ""]) is { Count: > 0 } unwritable)
+{
+    foreach (var problem in unwritable) Console.Error.WriteLine($"Winche Server can't start: {problem}");
+    Environment.Exit(1);
+}
+
 var app = builder.Build();
 app.UseForwardedHeaders();
 var projects = app.Services.GetRequiredService<ProjectHosts>();

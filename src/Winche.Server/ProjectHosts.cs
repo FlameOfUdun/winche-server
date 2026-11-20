@@ -436,33 +436,92 @@ public sealed partial class ProjectHosts(ServerOptions server, ServerSettingsPro
             var check = await CheckNewAsync(id, database, ct);
             if (!check.Ok) throw new ArgumentException(check.Problem);
             var row = new ProjectRow(id, name.Trim(), at.Database, DateTimeOffset.UtcNow, null, at.Host, at.Port, at.Username, at.SslMode);
-            if (at.Host is not null && !string.IsNullOrEmpty(database?.Password)) await settings.Secrets.SetAsync(PasswordSecret(id), database.Password, by, ct);
-            if (!check.Exists)
+            // Each step done is undone if a later one fails, so a retry starts clean (no half-made, hidden project).
+            bool passwordSet = false, databaseMade = false, rowAdded = false;
+            var folderWasThere = Directory.Exists(Path.Combine(server.ProjectsPath, id));
+            ProjectHost? host = null;
+            try
             {
-                await using var maintenance = NpgsqlDataSource.Create(await MaintenanceConnectionAsync(row, ct));
-                await using var create = maintenance.CreateCommand($"CREATE DATABASE \"{at.Database}\"");
-                await create.ExecuteNonQueryAsync(ct);
+                if (at.Host is not null && !string.IsNullOrEmpty(database?.Password))
+                {
+                    await settings.Secrets.SetAsync(PasswordSecret(id), database.Password, by, ct);
+                    passwordSet = true;
+                }
+                if (!check.Exists)
+                {
+                    await using var maintenance = NpgsqlDataSource.Create(await MaintenanceConnectionAsync(row, ct));
+                    await using var create = maintenance.CreateCommand($"CREATE DATABASE \"{at.Database}\"");
+                    await create.ExecuteNonQueryAsync(ct);
+                    databaseMade = true;
+                }
+                await using (var insert = Db.CreateCommand($"INSERT INTO {Table} (id, name, database, created_at, db_host, db_port, db_username, db_ssl_mode) VALUES ($1, $2, $3, now(), $4, $5, $6, $7)"))
+                {
+                    insert.Parameters.AddWithValue(id);
+                    insert.Parameters.AddWithValue(name.Trim());
+                    insert.Parameters.AddWithValue(at.Database);
+                    insert.Parameters.AddWithValue((object?)row.Host ?? DBNull.Value);
+                    insert.Parameters.AddWithValue((object?)row.Port ?? DBNull.Value);
+                    insert.Parameters.AddWithValue((object?)row.Username ?? DBNull.Value);
+                    insert.Parameters.AddWithValue((object?)row.SslMode ?? DBNull.Value);
+                    await insert.ExecuteNonQueryAsync(ct);
+                    rowAdded = true;
+                }
+                host = await StartAsync(await ProjectForAsync(row, ct), ct);
+                await host.App.Services.GetRequiredService<Winche.Console.Project.ProjectSetup>().CreateAsync(name, id, [], by, ct);
+                _hosts[id] = host;
+                return host.Project;
             }
-            await using (var insert = Db.CreateCommand($"INSERT INTO {Table} (id, name, database, created_at, db_host, db_port, db_username, db_ssl_mode) VALUES ($1, $2, $3, now(), $4, $5, $6, $7)"))
+            catch (Exception failed) when (failed is not ArgumentException)
             {
-                insert.Parameters.AddWithValue(id);
-                insert.Parameters.AddWithValue(name.Trim());
-                insert.Parameters.AddWithValue(at.Database);
-                insert.Parameters.AddWithValue((object?)row.Host ?? DBNull.Value);
-                insert.Parameters.AddWithValue((object?)row.Port ?? DBNull.Value);
-                insert.Parameters.AddWithValue((object?)row.Username ?? DBNull.Value);
-                insert.Parameters.AddWithValue((object?)row.SslMode ?? DBNull.Value);
-                await insert.ExecuteNonQueryAsync(ct);
+                logger.LogError(failed, "Project {Id} couldn't be created; undoing what was done of it.", id);
+                await UndoCreateAsync(row, host, passwordSet, databaseMade, rowAdded, folderWasThere);
+                throw;
             }
-            var host = await StartAsync(await ProjectForAsync(row, ct), ct);
-            await host.App.Services.GetRequiredService<Winche.Console.Project.ProjectSetup>().CreateAsync(name, id, [], by, ct);
-            _hosts[id] = host;
-            return host.Project;
         }
         finally
         {
             _creating.Release();
         }
+    }
+
+    /// <summary>A project create that failed part-way: its started app stopped, its row, database and password gone.</summary>
+    private async Task UndoCreateAsync(ProjectRow row, ProjectHost? host, bool passwordSet, bool databaseMade, bool rowAdded, bool folderWasThere)
+    {
+        var none = CancellationToken.None;
+        _hosts.TryRemove(row.Id, out _);
+        if (host is not null)
+            try { await host.App.StopAsync(none); await host.App.DisposeAsync(); }
+            catch (Exception e) { logger.LogWarning(e, "Project {Id}'s app didn't stop cleanly.", row.Id); }
+        if (rowAdded)
+            try
+            {
+                await using var delete = Db.CreateCommand($"DELETE FROM {Table} WHERE id = $1");
+                delete.Parameters.AddWithValue(row.Id);
+                await delete.ExecuteNonQueryAsync(none);
+            }
+            catch (Exception e) { logger.LogWarning(e, "Project {Id}'s row wasn't removed.", row.Id); }
+        if (databaseMade)
+            try
+            {
+                NpgsqlConnection.ClearAllPools();
+                await using var maintenance = NpgsqlDataSource.Create(await MaintenanceConnectionAsync(row, none));
+                await using var drop = maintenance.CreateCommand($"DROP DATABASE IF EXISTS \"{row.Database}\" WITH (FORCE)");
+                await drop.ExecuteNonQueryAsync(none);
+            }
+            catch (Exception e) { logger.LogWarning(e, "Project {Id}'s database {Database} wasn't dropped.", row.Id, row.Database); }
+        if (passwordSet)
+            try { await settings.Secrets.DeleteAsync(PasswordSecret(row.Id), none); }
+            catch (Exception e) { logger.LogWarning(e, "Project {Id}'s database password wasn't removed.", row.Id); }
+        try
+        {
+            await using var dropConfig = Db.CreateCommand($"DROP SCHEMA IF EXISTS \"{ConfigSchema(row.Id)}\" CASCADE");
+            await dropConfig.ExecuteNonQueryAsync(none);
+        }
+        catch (Exception e) { logger.LogWarning(e, "Project {Id}'s settings weren't removed.", row.Id); }
+        var folder = Path.Combine(server.ProjectsPath, row.Id);
+        if (!folderWasThere)
+            try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { logger.LogWarning(e, "Project {Id}'s folder {Folder} wasn't removed.", row.Id, folder); }
     }
 
     /// <summary>

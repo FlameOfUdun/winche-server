@@ -28,6 +28,14 @@ internal static class ConsoleExceptionFilter
         {
             return new WincheError(WincheErrorCode.InvalidArgument, ex.Message, "invalid-query").ToResult();
         }
+        catch (Exception ex) when (ex is UnauthorizedAccessException || ex.GetType() == typeof(IOException) || ex is DirectoryNotFoundException or PathTooLongException)
+        {
+            // The server's own folders (projects' files, functions' downloads): a deployment problem, said as one.
+            return new WincheError(WincheErrorCode.FailedPrecondition,
+                $"The server can't use its files: {ex.Message} Its data folder must be writable by the user it runs as"
+                + (OperatingSystem.IsWindows() ? "." : $" (uid {ServerFolders.Uid}): for a folder mounted from the host, chown -R {ServerFolders.Uid}:{ServerFolders.Uid} <that folder>."),
+                "server-files").ToResult();
+        }
         catch (Npgsql.PostgresException ex) when (ex.SqlState == Npgsql.PostgresErrorCodes.UndefinedTable)
         {
             // A product's tables aren't there: it hasn't been set up (started) yet.

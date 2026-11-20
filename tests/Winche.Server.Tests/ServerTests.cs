@@ -226,6 +226,55 @@ public class ServerTests(PostgresFixture pg)
         ProjectRouter.Target(path) is var (prefix, id, under) ? (prefix, id, under.Value ?? "") : null;
 
     [Fact]
+    public async Task A_project_whose_start_fails_is_undone_so_a_retry_works_and_file_errors_say_what_to_do()
+    {
+        var projectsPath = Directory.CreateTempSubdirectory("winche-server-projects-").FullName;
+        var db = await pg.NewDatabaseAsync();
+        await using var server = new ServerFactory(db, null, ("Winche:ProjectsPath", projectsPath));
+        var console = server.CreateClient();
+        await Json(await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+
+        // The project's folder can't be made (a file is in its place): its start fails, said plainly, not as a bare 500.
+        var blocker = Path.Combine(projectsPath, "crm");
+        File.WriteAllText(blocker, "in the way");
+        var failed = await console.PostAsJsonAsync("/console/v1/projects", new { name = "CRM", id = "crm" });
+        var text = await failed.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.BadRequest, failed.StatusCode);
+        Assert.Contains("can't use its files", text);
+
+        // Nothing is left of it: no row, no database, not listed; the retry makes it.
+        await using (var conn = new NpgsqlConnection(db))
+        {
+            await conn.OpenAsync();
+            await using var rows = new NpgsqlCommand("SELECT count(*) FROM winche_server_projects WHERE id = 'crm'", conn);
+            Assert.Equal(0L, (long)(await rows.ExecuteScalarAsync())!);
+            await using var dbs = new NpgsqlCommand("SELECT count(*) FROM pg_database WHERE datname LIKE '%_p_crm'", conn);
+            Assert.Equal(0L, (long)(await dbs.ExecuteScalarAsync())!);
+        }
+        Assert.True(File.Exists(blocker), "a folder that was there before isn't the create's to remove");
+        File.Delete(blocker);
+        await TestProjects.CreateAsync(console, "crm", "CRM");
+        Assert.Contains("crm", await (await console.GetAsync("/console/v1/projects")).Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public void Unwritable_folders_are_found_with_what_to_do()
+    {
+        Assert.Empty(Winche.Console.Api.ServerFolders.Problems([Directory.CreateTempSubdirectory("winche-ok-").FullName]));
+        if (OperatingSystem.IsWindows() || Winche.Console.Api.ServerFolders.Uid == "0") return;   // root writes anywhere
+        var locked = Directory.CreateTempSubdirectory("winche-locked-").FullName;
+        File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            var problem = Assert.Single(Winche.Console.Api.ServerFolders.Problems([locked, ""]));
+            Assert.Contains($"{locked} isn't writable by uid {Winche.Console.Api.ServerFolders.Uid}", problem);
+            Assert.Contains("chown -R", problem);
+        }
+        finally { File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
+    }
+
+    [Fact]
     public async Task Each_project_has_its_own_browser_origins_besides_its_registered_web_apps()
     {
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
