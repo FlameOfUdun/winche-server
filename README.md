@@ -275,6 +275,16 @@ PostgreSQL server is backed up there.
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
 
+**3.1:** nothing to change; new:
+
+- **Plugins** (sidebar → Plugins): packages of functions from npm that projects install, configure, upgrade and remove
+  from the console (a page per package, a step-by-step install, a page per installed copy with its setup steps), the
+  CLI (`winche plugins:*`) or winche.json. Server settings → Plugins (`Winche__PluginCatalog__0`, …) lists the ones the
+  server offers; `Winche__FunctionPluginsPath` provides plugin folders instead of npm. Functions' `ctx.byServer`.
+- **Assets:** files kept on a CDN (CloudFront signed links, or a public CDN), Assets → Files with the live files and
+  previews, and releases made in the console.
+- Functions 3.1 (Winche.Functions), Assets 1.1 (Winche.Assets).
+
 **3.0:** one layout for every address (a clean break: the old addresses don't answer).
 
 - Apps: `/p/<id>/…` became `/projects/<id>/…`. Update apps' base URL (`…/projects/<id>`) and register the new callback
