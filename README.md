@@ -275,6 +275,9 @@ PostgreSQL server is backed up there.
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
 
+**3.1.1:** plugins from npm install on a server whose npm cache is older than the SDK they need (Winche.Functions
+3.1.1). Nothing to change.
+
 **3.1:** nothing to change; new:
 
 - **Plugins** (sidebar → Plugins): packages of functions from npm that projects install, configure, upgrade and remove
