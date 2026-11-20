@@ -1180,7 +1180,8 @@ public class ServerTests(PostgresFixture pg)
         Assert.Equal(HttpStatusCode.Accepted, (await admin.PostAsJsonAsync("/console/v1/projects/clinic/settings/location/database/move", new { database = newDb })).StatusCode);
         var sawPause = false;
         JsonElement after = default;
-        for (var i = 0; i < 200; i++)
+        // A minute at most, by the clock: a busy CI machine copies slowly.
+        for (var until = DateTime.UtcNow.AddMinutes(1); DateTime.UtcNow < until;)
         {
             var r = await admin.GetAsync("/console/v1/projects/clinic/settings/location/database");
             if (r.StatusCode == HttpStatusCode.ServiceUnavailable)
@@ -1191,6 +1192,7 @@ public class ServerTests(PostgresFixture pg)
             else if (r.IsSuccessStatusCode && (after = await Json(r)).GetProperty("previous").ValueKind != JsonValueKind.Null) break;
             await Task.Delay(50);
         }
+        Assert.True(after.ValueKind == JsonValueKind.Object && after.GetProperty("previous").ValueKind != JsonValueKind.Null, "The move didn't finish within a minute.");
         Assert.True(sawPause);
         Assert.Equal(newDb, after.GetProperty("database").GetString());
         Assert.Equal(JsonValueKind.Null, after.GetProperty("lastMoveFailed").ValueKind);
@@ -1240,12 +1242,14 @@ public class ServerTests(PostgresFixture pg)
         Assert.True((await Json(await admin.PostAsJsonAsync("/console/v1/projects/wards/settings/location/database/check", target))).GetProperty("ok").GetBoolean());
         Assert.Equal(HttpStatusCode.Accepted, (await admin.PostAsJsonAsync("/console/v1/projects/wards/settings/location/database/move", target)).StatusCode);
         JsonElement after = default;
-        for (var i = 0; i < 200; i++)
+        // A minute at most, by the clock: a busy CI machine copies slowly.
+        for (var until = DateTime.UtcNow.AddMinutes(1); DateTime.UtcNow < until;)
         {
             var r = await admin.GetAsync("/console/v1/projects/wards/settings/location/database");
             if (r.IsSuccessStatusCode && (after = await Json(r)).GetProperty("previous").ValueKind != JsonValueKind.Null) break;
             await Task.Delay(50);
         }
+        Assert.True(after.ValueKind == JsonValueKind.Object && after.GetProperty("previous").ValueKind != JsonValueKind.Null, "The move didn't finish within a minute.");
         Assert.Equal(("wards_elsewhere", other.Host), (after.GetProperty("database").GetString(), after.GetProperty("host").GetString()));
         await Json(await server.CreateClient().PostAsJsonAsync("/projects/wards/auth/v1/signIn", new { email = "bob@example.com", password = "correct horse battery" }));
 
