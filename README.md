@@ -275,6 +275,9 @@ PostgreSQL server is backed up there.
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
 
+**3.1.3:** plugins from a folder (`Winche__FunctionPluginsPath`) build with the newest SDKs, like plugins from npm
+(Winche.Functions 3.1.2). Nothing to change.
+
 **3.1.2:** a project whose creation fails part-way is undone (a retry works); the server checks at start that it can
 write to its data folder; file errors are said plainly in the console and CLI. Nothing to change, but a host folder
 mounted on `/data` must belong to uid 1654.
