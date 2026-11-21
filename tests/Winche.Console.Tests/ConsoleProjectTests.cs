@@ -117,6 +117,16 @@ public class ConsoleProjectTests(PostgresFixture fx) : IAsyncLifetime
             new { name = "Clinic app", androidPackage = "com.example.clinic", appleBundleId = "com.example.clinic", appleTeamId = "abcde12345" }))).GetProperty("id").GetString()!;
         Assert.Matches("^app-[a-z2-9]{12}$", id);
         Assert.Equal("ABCDE12345", (await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("apps")[0].GetProperty("appleTeamId").GetString());
+        // App Attest: development builds off until turned on; no devices yet; a challenge, and an attestation that isn't Apple's refused.
+        var apple = (await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("apps")[0];
+        Assert.False(apple.GetProperty("appleDevelopment").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, apple.GetProperty("devices").ValueKind);
+        await Json(await client.PutAsJsonAsync($"/console/v1/integrity/apps/{id}", new { name = "Clinic app", androidPackage = "com.example.clinic", appleBundleId = "com.example.clinic", appleTeamId = "ABCDE12345", appleDevelopment = true }));
+        Assert.True((await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("apps")[0].GetProperty("appleDevelopment").GetBoolean());
+        var challenge = (await Json(await client.PostAsJsonAsync("/integrity/v1/challenge", new { app = id }))).GetProperty("challenge").GetString();
+        var forged = await client.PostAsJsonAsync("/integrity/v1/exchange", new { app = id, provider = "appAttest", keyId = Convert.ToBase64String(new byte[32]), challenge, attestation = Convert.ToBase64String(new byte[] { 0xa0 }) });
+        Assert.Equal(HttpStatusCode.Forbidden, forged.StatusCode);
+        Assert.Contains("integrity-rejected", await forged.Content.ReadAsStringAsync());
 
         // An id can be chosen when adding: valid, and not taken. Editing never changes it.
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/integrity/apps", new { name = "Bad", id = "Not An Id" })).StatusCode);

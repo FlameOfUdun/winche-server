@@ -129,6 +129,7 @@ public static class WincheConsoleExtensions
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new Winche.Integrity.WincheIntegrityOptions());
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<Winche.Integrity.WincheIntegrity>(services);
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<Winche.Integrity.IntegrityUsage>(services);
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<Winche.Integrity.IntegrityStore>(services);
         services.AddAuthentication().AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, ConsoleTokenHandler>(ConsoleTokenHandler.Scheme, null);
 
         {

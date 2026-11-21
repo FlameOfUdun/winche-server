@@ -16,7 +16,7 @@ public static class ConsoleIntegrityEndpoints
 {
     // ---- The console's side ----
 
-    public sealed record AppRequest(string? Name, string? Sdk, string? AndroidPackage, string? AppleBundleId, string? AppleTeamId, string? Id = null);
+    public sealed record AppRequest(string? Name, string? Sdk, string? AndroidPackage, string? AppleBundleId, string? AppleTeamId, string? Id = null, bool? AppleDevelopment = null);
     public sealed record EnforcementRequest(Dictionary<string, string>? Enforcement, int? TokenMinutes, string? Reason);
     public sealed record DebugTokenRequest(string? App, string? Name);
 
@@ -27,7 +27,7 @@ public static class ConsoleIntegrityEndpoints
 
     private static object Counts(IEnumerable<IntegrityUsage.Usage> rows) => rows.ToDictionary(u => u.Product, u => new { today = u.Today, last7Days = u.Last7Days, lastSeen = u.LastSeen });
 
-    private static object Body(WincheIntegrity integrity, IReadOnlyList<IntegrityUsage.Usage> usage, bool editable)
+    private static object Body(WincheIntegrity integrity, IReadOnlyList<IntegrityUsage.Usage> usage, IReadOnlyDictionary<string, (long Keys, long Development, DateTimeOffset? LastUsed)> keys, bool editable)
     {
         var s = integrity.Current;
         return new
@@ -39,7 +39,9 @@ public static class ConsoleIntegrityEndpoints
             apps = s.Apps.Select(a => new
             {
                 id = a.Id, name = a.Name, sdk = a.Sdk, androidPackage = a.AndroidPackage, appleBundleId = a.AppleBundleId, appleTeamId = a.AppleTeamId,
-                createdAt = a.CreatedAt, usage = Counts(usage.Where(u => u.AppId == a.Id)),
+                appleDevelopment = a.AppleDevelopment, createdAt = a.CreatedAt, usage = Counts(usage.Where(u => u.AppId == a.Id)),
+                // Devices that attested a key (App Attest): how many, development builds among them, last proof.
+                devices = keys.TryGetValue(a.Id, out var k) ? new { count = k.Keys, development = k.Development, lastUsed = k.LastUsed } : null,
             }),
             unverified = Counts(usage.Where(u => u.AppId == IntegrityUsage.Unverified)),
             debugTokens = s.DebugTokens.Select(t => new { id = t.Id, app = t.App, name = t.Name, createdAt = t.CreatedAt, createdBy = t.CreatedBy }),
@@ -53,14 +55,16 @@ public static class ConsoleIntegrityEndpoints
         AndroidPackage = Blank(body.AndroidPackage),
         AppleBundleId = Blank(body.AppleBundleId),
         AppleTeamId = Blank(body.AppleTeamId)?.ToUpperInvariant(),
+        AppleDevelopment = body.AppleDevelopment ?? old?.AppleDevelopment ?? false,
     };
 
     internal static IEndpointRouteBuilder MapConsoleIntegrityEndpoints(this IEndpointRouteBuilder app, Options.ConsoleOptions options)
     {
-        app.MapGet("/integrity", async (HttpContext http, WincheIntegrity integrity, IntegrityUsage usage, CancellationToken ct) =>
+        app.MapGet("/integrity", async (HttpContext http, WincheIntegrity integrity, IntegrityUsage usage, IntegrityStore store, CancellationToken ct) =>
         {
             var admin = Tabs.ConsoleRolePolicy.Highest(http.User, options) >= Tabs.ConsoleRole.Admin;
-            return Results.Json(Body(integrity, integrity.Available ? await usage.ReadAsync(ct) : [], integrity.Available && admin));
+            return Results.Json(Body(integrity, integrity.Available ? await usage.ReadAsync(ct) : [],
+                integrity.Available ? await store.CountKeysAsync(ct) : new Dictionary<string, (long, long, DateTimeOffset?)>(), integrity.Available && admin));
         }).RequireAuthorization(ConsoleRoles.ViewerPolicy);
 
         var admin = app.MapGroup("/integrity").RequireAuthorization(ConsoleRoles.AdminPolicy);
@@ -79,17 +83,19 @@ public static class ConsoleIntegrityEndpoints
             return Results.Json(new { id = added.Id });
         });
 
-        admin.MapPut("/apps/{id}", async (string id, AppRequest body, HttpContext http, WincheIntegrity integrity, CancellationToken ct) =>
+        admin.MapPut("/apps/{id}", async (string id, AppRequest body, HttpContext http, WincheIntegrity integrity, IntegrityStore store, CancellationToken ct) =>
         {
             var current = integrity.Current;
             if (integrity.Find(id) is not { } old) return Results.NotFound();
             var changed = From(body, old);
             if (IntegritySettings.ProblemsOf(changed).FirstOrDefault() is { } problem) return Problem(problem);
             await integrity.SaveAsync(current with { Apps = [.. current.Apps.Select(a => a.Id == id ? changed : a)] }, Who(http.User), $"Changed the app {changed.Name}", ct);
+            // Another Apple app (team or bundle id): its devices' keys were for the old one, so they attest again.
+            if (old.AppleTeamId != changed.AppleTeamId || old.AppleBundleId != changed.AppleBundleId) await store.RemoveKeysAsync(id, ct);
             return Results.Json(new { id });
         });
 
-        admin.MapDelete("/apps/{id}", async (string id, HttpContext http, WincheIntegrity integrity, CancellationToken ct) =>
+        admin.MapDelete("/apps/{id}", async (string id, HttpContext http, WincheIntegrity integrity, IntegrityStore store, CancellationToken ct) =>
         {
             var current = integrity.Current;
             if (integrity.Find(id) is not { } gone) return Results.NotFound();
@@ -99,6 +105,7 @@ public static class ConsoleIntegrityEndpoints
                 : current.Enforcement.ToDictionary(e => e.Key, e => e.Value == "enforce" ? "monitor" : e.Value);
             await integrity.SaveAsync(current with { Apps = rest, DebugTokens = [.. current.DebugTokens.Where(t => t.App != id)], Enforcement = enforcement },
                 Who(http.User), $"Removed the app {gone.Name}", ct);
+            await store.RemoveKeysAsync(id, ct);   // its devices' keys go too
             return Results.NoContent();
         });
 
