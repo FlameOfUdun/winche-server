@@ -49,6 +49,8 @@ public static class AuthEndpoints
         functions = ConsoleFunctionsEndpoints.Capability(sp, role),
         assets = ConsoleAssetsEndpoints.Capability(options, role),
         consolePages = role is not null && sp.GetService<Winche.Functions.WincheFunctions>() is not null,
+        // The Integrity page (the project's apps): anyone with a role, where Integrity is set up (project setup).
+        integrity = role is not null && sp.GetService<Winche.Integrity.WincheIntegrity>() is { Available: true },
     };
 
     /// <summary>The account's role in this console: its project role with project members, else its own; null: no access.</summary>
