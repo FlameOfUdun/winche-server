@@ -73,6 +73,7 @@ internal static class ConsoleSecretsEndpoints
         (string Product, string Title, string? Link) what = i.Name switch
         {
             Winche.Auth.Email.SmtpEmailSender.SecretName => ("Authentication", "SMTP password (emails to users)", "/authentication/settings"),
+            Winche.Integrity.WincheIntegrity.PlayServiceAccountSecret => ("Integrity", "Google service account (Play Integrity)", "/integrity"),
             _ when parts is ["auth", "provider", var provider, "keycloakSync", "clientSecret"] => ("Authentication", $"Keycloak sync client secret of {provider}", "/authentication/methods"),
             _ when storage.TryGetValue(i.Name, out var where) => ("Storage", $"Secret key of {where}", "/storage/settings"),
             _ when assets.TryGetValue(i.Name, out var where) => ("Assets", $"Secret key of {where}", "/assets/settings"),

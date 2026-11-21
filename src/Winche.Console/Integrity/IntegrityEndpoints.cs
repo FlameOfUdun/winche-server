@@ -16,7 +16,10 @@ public static class ConsoleIntegrityEndpoints
 {
     // ---- The console's side ----
 
-    public sealed record AppRequest(string? Name, string? Sdk, string? AndroidPackage, string? AppleBundleId, string? AppleTeamId, string? Id = null, bool? AppleDevelopment = null);
+    public sealed record AppRequest(string? Name, string? Sdk, string? AndroidPackage, string? AppleBundleId, string? AppleTeamId, string? Id = null, bool? AppleDevelopment = null,
+        long? AndroidCloudProjectNumber = null, bool? AndroidSideloaded = null, string? AndroidDeviceIntegrity = null, string[]? AndroidCertificates = null);
+    /// <summary>The Google service account's key file (its JSON), or a reference to where it's kept (aws-sm:…).</summary>
+    public sealed record ServiceAccountRequest(string? Value, string? Reference);
     public sealed record EnforcementRequest(Dictionary<string, string>? Enforcement, int? TokenMinutes, string? Reason);
     public sealed record DebugTokenRequest(string? App, string? Name);
 
@@ -27,7 +30,8 @@ public static class ConsoleIntegrityEndpoints
 
     private static object Counts(IEnumerable<IntegrityUsage.Usage> rows) => rows.ToDictionary(u => u.Product, u => new { today = u.Today, last7Days = u.Last7Days, lastSeen = u.LastSeen });
 
-    private static object Body(WincheIntegrity integrity, IReadOnlyList<IntegrityUsage.Usage> usage, IReadOnlyDictionary<string, (long Keys, long Development, DateTimeOffset? LastUsed)> keys, bool editable)
+    private static object Body(WincheIntegrity integrity, IReadOnlyList<IntegrityUsage.Usage> usage, IReadOnlyDictionary<string, (long Keys, long Development, DateTimeOffset? LastUsed)> keys,
+        object? playServiceAccount, bool editable)
     {
         var s = integrity.Current;
         return new
@@ -39,11 +43,14 @@ public static class ConsoleIntegrityEndpoints
             apps = s.Apps.Select(a => new
             {
                 id = a.Id, name = a.Name, sdk = a.Sdk, androidPackage = a.AndroidPackage, appleBundleId = a.AppleBundleId, appleTeamId = a.AppleTeamId,
-                appleDevelopment = a.AppleDevelopment, createdAt = a.CreatedAt, usage = Counts(usage.Where(u => u.AppId == a.Id)),
+                appleDevelopment = a.AppleDevelopment, androidCloudProjectNumber = a.AndroidCloudProjectNumber, androidSideloaded = a.AndroidSideloaded,
+                androidDeviceIntegrity = a.AndroidDeviceIntegrity, androidCertificates = a.AndroidCertificates, createdAt = a.CreatedAt, usage = Counts(usage.Where(u => u.AppId == a.Id)),
                 // Devices that attested a key (App Attest): how many, development builds among them, last proof.
                 devices = keys.TryGetValue(a.Id, out var k) ? new { count = k.Keys, development = k.Development, lastUsed = k.LastUsed } : null,
             }),
             unverified = Counts(usage.Where(u => u.AppId == IntegrityUsage.Unverified)),
+            // The Google service account Play Integrity signs in as: when it was set, and its address (never its key).
+            playServiceAccount,
             debugTokens = s.DebugTokens.Select(t => new { id = t.Id, app = t.App, name = t.Name, createdAt = t.CreatedAt, createdBy = t.CreatedBy }),
         };
     }
@@ -56,7 +63,23 @@ public static class ConsoleIntegrityEndpoints
         AppleBundleId = Blank(body.AppleBundleId),
         AppleTeamId = Blank(body.AppleTeamId)?.ToUpperInvariant(),
         AppleDevelopment = body.AppleDevelopment ?? old?.AppleDevelopment ?? false,
+        AndroidCloudProjectNumber = body.AndroidCloudProjectNumber,
+        AndroidSideloaded = body.AndroidSideloaded ?? old?.AndroidSideloaded ?? false,
+        AndroidDeviceIntegrity = Blank(body.AndroidDeviceIntegrity) ?? old?.AndroidDeviceIntegrity ?? "device",
+        AndroidCertificates = body.AndroidCertificates is { } certs
+            ? [.. certs.Select(c => c.Trim().TrimEnd('=')).Where(c => c.Length > 0).Distinct()]
+            : old?.AndroidCertificates ?? [],
     };
+
+    private static async Task<object?> PlayServiceAccountAsync(IServiceProvider sp, CancellationToken ct)
+    {
+        if (sp.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets) return null;
+        if (await secrets.InfoAsync(WincheIntegrity.PlayServiceAccountSecret, ct) is not { } info) return null;
+        string? email = null;
+        try { email = Winche.Integrity.PlayIntegrity.GoogleServiceAccount.Parse(await secrets.GetAsync(WincheIntegrity.PlayServiceAccountSecret, ct))?.ClientEmail; }
+        catch (Exception e) when (e is not OperationCanceledException) { }   // a reference that can't be read now: no address shown
+        return new { setAt = info.SetAt, setBy = info.SetBy, reference = Api.ConsoleSecretsEndpoints.ReferenceOf(info), email };
+    }
 
     internal static IEndpointRouteBuilder MapConsoleIntegrityEndpoints(this IEndpointRouteBuilder app, Options.ConsoleOptions options)
     {
@@ -64,7 +87,8 @@ public static class ConsoleIntegrityEndpoints
         {
             var admin = Tabs.ConsoleRolePolicy.Highest(http.User, options) >= Tabs.ConsoleRole.Admin;
             return Results.Json(Body(integrity, integrity.Available ? await usage.ReadAsync(ct) : [],
-                integrity.Available ? await store.CountKeysAsync(ct) : new Dictionary<string, (long, long, DateTimeOffset?)>(), integrity.Available && admin));
+                integrity.Available ? await store.CountKeysAsync(ct) : new Dictionary<string, (long, long, DateTimeOffset?)>(),
+                integrity.Available ? await PlayServiceAccountAsync(http.RequestServices, ct) : null, integrity.Available && admin));
         }).RequireAuthorization(ConsoleRoles.ViewerPolicy);
 
         var admin = app.MapGroup("/integrity").RequireAuthorization(ConsoleRoles.AdminPolicy);
@@ -120,6 +144,26 @@ public static class ConsoleIntegrityEndpoints
             if (next.Problems().FirstOrDefault() is { } problem) return Problem(problem);
             await integrity.SaveAsync(next, Who(http.User), body.Reason.Trim(), ct);
             return Results.Json(new { enforcement = IntegritySettings.Products.ToDictionary(p => p, next.ModeOf), tokenMinutes = next.TokenMinutes });
+        });
+
+        // The Google service account Play Integrity signs in as: its key file (checked to be one), or a reference to it.
+        admin.MapPut("/play-service-account", async (ServiceAccountRequest body, HttpContext http, WincheIntegrity integrity, CancellationToken ct) =>
+        {
+            if (!integrity.Available) return Problem(NotAvailable);
+            if (http.RequestServices.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets)
+                return Problem("Secrets need the project's master key: set WincheConfigOptions.MasterKey.");
+            if (string.IsNullOrWhiteSpace(body.Value) == string.IsNullOrWhiteSpace(body.Reference))
+                return Problem("Give the service account's key file (its JSON) or a reference to where it's kept.");
+            if (body.Value is { Length: > 0 } json && Winche.Integrity.PlayIntegrity.GoogleServiceAccount.Parse(json) is null)
+                return Problem("That isn't a Google service account's key file: in Google Cloud, IAM → Service accounts → the account → Keys → Add key → JSON.");
+            if (await Api.ConsoleSecretsEndpoints.SetAsync(secrets, WincheIntegrity.PlayServiceAccountSecret, body.Value, body.Reference, http, ct) is { } refused) return refused;
+            return Results.Json(await PlayServiceAccountAsync(http.RequestServices, ct));
+        });
+
+        admin.MapDelete("/play-service-account", async (HttpContext http, CancellationToken ct) =>
+        {
+            if (http.RequestServices.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets) return Results.NotFound();
+            return await secrets.DeleteAsync(WincheIntegrity.PlayServiceAccountSecret, ct) ? Results.NoContent() : Results.NotFound();
         });
 
         // A debug token, shown this once (only its hash is kept).

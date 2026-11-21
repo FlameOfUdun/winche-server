@@ -127,6 +127,26 @@ public class ConsoleProjectTests(PostgresFixture fx) : IAsyncLifetime
         var forged = await client.PostAsJsonAsync("/integrity/v1/exchange", new { app = id, provider = "appAttest", keyId = Convert.ToBase64String(new byte[32]), challenge, attestation = Convert.ToBase64String(new byte[] { 0xa0 }) });
         Assert.Equal(HttpStatusCode.Forbidden, forged.StatusCode);
         Assert.Contains("integrity-rejected", await forged.Content.ReadAsStringAsync());
+        // Play Integrity: the app's Android settings; the challenge carries its Cloud project number; the service account is checked, kept, never shown.
+        await Json(await client.PutAsJsonAsync($"/console/v1/integrity/apps/{id}", new { name = "Clinic app", androidPackage = "com.example.clinic", appleBundleId = "com.example.clinic",
+            appleTeamId = "ABCDE12345", androidCloudProjectNumber = 123456789012, androidSideloaded = true, androidDeviceIntegrity = "strong" }));
+        var android = (await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("apps")[0];
+        Assert.Equal((123456789012, true, "strong"), (android.GetProperty("androidCloudProjectNumber").GetInt64(), android.GetProperty("androidSideloaded").GetBoolean(), android.GetProperty("androidDeviceIntegrity").GetString()));
+        Assert.True(android.GetProperty("appleDevelopment").GetBoolean());   // kept when not sent
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync($"/console/v1/integrity/apps/{id}", new { name = "Clinic app", androidDeviceIntegrity = "great" })).StatusCode);
+        Assert.Equal(123456789012, (await Json(await client.PostAsJsonAsync("/integrity/v1/challenge", new { app = id }))).GetProperty("androidCloudProjectNumber").GetInt64());
+        Assert.Equal(JsonValueKind.Null, (await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("playServiceAccount").ValueKind);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/console/v1/integrity/play-service-account", new { value = "{\"type\":\"authorized_user\"}" })).StatusCode);
+        using (var rsa = System.Security.Cryptography.RSA.Create(2048))
+        {
+            var keyFile = System.Text.Json.JsonSerializer.Serialize(new { type = "service_account", client_email = "integrity@clinic.iam.gserviceaccount.com", private_key = rsa.ExportPkcs8PrivateKeyPem() });
+            await Json(await client.PutAsJsonAsync("/console/v1/integrity/play-service-account", new { value = keyFile }));
+        }
+        var account = await client.GetStringAsync("/console/v1/integrity");
+        Assert.Contains("integrity@clinic.iam.gserviceaccount.com", account);
+        Assert.DoesNotContain("PRIVATE KEY", account);
+        Assert.Contains("Google service account (Play Integrity)", await client.GetStringAsync("/console/v1/secrets"));
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/console/v1/integrity/play-service-account")).StatusCode);
 
         // An id can be chosen when adding: valid, and not taken. Editing never changes it.
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/integrity/apps", new { name = "Bad", id = "Not An Id" })).StatusCode);
