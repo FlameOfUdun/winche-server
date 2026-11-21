@@ -194,8 +194,10 @@ and a deploy reaches every task within seconds.
 - **Integrity** (`winche integrity`): the project's apps (Android package, Apple bundle and team id; each app's id goes
   in its `winche_options.dart`) prove they're its own, trade that for an Integrity token at
   `/projects/<id>/integrity/v1/exchange`, and send it with every request (`X-Winche-Integrity`). Each product is off,
-  monitor (the default: checked and counted per app, never refused) or enforce (refused without a valid token). Debug
-  tokens (shown once) let simulators, desktop builds and CI in. Email action links, identity providers' notices, HTTP
+  monitor (the default: checked and counted per app, never refused) or enforce (refused without a valid token). Apps on
+  iOS and macOS prove themselves with Apple's App Attest (`winche_app_attest`; the app's Apple team and bundle id, and
+  whether development builds are accepted); the console shows how many devices attested. Debug tokens (shown once)
+  let simulators, desktop builds and CI in. Email action links, identity providers' notices, HTTP
   functions (webhooks) and signed file links never need a token. See Winche.Integrity's README.
 - **Logs:** every product's requests and events, as plain sentences, with filters and saved queries. Changes are always
   logged; successful reads are sampled.
@@ -285,7 +287,7 @@ first. Several servers can be replaced one at a time.
 only" and the browser origins are gone: the project APIs answer any origin, and apps no longer send `X-Winche-App`.
 Every product starts in monitor: nothing is refused until you enforce it (**Integrity**). Apps built with the Winche
 SDKs before 4.0 keep working while nothing is enforced; to enforce, update them and give each a way to prove itself
-(a debug token for now).
+(App Attest on iOS and macOS, or a debug token).
 
 **3.1.4:** with an SMTP server, sign-in-link and password-reset emails are sent again (they were lost, "Cannot access a
 disposed object" in the log; Winche Auth 2.0.1). Authentication → Settings → Emails to users can now send them before
