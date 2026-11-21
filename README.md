@@ -196,7 +196,9 @@ and a deploy reaches every task within seconds.
   `/projects/<id>/integrity/v1/exchange`, and send it with every request (`X-Winche-Integrity`). Each product is off,
   monitor (the default: checked and counted per app, never refused) or enforce (refused without a valid token). Apps on
   iOS and macOS prove themselves with Apple's App Attest (`winche_app_attest`; the app's Apple team and bundle id, and
-  whether development builds are accepted); the console shows how many devices attested. Debug tokens (shown once)
+  whether development builds are accepted); the console shows how many devices attested. Android apps prove themselves
+  with Google Play Integrity (the app's Google Cloud project number and device level; the project's Google service
+  account, kept as a secret, signs the server in to Google to read each verdict). Debug tokens (shown once)
   let simulators, desktop builds and CI in. Email action links, identity providers' notices, HTTP
   functions (webhooks) and signed file links never need a token. See Winche.Integrity's README.
 - **Logs:** every product's requests and events, as plain sentences, with filters and saved queries. Changes are always
@@ -287,7 +289,7 @@ first. Several servers can be replaced one at a time.
 only" and the browser origins are gone: the project APIs answer any origin, and apps no longer send `X-Winche-App`.
 Every product starts in monitor: nothing is refused until you enforce it (**Integrity**). Apps built with the Winche
 SDKs before 4.0 keep working while nothing is enforced; to enforce, update them and give each a way to prove itself
-(App Attest on iOS and macOS, or a debug token).
+(App Attest on iOS and macOS, Play Integrity on Android, or a debug token).
 
 **3.1.4:** with an SMTP server, sign-in-link and password-reset emails are sent again (they were lost, "Cannot access a
 disposed object" in the log; Winche Auth 2.0.1). Authentication → Settings → Emails to users can now send them before
