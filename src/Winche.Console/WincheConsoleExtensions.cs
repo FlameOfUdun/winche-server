@@ -113,14 +113,22 @@ public static class WincheConsoleExtensions
         services.AddSingleton<Project.ProjectSetup>();
         services.AddSingleton<Project.ProductSetupRunner>();
         services.AddSingleton<Project.ProjectImageStore>();
-        services.AddSingleton<Apps.RegisteredApps>();
-        services.AddSingleton<Apps.AppUsage>();
         if (options.ProjectSetup)
         {
             Winche.Core.ServiceCollectionExtensions.AddWincheSettingsArea(services, Project.ProjectSettings.Area, "Project", new Project.ProjectSettings(), s => s.Problems());
-            Winche.Core.ServiceCollectionExtensions.AddWincheSettingsArea(services, Apps.AppsSettings.Area, "Apps", new Apps.AppsSettings(), s => s.Problems());
-            services.AddHostedService<Apps.AppUsageFlusher>();
+            // Integrity, for the project's apps; the apps registered before it (area "apps", only read) carry over.
+            Winche.Core.ServiceCollectionExtensions.AddWincheSettingsArea(services, Integrity.LegacyAppsSettings.Area, "Apps (before Integrity)", new Integrity.LegacyAppsSettings(), _ => []);
+            Winche.Integrity.ServiceCollectionExtensions.AddWincheIntegrity(services, o =>
+            {
+                o.ProjectId = sp => sp.GetRequiredService<Project.ProjectSetup>().Current.Id;
+                o.CarryOverApps = sp => sp.GetService<Winche.Core.SettingsArea<Integrity.LegacyAppsSettings>>() is { Source: Winche.Core.SettingsSource.Saved } legacy ? legacy.Current.Apps : [];
+            });
         }
+        // Integrity's services, whether or not it's set up (its settings come with project setup, above): its console
+        // endpoints are mapped either way, and say it's not available without them.
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new Winche.Integrity.WincheIntegrityOptions());
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<Winche.Integrity.WincheIntegrity>(services);
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<Winche.Integrity.IntegrityUsage>(services);
         services.AddAuthentication().AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, ConsoleTokenHandler>(ConsoleTokenHandler.Scheme, null);
 
         {
@@ -288,7 +296,7 @@ public static class WincheConsoleExtensions
             Project.ProjectEndpoints.MapConsoleProjectEndpoints(group);
             Project.DataLocationEndpoints.MapConsoleDataLocationEndpoints(group, options);
             Project.ProjectImageEndpoints.MapConsoleProjectImageEndpoints(group);
-            Apps.RegisteredAppEndpoints.MapConsoleRegisteredAppEndpoints(group, options);
+            Integrity.ConsoleIntegrityEndpoints.MapConsoleIntegrityEndpoints(group, options);
         }
         if (options.ProjectMembers) Project.ProjectMemberEndpoints.MapConsoleProjectMemberEndpoints(group);
         // Functions, when the app uses Winche.Functions (AddWincheFunctions).

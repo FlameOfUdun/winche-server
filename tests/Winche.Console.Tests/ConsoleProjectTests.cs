@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Xunit;
 
@@ -18,7 +19,7 @@ public class ConsoleProjectTests(PostgresFixture fx) : IAsyncLifetime
         await using var cmd = new NpgsqlCommand("""
             DO $$ BEGIN
               IF to_regclass('winche_settings') IS NOT NULL THEN TRUNCATE winche_settings; END IF;
-              IF to_regclass('winche_console_app_usage') IS NOT NULL THEN TRUNCATE winche_console_app_usage; END IF;
+              IF to_regclass('winche_integrity_usage') IS NOT NULL THEN TRUNCATE winche_integrity_usage; END IF;
               IF to_regclass('winche_console_project_image') IS NOT NULL THEN TRUNCATE winche_console_project_image; END IF;
             END $$;
             """, conn);
@@ -93,7 +94,7 @@ public class ConsoleProjectTests(PostgresFixture fx) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Apps_are_registered_named_in_their_options_counted_and_others_can_be_refused()
+    public async Task Integrity_apps_are_named_in_their_options_debug_tokens_get_tokens_counted_per_product_and_enforced()
     {
         using var app = new ConsoleAppFactory(fx, ("Sample:ProjectSetup", "true"));
         using var client = app.CreateClient();
@@ -101,54 +102,97 @@ public class ConsoleProjectTests(PostgresFixture fx) : IAsyncLifetime
         await client.LoginAsync();
         await Json(await client.PostAsJsonAsync("/console/v1/project", new { name = "Clinic records", id = "clinic-records", products = new[] { "authentication" } }));
 
-        var empty = await Json(await client.GetAsync("/console/v1/apps/registered"));
+        var empty = await Json(await client.GetAsync("/console/v1/integrity"));
         Assert.True(empty.GetProperty("available").GetBoolean());
+        Assert.True(empty.GetProperty("canSign").GetBoolean());
         Assert.Equal(0, empty.GetProperty("apps").GetArrayLength());
-        // Refusing unregistered apps needs one registered first.
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/console/v1/apps/policy", new { registeredOnly = true })).StatusCode);
+        Assert.Equal("monitor", empty.GetProperty("enforcement").GetProperty("authentication").GetString());
+        // Enforcing needs an app first: nothing could call.
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/console/v1/integrity/enforcement",
+            new { enforcement = new Dictionary<string, string> { ["authentication"] = "enforce" }, reason = "Lock it" })).StatusCode);
 
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/apps/registered", new { name = "Clinic", androidPackage = "not a package" })).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/apps/registered", new { name = "Clinic", webOrigins = new[] { "https://app.example.com/path" } })).StatusCode);
-        var id = (await Json(await client.PostAsJsonAsync("/console/v1/apps/registered",
-            new { name = "Clinic app", androidPackage = "com.example.clinic", webOrigins = new[] { "HTTPS://App.Example.com/" } }))).GetProperty("id").GetString()!;
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/integrity/apps", new { name = "Clinic", androidPackage = "not a package" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/integrity/apps", new { name = "Clinic", appleTeamId = "short" })).StatusCode);
+        var id = (await Json(await client.PostAsJsonAsync("/console/v1/integrity/apps",
+            new { name = "Clinic app", androidPackage = "com.example.clinic", appleBundleId = "com.example.clinic", appleTeamId = "abcde12345" }))).GetProperty("id").GetString()!;
         Assert.Matches("^app-[a-z2-9]{12}$", id);
+        Assert.Equal("ABCDE12345", (await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("apps")[0].GetProperty("appleTeamId").GetString());
 
-        // An id can be chosen when registering: valid, and not taken. Editing never changes it.
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/apps/registered", new { name = "Bad", id = "Not An Id" })).StatusCode);
-        Assert.Equal("clinic-web", (await Json(await client.PostAsJsonAsync("/console/v1/apps/registered", new { name = "Clinic web", id = "clinic-web" }))).GetProperty("id").GetString());
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/apps/registered", new { name = "Again", id = "clinic-web" })).StatusCode);
-        await Json(await client.PutAsJsonAsync("/console/v1/apps/registered/clinic-web", new { name = "Clinic web app", id = "renamed" }));
-        Assert.Contains((await Json(await client.GetAsync("/console/v1/apps/registered"))).GetProperty("apps").EnumerateArray(),
+        // An id can be chosen when adding: valid, and not taken. Editing never changes it.
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/integrity/apps", new { name = "Bad", id = "Not An Id" })).StatusCode);
+        Assert.Equal("clinic-web", (await Json(await client.PostAsJsonAsync("/console/v1/integrity/apps", new { name = "Clinic web", id = "clinic-web" }))).GetProperty("id").GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/integrity/apps", new { name = "Again", id = "clinic-web" })).StatusCode);
+        await Json(await client.PutAsJsonAsync("/console/v1/integrity/apps/clinic-web", new { name = "Clinic web app", id = "renamed" }));
+        Assert.Contains((await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("apps").EnumerateArray(),
             a => a.GetProperty("id").GetString() == "clinic-web" && a.GetProperty("name").GetString() == "Clinic web app");
-        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/console/v1/apps/registered/clinic-web")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/console/v1/integrity/apps/clinic-web")).StatusCode);
 
         // Its options file and /.well-known/winche?app= name it; an unknown id is a 404.
         Assert.Contains($"appId: '{id}'", (await Json(await client.GetAsync($"/console/v1/apps?platforms=android&app={id}"))).GetProperty("file").GetString());
         Assert.Equal(id, (await Json(await client.GetAsync($"/.well-known/winche?app={id}"))).GetProperty("app").GetProperty("id").GetString());
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/.well-known/winche?app=app-nope")).StatusCode);
 
-        // Requests are counted per app (unnamed ones apart).
+        // A debug token, shown once, is traded for an Integrity token.
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/integrity/debug-tokens", new { app = id, name = "" })).StatusCode);
+        var made = await Json(await client.PostAsJsonAsync("/console/v1/integrity/debug-tokens", new { app = id, name = "CI" }));
+        var debugToken = made.GetProperty("token").GetString()!;
+        var listedTokens = (await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("debugTokens");
+        Assert.Equal("CI", listedTokens[0].GetProperty("name").GetString());
+        Assert.DoesNotContain(debugToken, listedTokens.ToString());   // never shown again
+        var exchanged = await Json(await client.PostAsJsonAsync("/integrity/v1/exchange", new { app = id, provider = "debug", debugToken }));
+        var token = exchanged.GetProperty("token").GetString()!;
+
+        // Requests are counted per app and product (those without a token apart).
         var email = $"ann-{Guid.NewGuid():N}@example.com";
         var signUp = new HttpRequestMessage(HttpMethod.Post, "/auth/v1/signUp") { Content = JsonContent.Create(new { email = email, password = "correct horse battery" }) };
-        signUp.Headers.Add("X-Winche-App", id);
+        signUp.Headers.Add("X-Winche-Integrity", token);
         await Json(await client.SendAsync(signUp));
         await client.PostAsJsonAsync("/auth/v1/signIn", new { email = email, password = "correct horse battery" });
-        var listed = await Json(await client.GetAsync("/console/v1/apps/registered"));
-        var registered = listed.GetProperty("apps")[0];
-        Assert.Equal("https://app.example.com", registered.GetProperty("webOrigins")[0].GetString());
-        Assert.Equal(1, registered.GetProperty("usage").GetProperty("today").GetInt64());
-        Assert.Equal(1, listed.GetProperty("unregistered").GetProperty("today").GetInt64());
+        var listed = await Json(await client.GetAsync("/console/v1/integrity"));
+        Assert.Equal(1, listed.GetProperty("apps")[0].GetProperty("usage").GetProperty("authentication").GetProperty("today").GetInt64());
+        Assert.Equal(1, listed.GetProperty("unverified").GetProperty("authentication").GetProperty("today").GetInt64());
 
-        // Only registered apps: the unnamed request is refused, the named one goes through.
-        await Json(await client.PutAsJsonAsync("/console/v1/apps/policy", new { registeredOnly = true }));
+        // Enforced: without a token, refused; with one (header, or the WebSocket query parameter), answered.
+        await Json(await client.PutAsJsonAsync("/console/v1/integrity/enforcement",
+            new { enforcement = new Dictionary<string, string> { ["authentication"] = "enforce" }, reason = "Only our apps" }));
         var refused = await client.PostAsJsonAsync("/auth/v1/signIn", new { email = email, password = "correct horse battery" });
-        Assert.Contains("app-not-registered", await refused.Content.ReadAsStringAsync());
-        var named = new HttpRequestMessage(HttpMethod.Post, $"/auth/v1/signIn?winche_app={id}") { Content = JsonContent.Create(new { email = email, password = "correct horse battery" }) };
-        Assert.DoesNotContain("app-not-registered", await (await client.SendAsync(named)).Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Contains("integrity-required", await refused.Content.ReadAsStringAsync());
+        var verified = new HttpRequestMessage(HttpMethod.Post, $"/auth/v1/signIn?winche_integrity={Uri.EscapeDataString(token)}") { Content = JsonContent.Create(new { email = email, password = "correct horse battery" }) };
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(verified)).StatusCode);
+        // Links opened from emails never need one.
+        Assert.NotEqual(HttpStatusCode.Forbidden, (await client.GetAsync("/auth/v1/action?mode=verifyEmail&code=x")).StatusCode);
 
-        // Removing the last app turns the refusal off with it.
-        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync($"/console/v1/apps/registered/{id}")).StatusCode);
-        Assert.False((await Json(await client.GetAsync("/console/v1/apps/registered"))).GetProperty("registeredOnly").GetBoolean());
+        // Removing the debug token ends its tokens; removing the last app puts enforced products back to monitor.
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync($"/console/v1/integrity/debug-tokens/{made.GetProperty("id").GetString()}")).StatusCode);
+        var again = new HttpRequestMessage(HttpMethod.Post, "/auth/v1/signIn") { Content = JsonContent.Create(new { email = email, password = "correct horse battery" }) };
+        again.Headers.Add("X-Winche-Integrity", token);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(again)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync($"/console/v1/integrity/apps/{id}")).StatusCode);
+        Assert.Equal("monitor", (await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("enforcement").GetProperty("authentication").GetString());
+    }
+
+    [Fact]
+    public async Task Apps_registered_before_Integrity_carry_over_until_its_settings_are_saved()
+    {
+        using var app = new ConsoleAppFactory(fx, ("Sample:ProjectSetup", "true"));
+        using var client = app.CreateClient();
+        await client.SetupAdminAsync();
+        await client.LoginAsync();
+        await Json(await client.PostAsJsonAsync("/console/v1/project", new { name = "Clinic records", id = "clinic-records", products = new[] { "authentication" } }));
+        // As the console kept them before (area "apps", with fields Integrity doesn't have).
+        var store = app.Services.GetRequiredService<Winche.Core.SettingsStore>();
+        await store.SaveAsync("apps", System.Text.Json.Nodes.JsonNode.Parse("""
+            { "apps": [ { "id": "app-old", "name": "Old app", "sdk": "flutter", "androidPackage": "com.example.old", "webOrigins": ["https://old.example.com"] } ],
+              "registeredOnly": true, "browserOrigins": ["https://x.example.com"] }
+            """)!, "admin@example.com", "Before Integrity");
+
+        var carried = Assert.Single((await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("apps").EnumerateArray());
+        Assert.Equal(("app-old", "com.example.old"), (carried.GetProperty("id").GetString(), carried.GetProperty("androidPackage").GetString()));
+        Assert.Equal("monitor", (await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("enforcement").GetProperty("authentication").GetString());   // "registered only" isn't enforcement
+        // The first save keeps them, in Integrity's own settings.
+        await Json(await client.PostAsJsonAsync("/console/v1/integrity/apps", new { name = "New app" }));
+        Assert.Equal(2, (await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("apps").GetArrayLength());
     }
 
     [Fact]

@@ -48,11 +48,11 @@ public static class AppSetupEndpoints
         {
             var project = http.RequestServices.GetService<Project.ProjectSetup>()?.Current;
             var setup = AppSetup.For(http.RequestServices, AppSetup.BaseUrlOf(http.Request), project?.Id ?? "winche", project?.Name);
-            // ?app=<id>: the setup for that registered app (its id goes in winche_options.dart). Unknown ids: 404.
+            // ?app=<id>: the setup for that app of the project (its id goes in winche_options.dart). Unknown ids: 404.
             if (http.Request.Query["app"].FirstOrDefault() is { Length: > 0 } id)
             {
-                if (http.RequestServices.GetService<RegisteredApps>()?.Find(id) is not { } app)
-                    return Results.Json(new { error = $"No app {id} is registered in project {setup.ProjectId}." }, statusCode: 404);
+                if (http.RequestServices.GetService<Winche.Integrity.WincheIntegrity>()?.Find(id) is not { } app)
+                    return Results.Json(new { error = $"There's no app {id} in project {setup.ProjectId}." }, statusCode: 404);
                 setup = setup with { App = new WincheAppSetupApp(app.Id, app.Name) };
             }
             return Results.Json(setup);

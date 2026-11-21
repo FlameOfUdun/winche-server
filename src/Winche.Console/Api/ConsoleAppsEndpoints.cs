@@ -20,7 +20,7 @@ internal static class ConsoleAppsEndpoints
             var setup = AppSetup.For(http.RequestServices, AppSetup.BaseUrlOf(http.Request), project.Id, project.Name);
             if (app is not null)
             {
-                if (http.RequestServices.GetRequiredService<RegisteredApps>().Find(app) is not { } registered) return Results.NotFound();
+                if (http.RequestServices.GetRequiredService<Winche.Integrity.WincheIntegrity>().Find(app) is not { } registered) return Results.NotFound();
                 setup = setup with { App = new(registered.Id, registered.Name) };
             }
             var chosen = string.IsNullOrWhiteSpace(platforms) ? null : platforms.Split(',', StringSplitOptions.RemoveEmptyEntries);

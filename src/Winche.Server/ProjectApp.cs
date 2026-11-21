@@ -235,14 +235,9 @@ internal static class ProjectApp
         // checks and CORS below never see them.
         app.MapWhen(http => IsConsoleCall(http.Request.PathBase), console => console.UseWincheConsoleApi(ServerOptions.ConsolePath));
         app.UseRouting();   // the apps' routes, matched after the console's branch
-        // CORS: the project's browser origins and its registered web apps' (Project settings → General), read as
-        // requests come, so changes apply at once. None set, or *: any origin.
-        var registeredApps = app.Services.GetRequiredService<Winche.Console.Apps.RegisteredApps>();
-        app.UseCors(p =>
-        {
-            p.SetIsOriginAllowed(origin => registeredApps.Current.AllowsOrigin(origin));
-            p.AllowAnyHeader().AllowAnyMethod();
-        });
+        // CORS: any origin. The apps' APIs take a bearer token in a header, never a cookie, so another site's page can't
+        // act as a signed-in user; which apps may call at all is Integrity's (enforced per product).
+        app.UseCors(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
         // Compression for the apps' APIs (a bearer token in a header: another site can't make the browser send it). Never
         // the console's API (cookies), where a compressed answer's size could give away what it holds (BREACH).
         app.UseWhen(http => Compressible(http.Request.Path), branch => branch.UseResponseCompression());
@@ -261,6 +256,7 @@ internal static class ProjectApp
         app.MapWincheStorageFileSystem();
         app.MapWincheAuth();
         app.MapWincheFunctions();
+        Winche.Integrity.AspNetCore.IntegrityEndpoints.MapWincheIntegrity(app);   // POST /integrity/v1/exchange: apps trade proof for an Integrity token
         app.MapWincheAssets();
         Winche.Console.Apps.AppSetupEndpoints.MapWincheAppSetup(app);   // GET /.well-known/winche: winche configure reads it
         app.MapGet("/", () => Results.Redirect($"{ServerOptions.ConsolePath}/projects/{project.Id}"));   // people opening the project's address

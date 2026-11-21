@@ -243,7 +243,7 @@ public static class ProjectEndpoints
     /// <c>service-disabled</c>). Only with <c>UseProjectSetup()</c>; put it before the products' endpoints.
     /// </summary>
     /// <param name="ungated">Addresses under a product's path that answer on their own terms (a signed link carries its
-    /// own permission): neither the product's state nor the calling app is checked.</param>
+    /// own permission): neither the product's state nor the Integrity token is checked.</param>
     public static IApplicationBuilder UseWincheProjectGate(this IApplicationBuilder app, params string[] ungated) => app.Use(async (http, next) =>
     {
         var setup = http.RequestServices.GetService<ProjectSetup>();
@@ -270,19 +270,8 @@ public static class ProjectEndpoints
                         .ToResult().ExecuteAsync(http);
                     return;
                 }
-                // Which app is calling: counted, and refused when only registered apps may call. CORS preflights pass.
-                if (HttpMethods.IsOptions(http.Request.Method)) break;
-                var apps = http.RequestServices.GetService<Apps.RegisteredApps>();
-                if (apps is not { Available: true }) break;
-                var app = apps.Find(Apps.RegisteredApps.AppIdOf(http.Request));
-                http.RequestServices.GetService<Apps.AppUsage>()?.Count(app?.Id ?? Apps.AppUsage.Unregistered);
-                if (app is null && apps.Current.RegisteredOnly)
-                {
-                    await new WincheError(WincheErrorCode.FailedPrecondition,
-                        "This app isn't registered in the project: register it in the console and use its winche_options.dart.", "app-not-registered")
-                        .ToResult().ExecuteAsync(http);
-                    return;
-                }
+                // Integrity: the request's token checked and counted, and refused where the product is enforced.
+                if (await Winche.Integrity.AspNetCore.IntegrityEndpoints.CheckAsync(http, product)) return;
                 break;
             }
         }

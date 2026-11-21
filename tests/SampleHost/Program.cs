@@ -148,6 +148,7 @@ if (app.Services.GetService<IServiceProviderIsService>()?.IsService(typeof(Winch
 Winche.Functions.FunctionsEndpoints.MapWincheFunctions(app);   // callables and CLI deploys
 app.MapWincheConsole("/console");
 Winche.Assets.AspNetCore.AssetsEndpoints.MapWincheAssets(app);   // apps read channels and files at /assets/v1
+Winche.Integrity.AspNetCore.IntegrityEndpoints.MapWincheIntegrity(app);   // apps trade proof for an Integrity token (with UseProjectSetup)
 app.MapWincheAppSetup();
 
 app.Run();

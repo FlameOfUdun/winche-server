@@ -275,7 +275,7 @@ public class ServerTests(PostgresFixture pg)
     }
 
     [Fact]
-    public async Task Each_project_has_its_own_browser_origins_besides_its_registered_web_apps()
+    public async Task Any_origin_may_call_and_a_projects_Integrity_tokens_work_only_in_it()
     {
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         var projectsPath = Directory.CreateTempSubdirectory("winche-server-projects-").FullName;
@@ -284,29 +284,32 @@ public class ServerTests(PostgresFixture pg)
         await Json(await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
         await Json(await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
         await TestProjects.CreateAsync(console, "clinic", "Clinic", "authentication");
-
-        async Task<string?> Allowed(string origin, string prefix = "/projects/clinic")
-        {
-            var preflight = new HttpRequestMessage(HttpMethod.Options, $"{prefix}/auth/v1/signIn");
-            preflight.Headers.Add("Origin", origin);
-            preflight.Headers.Add("Access-Control-Request-Method", "POST");
-            var response = await server.CreateClient().SendAsync(preflight);
-            return response.Headers.TryGetValues("Access-Control-Allow-Origin", out var v) ? v.Single() : null;
-        }
-
-        // None set: any origin. Then the project's own, saved with a reason.
-        Assert.Equal("https://anything.example.com", await Allowed("https://anything.example.com"));
-        Assert.Equal(HttpStatusCode.BadRequest, (await console.PutAsJsonAsync("/console/v1/projects/clinic/apps/browser-origins", new { origins = new[] { "not an origin" }, reason = "x" })).StatusCode);
-        await Json(await console.PutAsJsonAsync("/console/v1/projects/clinic/apps/browser-origins", new { origins = new[] { "https://configured.example.com/" }, reason = "Our admin page" }));
-        Assert.Equal("https://configured.example.com", (await Json(await console.GetAsync("/console/v1/projects/clinic/apps/registered"))).GetProperty("browserOrigins")[0].GetString());
-        Assert.Equal("https://configured.example.com", await Allowed("https://configured.example.com"));
-        Assert.Null(await Allowed("https://app.example.com"));
-        // Another project keeps its own (none: any).
         await Json(await console.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards" }));
-        Assert.Equal("https://app.example.com", await Allowed("https://app.example.com", "/projects/wards"));
-        await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/apps/registered", new { name = "Clinic web", webOrigins = new[] { "https://app.example.com" } }));
-        Assert.Equal("https://app.example.com", await Allowed("https://app.example.com"));
-        Assert.Null(await Allowed("https://elsewhere.example.com"));
+        await StartProductAsync(console, "/projects/wards", "authentication");
+
+        // CORS: any origin (a bearer token in a header, never a cookie; which apps may call is Integrity's).
+        var preflight = new HttpRequestMessage(HttpMethod.Options, "/projects/clinic/auth/v1/signIn");
+        preflight.Headers.Add("Origin", "https://anything.example.com");
+        preflight.Headers.Add("Access-Control-Request-Method", "POST");
+        var allowed = await server.CreateClient().SendAsync(preflight);
+        Assert.Equal("*", allowed.Headers.GetValues("Access-Control-Allow-Origin").Single());
+
+        // The same app id and a debug token in both projects: clinic's Integrity token is refused by wards.
+        async Task<string> TokenAsync(string project)
+        {
+            await Json(await console.PostAsJsonAsync($"/console/v1/projects/{project}/integrity/apps", new { name = "Shared", id = "shared-app" }));
+            var debug = (await Json(await console.PostAsJsonAsync($"/console/v1/projects/{project}/integrity/debug-tokens", new { app = "shared-app", name = "CI" }))).GetProperty("token").GetString();
+            return (await Json(await server.CreateClient().PostAsJsonAsync($"/projects/{project}/integrity/v1/exchange", new { app = "shared-app", provider = "debug", debugToken = debug }))).GetProperty("token").GetString()!;
+        }
+        var clinic = await TokenAsync("clinic");
+        await TokenAsync("wards");
+        await Json(await console.PutAsJsonAsync("/console/v1/projects/wards/integrity/enforcement",
+            new { enforcement = new Dictionary<string, string> { ["authentication"] = "enforce" }, reason = "Only our apps" }));
+        var request = new HttpRequestMessage(HttpMethod.Post, "/projects/wards/auth/v1/signIn/anonymous");
+        request.Headers.Add("X-Winche-Integrity", clinic);
+        Assert.Equal(HttpStatusCode.Forbidden, (await server.CreateClient().SendAsync(request)).StatusCode);
+        // Clinic itself isn't enforced: it answers with or without a token.
+        Assert.NotEqual(HttpStatusCode.Forbidden, (await server.CreateClient().PostAsync("/projects/clinic/auth/v1/signIn/anonymous", null)).StatusCode);
     }
 
     [Fact]
@@ -552,7 +555,7 @@ public class ServerTests(PostgresFixture pg)
         await Json(await admin.PostAsJsonAsync("/console/v1/projects", new { name = "Wards", id = "wards" }));
         await StartProductAsync(admin, "/projects/wards", "authentication");
         await Json(await admin.PostAsJsonAsync("/projects/wards/auth/v1/signUp", new { email = "ann@example.com", password = "correct horse battery" }));
-        await Json(await admin.PostAsJsonAsync("/console/v1/projects/wards/apps/registered", new { name = "Ward app", id = "ward-app" }));
+        await Json(await admin.PostAsJsonAsync("/console/v1/projects/wards/integrity/apps", new { name = "Ward app", id = "ward-app" }));
 
         // The control database: accounts, keys and the project list in public; each project's configuration in its schema.
         var publicTables = await TablesAsync(control, "public");

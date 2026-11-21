@@ -191,9 +191,15 @@ and a deploy reaches every task within seconds.
   (`WINCHE_TOKEN`, `WINCHE_ID_TOKEN`) and `@winche-technologies/winche-admin` (`initializeAdmin({ key })`) do that themselves. They belong to
   the project: the console flags one whose maker is no longer an admin, and keys unused for 90 days. Their changes are
   named for them in the history. CI tokens from before became service accounts (their tokens are their keys).
+- **Integrity** (`winche integrity`): the project's apps (Android package, Apple bundle and team id; each app's id goes
+  in its `winche_options.dart`) prove they're its own, trade that for an Integrity token at
+  `/projects/<id>/integrity/v1/exchange`, and send it with every request (`X-Winche-Integrity`). Each product is off,
+  monitor (the default: checked and counted per app, never refused) or enforce (refused without a valid token). Debug
+  tokens (shown once) let simulators, desktop builds and CI in. Email action links, identity providers' notices, HTTP
+  functions (webhooks) and signed file links never need a token. See Winche.Integrity's README.
 - **Logs:** every product's requests and events, as plain sentences, with filters and saved queries. Changes are always
   logged; successful reads are sampled.
-- **Project settings:** the project (name, id, image), apps and browser origins, members and invites, service accounts, and
+- **Project settings:** the project (name, id, image), members and invites, service accounts, and
   **Data** (where its database is, moving it, connections). The CLI signs in with `winche login`, once per server, as
   a session of your account like the console's own.
 - **Server settings** (server admins): the console's own accounts. Users, sign-in method (email and password, which is
@@ -274,6 +280,12 @@ PostgreSQL server is backed up there.
 
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
+
+**4.0.0 (Integrity):** registered apps became Integrity's apps (they carry over, ids and all) and "registered apps
+only" and the browser origins are gone: the project APIs answer any origin, and apps no longer send `X-Winche-App`.
+Every product starts in monitor: nothing is refused until you enforce it (**Integrity**). Apps built with the Winche
+SDKs before 4.0 keep working while nothing is enforced; to enforce, update them and give each a way to prove itself
+(a debug token for now).
 
 **3.1.4:** with an SMTP server, sign-in-link and password-reset emails are sent again (they were lost, "Cannot access a
 disposed object" in the log; Winche Auth 2.0.1). Authentication → Settings → Emails to users can now send them before
