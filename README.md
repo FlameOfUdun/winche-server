@@ -275,6 +275,10 @@ PostgreSQL server is backed up there.
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
 
+**3.1.4:** with an SMTP server, sign-in-link and password-reset emails are sent again (they were lost, "Cannot access a
+disposed object" in the log; Winche Auth 2.0.1). Authentication → Settings → Emails to users can now send them before
+answering instead. Nothing to change.
+
 **3.1.3:** plugins from a folder (`Winche__FunctionPluginsPath`) build with the newest SDKs, like plugins from npm
 (Winche.Functions 3.1.2). Nothing to change.
 
