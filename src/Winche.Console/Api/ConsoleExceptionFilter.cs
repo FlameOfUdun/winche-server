@@ -24,6 +24,18 @@ internal static class ConsoleExceptionFilter
         {
             return ex.Error.ToResult();
         }
+        catch (Winche.Secrets.SecretReferenceException ex)
+        {
+            // A secret's source (AWS) refusing or out of reach, wherever a secret is set or removed: said, never a 500.
+            return new WincheError(ex.Code switch
+            {
+                "permission-denied" => WincheErrorCode.PermissionDenied,
+                "unavailable" => WincheErrorCode.Unavailable,
+                "not-found" => WincheErrorCode.NotFound,
+                "invalid-argument" => WincheErrorCode.InvalidArgument,
+                _ => WincheErrorCode.FailedPrecondition,
+            }, ex.Message, "secrets").ToResult();
+        }
         catch (Winche.Database.Querying.Planning.PlanValidationException ex)
         {
             return new WincheError(WincheErrorCode.InvalidArgument, ex.Message, "invalid-query").ToResult();

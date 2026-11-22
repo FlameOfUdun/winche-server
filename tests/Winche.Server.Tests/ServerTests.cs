@@ -1869,6 +1869,11 @@ public class ServerEmailTests(PostgresFixture pg)
         Assert.NotEqual(HttpStatusCode.NoContent, notKept.StatusCode);
         Assert.Contains("AWS Secrets Manager", await notKept.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.BadRequest, (await bob.PutAsJsonAsync("/console/v1/projects/wards/functions/secrets/KEPT", new { value = "v", reference = "keep:vault" })).StatusCode);
+        // The other secret fields take keep: beside their value too (refused here only because AWS can't be reached).
+        await Json(await bob.PostAsJsonAsync("/console/v1/projects/wards/integrity/apps", new { name = "Web", id = "web-app", webSiteKey = "0x4AAAAAAAsitekey123" }));
+        var turnstile = await bob.PutAsJsonAsync("/console/v1/projects/wards/integrity/apps/web-app/turnstile-secret", new { value = "0x4AAAAAAAsecretsecret", reference = "keep:aws-sm" });
+        Assert.DoesNotContain("Give the widget's secret key", await turnstile.Content.ReadAsStringAsync());
+        Assert.Contains("AWS Secrets Manager", await turnstile.Content.ReadAsStringAsync());
         var moved = await bob.PostAsJsonAsync("/console/v1/projects/wards/functions/secrets/OTHER/move", new { store = "aws-ssm" });
         Assert.NotEqual(HttpStatusCode.NoContent, moved.StatusCode);
         var still = (await Json(await bob.GetAsync("/console/v1/projects/wards/functions/secrets"))).GetProperty("secrets").EnumerateArray().Single(x => x.GetProperty("name").GetString() == "OTHER");

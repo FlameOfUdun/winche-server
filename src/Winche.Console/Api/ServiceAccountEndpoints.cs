@@ -38,7 +38,7 @@ public static class ServiceAccountEndpoints
         app.MapPost("/service-accounts/token", async (TokenRequest body, HttpContext http, ServiceAccountStore store, ServiceAccountTokens tokens,
             TrustedIdentityValidator validator, CancellationToken ct) =>
         {
-            if (!store.Available) return Problem("Service accounts need AddWincheConfig(…) (where they're kept).");
+            if (!store.Available) return Problem("Service accounts can't be kept on this server.");
             ServiceAccount account;
             string credential, how;
             if (body.Key is { Length: > 0 } key)

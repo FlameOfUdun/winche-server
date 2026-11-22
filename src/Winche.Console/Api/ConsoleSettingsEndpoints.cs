@@ -64,7 +64,7 @@ public static class ConsoleSettingsEndpoints
                 source = a.Source == SettingsSource.Saved ? "console" : "code",
                 version = a.Version is { } v ? new { id = v.Id, area = v.Area, areaTitle = a.Title, number = v.Number, at = v.At, by = v.By, reason = v.Reason } : null,
                 editable = store is not null,
-                whyReadOnly = store is null ? "The app needs AddWincheConfig(…) to save settings." : null,
+                whyReadOnly = store is null ? "Settings can't be saved on this server." : null,
             }, SettingsArea.Json);
         });
 
@@ -72,7 +72,7 @@ public static class ConsoleSettingsEndpoints
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
             if (Area(sp, area) is null) return Results.NotFound();
-            if (sp.GetService<SettingsStore>() is not { } store) return Problem("The app needs AddWincheConfig(…) to save settings.");
+            if (sp.GetService<SettingsStore>() is not { } store) return Problem("Settings can't be saved on this server.");
             if (body.Settings is not { ValueKind: JsonValueKind.Object } doc) return Problem("Send the settings to save.");
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're making this change: it goes in the history.");
             try
@@ -108,7 +108,7 @@ public static class ConsoleSettingsEndpoints
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
             if (Area(sp, "database") is not { } a) return Results.NotFound();
-            if (sp.GetService<SettingsStore>() is not { } store) return Problem("The app needs AddWincheConfig(…) to save settings.");
+            if (sp.GetService<SettingsStore>() is not { } store) return Problem("Settings can't be saved on this server.");
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're making this change: it goes in the history.");
             var (result, error) = Winche.Database.Settings.IndexText.Parse(body.Text ?? "");
             if (error is not null) return Problem($"Line {error.Line}, column {error.Column}: {error.Message}");

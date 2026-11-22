@@ -104,10 +104,17 @@ public static class ConsoleStorageLocationEndpoints
                 var test = await moves.TestAsync(location, key, ct);
                 if (!test.Ok) return Problem($"The new location didn't pass its test: {string.Join(" ", test.Steps.Where(s => !s.Ok).Select(s => $"{s.Name}: {s.Error}"))}");
             }
-            // A key read from elsewhere is kept as its reference: rotations there are followed.
-            if (await ConsoleSecretsEndpoints.KeepKeyReferenceAsync(http.RequestServices, location.SecretName, body.SecretKeyReference, http, ct) is { } notKept) return notKept;
-            try { return Results.Json(await moves.StartAsync(location, string.IsNullOrWhiteSpace(body.SecretKeyReference) ? body.SecretKey : null, Who(http.User), body.Reason, ct), SettingsArea.Json); }
+            // A key read from elsewhere is kept as its reference: rotations there are followed. One to keep in AWS is saved
+            // with the location first, then moved there.
+            var keep = ConsoleSecretsEndpoints.KeepIn(body.SecretKeyReference) is not null;
+            if (!keep && await ConsoleSecretsEndpoints.KeepKeyReferenceAsync(http.RequestServices, location.SecretName, body.SecretKeyReference, http, ct) is { } notKept) return notKept;
+            object started;
+            try { started = await moves.StartAsync(location, string.IsNullOrWhiteSpace(body.SecretKeyReference) || keep ? body.SecretKey : null, Who(http.User), body.Reason, ct); }
             catch (StorageMoveException ex) { return Problem(ex.Message); }
+            var warning = keep ? await ConsoleSecretsEndpoints.KeepInAwsAfterAsync(http, location.SecretName, body.SecretKeyReference!, ct) : null;
+            var answer = System.Text.Json.JsonSerializer.SerializeToNode(started, SettingsArea.Json)!.AsObject();
+            if (warning is not null) answer["warning"] = warning;
+            return Results.Json(answer);
         });
 
         foreach (var (step, run) in new (string, Func<StorageMoves, string?, string, CancellationToken, Task>)[]

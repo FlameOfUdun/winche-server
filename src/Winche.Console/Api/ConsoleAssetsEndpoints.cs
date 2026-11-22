@@ -190,7 +190,7 @@ public static class ConsoleAssetsEndpoints
             if (cdn.Problems() is { Count: > 0 } p) return Problem(string.Join(" ", p));
             var secrets = sp.GetService<SecretStore>() is { Available: true } s ? s : null;
             var giving = cdn.Signs && (!string.IsNullOrWhiteSpace(body.PrivateKey) || !string.IsNullOrWhiteSpace(body.PrivateKeyReference));
-            if (!cdn.Signs) { if (secrets is not null) await secrets.DeleteAsync(cdn.SecretName, ct); }   // a public CDN keeps no key
+            if (!cdn.Signs) { if (secrets is not null) await secrets.DeleteAsync(cdn.SecretName, keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct); }   // a public CDN keeps no key
             else if (giving)
             {
                 if (secrets is null) return Problem("Keeping a private key needs the master key.");
@@ -217,9 +217,10 @@ public static class ConsoleAssetsEndpoints
             foreach (var channel in await assets.ChannelsAsync(ct))
                 if (await assets.ReleaseAsync(channel.Release, ct) is { } r && r.Files.Values.Any(f => f.Url is { } u && cdn.Serves(u)))
                     return Problem($"Release {r.Number} on {channel.Name} has files on {id}: publish one without them first.");
+            // Its key first (AWS may refuse: then nothing is removed), then the CDN.
+            if (sp.GetService<SecretStore>() is { Available: true } secrets) await secrets.DeleteAsync(cdn.SecretName, keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct);
             await store.SaveAsync(AssetCdnSettings.Area, System.Text.Json.JsonSerializer.SerializeToNode(area.Current with { Cdns = [.. area.Current.Cdns.Where(c => c.Id != id)] }, SettingsArea.Json)!,
                 Who(http.User), string.IsNullOrWhiteSpace(reason) ? $"Removed the CDN {id}" : reason.Trim(), ct);
-            if (sp.GetService<SecretStore>() is { Available: true } secrets) await secrets.DeleteAsync(cdn.SecretName, ct);
             return Results.NoContent();
         }));
 
@@ -275,6 +276,10 @@ public static class ConsoleAssetsEndpoints
                 return Problem($"The new location didn't pass its test: {failed.Step}: {failed.Error}");
             await moves.StartAsync(location, secret, Who(http.User), body.Reason.Trim(), ct);
             // A key read from elsewhere is kept as its reference (replacing the value just saved): rotations there are followed.
+            // One to keep in AWS is moved there now; if that fails the move goes on with the key kept here, and says so.
+            if (ConsoleSecretsEndpoints.KeepIn(body.SecretKeyReference) is not null)
+                return await ConsoleSecretsEndpoints.KeepInAwsAfterAsync(http, location.SecretName, body.SecretKeyReference!, ct) is { } warning
+                    ? Results.Json(new { warning }) : Results.NoContent();
             if (await ConsoleSecretsEndpoints.KeepKeyReferenceAsync(http.RequestServices, location.SecretName, body.SecretKeyReference, http, ct) is { } notKept) return notKept;
             return Results.NoContent();
         }));

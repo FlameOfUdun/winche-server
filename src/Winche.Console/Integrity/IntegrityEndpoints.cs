@@ -151,10 +151,12 @@ public static class ConsoleIntegrityEndpoints
             // Its debug tokens go with it. The last app gone: nothing could call, so enforced products go back to monitor.
             var enforcement = rest.Count > 0 ? current.Enforcement
                 : current.Enforcement.ToDictionary(e => e.Key, e => e.Value == "enforce" ? "monitor" : e.Value);
+            // Its Turnstile secret key first (AWS may refuse: then nothing is removed), then the app, then its devices' keys.
+            if (http.RequestServices.GetService<Winche.Secrets.SecretStore>() is { Available: true } kept)
+                await kept.DeleteAsync(WincheIntegrity.TurnstileSecret(id), keepInSource: false, Api.ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct);
             await integrity.SaveAsync(current with { Apps = rest, DebugTokens = [.. current.DebugTokens.Where(t => t.App != id)], Enforcement = enforcement },
                 Who(http.User), $"Removed the app {gone.Name}", ct);
-            await store.RemoveKeysAsync(id, ct);   // its devices' keys go too, and its Turnstile secret key
-            if (http.RequestServices.GetService<Winche.Secrets.SecretStore>() is { Available: true } kept) await kept.DeleteAsync(WincheIntegrity.TurnstileSecret(id), ct);
+            await store.RemoveKeysAsync(id, ct);
             return Results.NoContent();
         });
 
@@ -176,8 +178,8 @@ public static class ConsoleIntegrityEndpoints
         {
             if (!integrity.Available) return Problem(NotAvailable);
             if (http.RequestServices.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets)
-                return Problem("Secrets need the project's master key: set WincheConfigOptions.MasterKey.");
-            if (string.IsNullOrWhiteSpace(body.Value) == string.IsNullOrWhiteSpace(body.Reference))
+                return Problem("Secrets need the server's master key.");
+            if (ConsoleSecretsEndpoints.KeepIn(body.Reference) is null && string.IsNullOrWhiteSpace(body.Value) == string.IsNullOrWhiteSpace(body.Reference))
                 return Problem("Give the service account's key file (its JSON) or a reference to where it's kept.");
             if (body.Value is { Length: > 0 } json && Winche.Integrity.PlayIntegrity.GoogleServiceAccount.Parse(json) is null)
                 return Problem("That isn't a Google service account's key file: in Google Cloud, IAM → Service accounts → the account → Keys → Add key → JSON.");
@@ -190,8 +192,8 @@ public static class ConsoleIntegrityEndpoints
         {
             if (integrity.Find(id) is not { } app) return Results.NotFound();
             if (http.RequestServices.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets)
-                return Problem("Secrets need the project's master key: set WincheConfigOptions.MasterKey.");
-            if (string.IsNullOrWhiteSpace(body.Value) == string.IsNullOrWhiteSpace(body.Reference))
+                return Problem("Secrets need the server's master key.");
+            if (ConsoleSecretsEndpoints.KeepIn(body.Reference) is null && string.IsNullOrWhiteSpace(body.Value) == string.IsNullOrWhiteSpace(body.Reference))
                 return Problem("Give the widget's secret key (Cloudflare dashboard → Turnstile → the widget) or a reference to where it's kept.");
             if (body.Value is { Length: > 0 } v && !System.Text.RegularExpressions.Regex.IsMatch(v.Trim(), @"^[0-9]x[A-Za-z0-9_-]{10,200}$"))
                 return Problem("That isn't a Turnstile secret key (like 0x4AAAAAAA…).");
@@ -202,7 +204,7 @@ public static class ConsoleIntegrityEndpoints
         admin.MapDelete("/play-service-account", async (HttpContext http, CancellationToken ct) =>
         {
             if (http.RequestServices.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets) return Results.NotFound();
-            if (!await secrets.DeleteAsync(WincheIntegrity.PlayServiceAccountSecret, ct)) return Results.NotFound();
+            if (!await secrets.DeleteAsync(WincheIntegrity.PlayServiceAccountSecret, keepInSource: false, Api.ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct)) return Results.NotFound();
             http.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("Winche.Console.Integrity")
                 .LogInformation("{Who} removed the Google service account Play Integrity signs in as.", Who(http.User));
             return Results.NoContent();

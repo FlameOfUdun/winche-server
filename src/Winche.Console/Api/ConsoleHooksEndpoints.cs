@@ -55,8 +55,8 @@ public static class ConsoleHooksEndpoints
                 source = area.Source == SettingsSource.Saved ? "console" : "code",
                 version = area.Version is { } v ? new { id = v.Id, number = v.Number, at = v.At, by = v.By, reason = v.Reason } : null,
                 editable = store is not null && (secrets?.Available ?? false),
-                whyReadOnly = store is null ? "The app needs AddWincheConfig(…) to save hooks."
-                    : secrets?.Available != true ? "Webhook signing secrets need the project's master key (WincheConfigOptions.MasterKey)." : null,
+                whyReadOnly = store is null ? "Webhooks can't be saved on this server."
+                    : secrets?.Available != true ? "Webhook signing secrets need the server's master key." : null,
                 sources = catalog.Sources.Where(s => !s.Internal),
                 counts = await outbox.CountsAsync(ct),
             }, SettingsArea.Json);
@@ -65,7 +65,7 @@ public static class ConsoleHooksEndpoints
         group.MapPut("", async (SaveRequest body, HttpContext http, IServiceProvider sp, CancellationToken ct) =>
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
-            if (sp.GetService<SettingsStore>() is not { } store) return Problem("The app needs AddWincheConfig(…) to save hooks.");
+            if (sp.GetService<SettingsStore>() is not { } store) return Problem("Webhooks can't be saved on this server.");
             if (body.Settings is not { ValueKind: JsonValueKind.Object } doc) return Problem("Send the hooks to save.");
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're making this change: it goes in the history.");
             HooksSettings settings;
@@ -73,7 +73,7 @@ public static class ConsoleHooksEndpoints
             catch (JsonException ex) { return Problem($"The hooks don't have the expected shape: {ex.Message}"); }
             if (settings.Problems(sp.GetRequiredService<HookCatalog>()) is { Count: > 0 } problems) return Problem("These hooks can't be saved.", problems);
             // Every webhook gets a signing secret the first time it's saved.
-            if (sp.GetService<SecretStore>() is not { Available: true } secrets) return Problem("Webhook signing secrets need AddWincheConfig(…) with a master key.");
+            if (sp.GetService<SecretStore>() is not { Available: true } secrets) return Problem("Webhook signing secrets need the server's master key.");
             foreach (var h in settings.Hooks)
                 if (await secrets.InfoAsync(HookRunner.SecretName(h.Id), ct) is null)
                     await secrets.SetAsync(HookRunner.SecretName(h.Id), WebhookSignature.NewSecret(), Who(http.User), ct);
@@ -89,14 +89,14 @@ public static class ConsoleHooksEndpoints
         group.MapGet("/{id}/secret", async (string id, HttpContext http, IServiceProvider sp, CancellationToken ct) =>
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
-            if (sp.GetService<SecretStore>() is not { Available: true } secrets) return Problem("Secrets need AddWincheConfig(…) with a master key.");
+            if (sp.GetService<SecretStore>() is not { Available: true } secrets) return Problem("Secrets need the server's master key.");
             return await secrets.GetAsync(HookRunner.SecretName(id), ct) is { } secret ? Results.Json(new { secret }) : Results.NotFound();
         });
 
         group.MapPost("/{id}/secret/rotate", async (string id, HttpContext http, IServiceProvider sp, CancellationToken ct) =>
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
-            if (sp.GetService<SecretStore>() is not { Available: true } secrets) return Problem("Secrets need AddWincheConfig(…) with a master key.");
+            if (sp.GetService<SecretStore>() is not { Available: true } secrets) return Problem("Secrets need the server's master key.");
             var secret = WebhookSignature.NewSecret();
             await secrets.SetAsync(HookRunner.SecretName(id), secret, Who(http.User), ct);
             return Results.Json(new { secret });

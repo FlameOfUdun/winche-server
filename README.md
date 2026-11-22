@@ -124,7 +124,7 @@ and a deploy reaches every task within seconds.
 {
   "cpu": "2048", "memory": "4096",
   "containerDefinitions": [{
-    "name": "winche", "image": "ghcr.io/flameofudun/winche-server:2",
+    "name": "winche", "image": "ghcr.io/flameofudun/winche-server:4",
     "portMappings": [{ "containerPort": 8080 }],
     "stopTimeout": 60,                                     // ≥ Winche__StopTimeoutSeconds
     "environment": [
@@ -176,10 +176,13 @@ and a deploy reaches every task within seconds.
   project can keep an AWS access key of its own for those (optional); without one, references use the server's AWS
   credentials and region (`AWS_REGION`, the task's role), which only server admins may choose. Where the key may write,
   Winche can also keep a secret in AWS itself (Secrets Manager, or Parameter Store as a SecureString) under
-  `winche/<project>/<NAME>`: only the reference stays here; replacing writes a new version there, removing deletes it
+  `winche/<project>/functions.secret.<NAME>` (the products' own by their names; the server's own under `winche/_server/`):
+  only the reference stays here; replacing writes a new version there, removing deletes it
   there (Secrets Manager: recoverable for 7 days), and a value kept here can be moved. The console offers only what the
   key may do, found without changing anything in AWS; the key needs, under that prefix, `secretsmanager:GetSecretValue`,
-  `CreateSecret`, `PutSecretValue`, `DeleteSecret` and/or `ssm:GetParameter`, `PutParameter`, `DeleteParameter`.
+  `DescribeSecret`, `CreateSecret`, `PutSecretValue`, `RestoreSecret`, `DeleteSecret` and/or `ssm:GetParameter`,
+  `DescribeParameters`, `PutParameter`, `DeleteParameter`. Winche never writes over a secret it didn't make. Deleting a
+  project leaves the secrets Winche kept for it in AWS: remove them there.
 - **Assets:** versioned content apps read (translations, pages, media): numbered releases published from the CLI
   (`winche assets deploy`, or a service account with the `assets` scope), channels apps follow (moving one back is a
   rollback), and rules per path. Kept in the project's files folder unless the console moves them to a bucket. Large

@@ -74,6 +74,17 @@ internal static class ConsoleSecretsEndpoints
         catch (SecretReferenceException e) { return (null, Problem(e.Message)); }
     }
 
+    /// <summary>
+    /// After something was saved with a key it keeps as a value: that key moved into AWS (<c>keep:&lt;source&gt;</c>).
+    /// Null when moved; else why not, as a warning (the key stays here, encrypted, and works).
+    /// </summary>
+    public static async Task<string?> KeepInAwsAfterAsync(HttpContext http, string secretName, string reference, CancellationToken ct)
+    {
+        if (KeepIn(reference) is not { } source) return null;
+        try { await http.RequestServices.GetRequiredService<SecretStore>().MoveToSourceAsync(secretName, source, Who(http.User), MayUseAppCredentials(http), ct); return null; }
+        catch (SecretReferenceException e) { return $"Saved, with its key kept here rather than in AWS: {e.Message}"; }
+    }
+
     /// <summary>Keeps a location's secret key as <paramref name="reference"/> (before its move starts). Null when kept.</summary>
     public static async Task<IResult?> KeepKeyReferenceAsync(IServiceProvider sp, string secretName, string? reference, HttpContext http, CancellationToken ct)
     {

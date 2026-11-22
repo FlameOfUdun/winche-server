@@ -155,6 +155,8 @@ public sealed class ServerOptions
         if (!Uri.TryCreate(PublicUrl, UriKind.Absolute, out var u) || u.Scheme is not ("https" or "http"))
             problems.Add("Winche__PublicUrl: the address apps reach this server at, e.g. https://api.example.com.");
         if (Email is { Provider.Length: > 0 } e) problems.AddRange(e.Problems());
+        if (!System.Text.RegularExpressions.Regex.IsMatch(SecretsPrefix, @"^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*/?$"))
+            problems.Add($"Winche__SecretsPrefix: '{SecretsPrefix}' can't start names in AWS: letters, digits, _ . - and / between parts.");
         foreach (var t in TrustedProxies.Where(t => t != "*"))
             if (!System.Net.IPNetwork.TryParse(t.Contains('/') ? t : t + (t.Contains(':') ? "/128" : "/32"), out _))
                 problems.Add($"Winche__TrustedProxies: '{t}' isn't an address or network (like 10.0.0.5 or 10.0.0.0/8), or * for any.");

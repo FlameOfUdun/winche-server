@@ -51,7 +51,7 @@ public static class ConsoleTokenEndpoints
             {
                 // A person approves: in the browser, or a code from a CLI signed in as them (winche login:approve); never a CI token.
                 if (ByCiToken(http.User) || (ByToken(http.User) && body.UserCode is null)) return Results.Forbid();
-                if (!store.Available) return Problem("The CLI's sign-in needs AddWincheConfig(…) (where its tokens are kept).");
+                if (!store.Available) return Problem("Signing in from the CLI isn't possible on this server.");
                 if (body.UserCode is { } userCode)
                 {
                     var who = http.User.IsInRole(ConsoleRoles.Admin) || http.User.IsInRole(ConsoleRoles.Member) || http.User.IsInRole(ConsoleRoles.Viewer)
@@ -89,7 +89,7 @@ public static class ConsoleTokenEndpoints
             // winche login --no-browser: the CLI shows a code to type in a browser anywhere, and polls until it's allowed.
             app.MapPost("/cli/device", async (DeviceRequest body, ConsoleTokenStore store, CancellationToken ct) =>
             {
-                if (!store.Available) return Problem("The CLI's sign-in needs AddWincheConfig(…) (where its tokens are kept).");
+                if (!store.Available) return Problem("Signing in from the CLI isn't possible on this server.");
                 if (body.Challenge is not { Length: 43 } challenge) return Problem("Send the PKCE challenge.");
                 var name = string.IsNullOrWhiteSpace(body.Name) ? "winche CLI" : body.Name.Trim()[..Math.Min(body.Name.Trim().Length, 80)];
                 var (deviceCode, userCode) = await store.CreateDeviceAsync(challenge, name, ct);

@@ -237,8 +237,10 @@ public static class ConsoleAppAuthEndpoints
             return Results.Json(User(await d.PatchProfileAsync(uid, patch, http.RequestAborted)));
         }));
 
+        // Someone's email and password are how they sign in: changed by an admin with two-step sign-in, where settings need it.
         group.MapPut("/users/{uid}/email", (string uid, EmailRequest body, HttpContext http, UserDirectories dirs) => WithDirectory(http, dirs, async d =>
         {
+            if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } twoStep) return twoStep;
             if (await ManagedElsewhereAsync(d, uid, http) is { } managed) return managed;
             if (string.IsNullOrWhiteSpace(body.Email)) return Results.Json(new { error = new { code = "INVALID_ARGUMENT", message = "Give the new email address." } }, statusCode: 400);
             if (body.Confirm)
@@ -262,6 +264,7 @@ public static class ConsoleAppAuthEndpoints
 
         group.MapPut("/users/{uid}/password", (string uid, PasswordRequest body, HttpContext http, UserDirectories dirs) => WithDirectory(http, dirs, async d =>
         {
+            if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } twoStep) return twoStep;
             if (await ManagedElsewhereAsync(d, uid, http) is { } managed) return managed;
             if (string.IsNullOrEmpty(body.Password)) return Results.Json(new { error = new { code = "INVALID_ARGUMENT", message = "Give the new password." } }, statusCode: 400);
             return Results.Json(User(await d.SetPasswordAsync(uid, body.Password, http.RequestAborted)));

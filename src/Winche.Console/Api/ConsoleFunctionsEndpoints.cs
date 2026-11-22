@@ -195,7 +195,8 @@ public static class ConsoleFunctionsEndpoints
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
             if (FunctionSecrets.Problem(name) is { } bad) return Problem(bad);
             // One Winche keeps in AWS is deleted there too (recoverable for a week in Secrets Manager); AWS refusing stops it.
-            try { return await secrets.RemoveAsync(name, ct) ? Results.NoContent() : new WincheError(WincheErrorCode.NotFound, $"There's no secret {name}.").ToResult(); }
+            var store = http.RequestServices.GetRequiredService<Winche.Secrets.SecretStore>();
+            try { return await store.DeleteAsync(FunctionSecrets.Prefix + name, keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct) ? Results.NoContent() : new WincheError(WincheErrorCode.NotFound, $"There's no secret {name}.").ToResult(); }
             catch (Winche.Secrets.SecretReferenceException e) when (e.Code == "permission-denied") { return new WincheError(WincheErrorCode.PermissionDenied, e.Message, "secrets").ToResult(); }
             catch (Winche.Secrets.SecretReferenceException e) { return Problem(e.Message); }
         });

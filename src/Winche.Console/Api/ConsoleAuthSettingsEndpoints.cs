@@ -80,7 +80,7 @@ public static class ConsoleAuthSettingsEndpoints
                     available = false,
                     whyReadOnly = sp.GetService<Winche.Auth.WincheAuthOptions>() is null
                         ? "Winche Auth isn't installed in this app."
-                        : "The app's code sets these: add o.UseSettings() to AddWincheAuth(…) to change them here.",
+                        : "These are set in the server's configuration, not here.",
                 });
             var store = sp.GetService<SettingsStore>();
             var secrets = sp.GetService<SecretStore>();
@@ -101,7 +101,7 @@ public static class ConsoleAuthSettingsEndpoints
                 source = area.Source == SettingsSource.Saved ? "console" : "code",
                 version = area.Version is { } v ? Version(v, store) : null,
                 editable = store is not null,
-                whyReadOnly = store is null ? "The app needs AddWincheConfig(…) to save settings." : null,
+                whyReadOnly = store is null ? "Settings can't be saved on this server." : null,
                 smtpPassword = password is null ? null : new { setAt = password.SetAt, setBy = password.SetBy, reference = ConsoleSecretsEndpoints.ReferenceOf(password) },
                 secretsAvailable = secrets?.Available ?? false,
                 appSender = isService?.IsService(typeof(Winche.Auth.Email.IAuthEmailSender)) == true,
@@ -112,8 +112,8 @@ public static class ConsoleAuthSettingsEndpoints
         {
             if (await RequireTwoFactorAsync(http) is { } refused) return refused;
             if (sp.GetService<SettingsArea<Winche.Auth.Settings.WincheAuthSettings>>() is not { } area)
-                return Problem("The app's code sets these: add o.UseSettings() to AddWincheAuth(…).");
-            if (sp.GetService<SettingsStore>() is not { } store) return Problem("The app needs AddWincheConfig(…) to save settings.");
+                return Problem("These are set in the server's configuration, not here.");
+            if (sp.GetService<SettingsStore>() is not { } store) return Problem("Settings can't be saved on this server.");
             if (body.Settings is not { ValueKind: JsonValueKind.Object } doc) return Problem("Send the settings to save.");
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're making this change: it goes in the history.");
             var node = JsonNode.Parse(doc.GetRawText())!;
@@ -121,26 +121,30 @@ public static class ConsoleAuthSettingsEndpoints
             if (!string.IsNullOrEmpty(body.SmtpPassword) || !string.IsNullOrWhiteSpace(body.SmtpPasswordReference))
             {
                 var secrets = sp.GetRequiredService<SecretStore>();
-                if (!secrets.Available) return Problem("Secrets need the project's master key: set WincheConfigOptions.MasterKey.");
+                if (!secrets.Available) return Problem("Secrets need the server's master key.");
                 if (await ConsoleSecretsEndpoints.SetAsync(secrets, Winche.Auth.Email.SmtpEmailSender.SecretName, body.SmtpPassword, body.SmtpPasswordReference, http, ct) is { } refusedSecret)
                     return refusedSecret;
             }
             if (body.SyncSecretReferences is { Count: > 0 })
             {
                 var secrets = sp.GetRequiredService<SecretStore>();
-                if (!secrets.Available) return Problem("Secrets need the project's master key: set WincheConfigOptions.MasterKey.");
+                if (!secrets.Available) return Problem("Secrets need the server's master key.");
                 foreach (var (provider, reference) in body.SyncSecretReferences.Where(r => !string.IsNullOrWhiteSpace(r.Value)))
-                    if (await ConsoleSecretsEndpoints.SetAsync(secrets, Winche.Auth.Settings.KeycloakSyncSettings.SecretName(provider), null, reference, http, ct) is { } refusedSecret)
+                {
+                    // keep:<store> comes with its value in SyncSecrets: kept in AWS together.
+                    var value = ConsoleSecretsEndpoints.KeepIn(reference) is not null ? body.SyncSecrets?.GetValueOrDefault(provider) : null;
+                    if (await ConsoleSecretsEndpoints.SetAsync(secrets, Winche.Auth.Settings.KeycloakSyncSettings.SecretName(provider), value, reference, http, ct) is { } refusedSecret)
                         return refusedSecret;
+                }
             }
             if (body.SyncSecrets is { Count: > 0 })
             {
                 var secrets = sp.GetRequiredService<SecretStore>();
-                if (!secrets.Available) return Problem("Secrets need the project's master key: set WincheConfigOptions.MasterKey.");
-                foreach (var (provider, value) in body.SyncSecrets)
+                if (!secrets.Available) return Problem("Secrets need the server's master key.");
+                foreach (var (provider, value) in body.SyncSecrets.Where(v => ConsoleSecretsEndpoints.KeepIn(body.SyncSecretReferences?.GetValueOrDefault(v.Key)) is null))
                 {
                     var name = Winche.Auth.Settings.KeycloakSyncSettings.SecretName(provider);
-                    if (string.IsNullOrEmpty(value)) await secrets.DeleteAsync(name, ct);
+                    if (string.IsNullOrEmpty(value)) await secrets.DeleteAsync(name, keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct);
                     else await secrets.SetAsync(name, value, Who(http.User), ct);
                 }
             }
@@ -186,8 +190,8 @@ public static class ConsoleAuthSettingsEndpoints
                 source = area?.Source == SettingsSource.Saved ? "console" : "code",
                 version = area?.Version is { } v ? Version(v, store) : null,
                 editable = area is not null && store is not null,
-                whyReadOnly = area is null ? "The app's code sets these. To change them here, the app adds AddWincheTokens(t => t.UseSettings())."
-                    : store is null ? "The app needs AddWincheConfig(…) to save settings." : null,
+                whyReadOnly = area is null ? "These are set in the server's configuration, not here."
+                    : store is null ? "Settings can't be saved on this server." : null,
             }, SettingsArea.Json);
         });
 

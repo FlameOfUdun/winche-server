@@ -48,5 +48,15 @@ public class ConsoleUserDirectoryTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Contains("TWO_FACTOR_REQUIRED", await refused.Content.ReadAsStringAsync());
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/console/v1/auth/settings/directory")).StatusCode);   // no user directory setting
         await Json(await client.GetAsync("/console/v1/auth/settings/providers"));   // reading is fine
+        // How a user signs in (their email, their password) too; their name doesn't.
+        var bea = await Json(await client.PostAsJsonAsync("/auth/v1/signUp", new { email = "bea@example.com", password = "correct horse battery" }));
+        var uid = bea.GetProperty("user").GetProperty("uid").GetString();
+        foreach (var r in new[]
+        {
+            await client.PutAsJsonAsync($"/console/v1/auth/users/{uid}/email", new { email = "bea2@example.com" }),
+            await client.PutAsJsonAsync($"/console/v1/auth/users/{uid}/password", new { password = "another horse battery" }),
+        })
+            Assert.Contains("TWO_FACTOR_REQUIRED", await r.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, (await client.PatchAsJsonAsync($"/console/v1/auth/users/{uid}/profile", new { displayName = "Bea" })).StatusCode);
     }
 }
