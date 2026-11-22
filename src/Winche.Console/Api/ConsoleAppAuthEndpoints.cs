@@ -40,7 +40,7 @@ public static class ConsoleAppAuthEndpoints
 
     private static object User(DirectoryUser u) => new
     {
-        uid = u.Uid, email = u.Email, emailVerified = u.EmailVerified, displayName = u.DisplayName, photoUrl = u.PhotoUrl,
+        uid = u.Uid, email = u.Email, emailVerified = u.EmailVerified, displayName = u.DisplayName, photoUrl = u.PhotoUrl, photoSource = u.PhotoSource,
         isAnonymous = u.IsAnonymous, disabled = u.Disabled, mfaEnabled = u.MfaEnabled, providers = u.Providers, customClaims = u.CustomClaims,
         createdAt = u.CreatedAt, lastSignInAt = u.LastSignInAt, lockedOutUntil = u.LockedOutUntil,
     };
@@ -241,6 +241,17 @@ public static class ConsoleAppAuthEndpoints
             }
             return Results.Json(User(await d.SetEmailAsync(uid, body.Email.Trim(), body.Verified, body.SendVerification, http.RequestAborted)));
         }));
+
+        // The user's photo, kept by Winche Auth: the image as the body (the console shrinks it first). Keycloak keeps no photos,
+        // so this is allowed for its users too.
+        group.MapPost("/users/{uid}/photo", (string uid, HttpContext http, UserDirectories dirs) => WithDirectory(http, dirs, async d =>
+        {
+            if (await Winche.Auth.AspNetCore.WincheAuthEndpoints.ReadPhotoAsync(http.Request, http.RequestAborted) is not { } image)
+                return Results.Json(new { error = new { code = "INVALID_ARGUMENT", message = $"Send the photo as the body, at most {Winche.Auth.WincheAuthLimits.MaxPhotoBytes / 1024} KB." } }, statusCode: 400);
+            return Results.Json(User(await d.SetPhotoAsync(uid, image, http.RequestAborted)));
+        }));
+        group.MapDelete("/users/{uid}/photo", (string uid, HttpContext http, UserDirectories dirs) =>
+            WithDirectory(http, dirs, async d => Results.Json(User(await d.RemovePhotoAsync(uid, http.RequestAborted)))));
 
         group.MapPut("/users/{uid}/password", (string uid, PasswordRequest body, HttpContext http, UserDirectories dirs) => WithDirectory(http, dirs, async d =>
         {

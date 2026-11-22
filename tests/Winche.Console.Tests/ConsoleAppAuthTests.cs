@@ -178,6 +178,15 @@ public class ConsoleAppAuthTests(PostgresFixture fx) : IAsyncLifetime
         lock (outbox.Sent) Assert.Contains(outbox.Sent, m => m.To == "bea.new@example.com");
         Assert.Equal("bea@clinic.example", (await Json(await client.GetAsync($"/console/v1/auth/users/{uid}"))).GetProperty("user").GetProperty("email").GetString());
 
+        // A photo: uploaded (the image as the body), served at its own address, removed.
+        byte[] png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13];
+        var withPhoto = await Json(await client.PostAsync($"/console/v1/auth/users/{uid}/photo", new ByteArrayContent(png)));
+        Assert.Equal("upload", withPhoto.GetProperty("photoSource").GetString());
+        var photo = await client.GetAsync(new Uri(withPhoto.GetProperty("photoUrl").GetString()!).AbsolutePath);
+        Assert.Equal(("image/png", png.Length), (photo.Content.Headers.ContentType?.MediaType, (await photo.Content.ReadAsByteArrayAsync()).Length));
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsync($"/console/v1/auth/users/{uid}/photo", new ByteArrayContent("not an image"u8.ToArray()))).StatusCode);
+        Assert.Equal(JsonValueKind.Null, (await Json(await client.DeleteAsync($"/console/v1/auth/users/{uid}/photo"))).GetProperty("photoUrl").ValueKind);
+
         // A new password: they sign in with it.
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync($"/console/v1/auth/users/{uid}/password", new { password = "short" })).StatusCode);
         await Json(await client.PutAsJsonAsync($"/console/v1/auth/users/{uid}/password", new { password = "a brand new password" }));

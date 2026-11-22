@@ -8,10 +8,10 @@ internal sealed class WincheAuthDirectory(IWincheAuth auth) : IUserDirectory
     public string Kind => "wincheAuth";
     public string Label => "Winche Auth";
     public DirectoryCapabilities Capabilities { get; } = new(Create: true, Claims: true, ClaimsLabel: "Custom claims", Sessions: true, Unlock: true,
-        ResetMfa: true, UnlinkProviders: true, PasswordReset: true, Verify: true, Delete: true, Disable: true, Profile: true, Email: true, Password: true);
+        ResetMfa: true, UnlinkProviders: true, PasswordReset: true, Verify: true, Delete: true, Disable: true, Profile: true, Email: true, Password: true, Photo: true);
 
     internal static DirectoryUser From(WincheUserInfo u) => new(u.Uid, u.Email, u.EmailVerified, u.DisplayName, u.PhotoUrl, u.IsAnonymous, u.Disabled,
-        u.MfaEnabled, u.Providers, u.CustomClaims, u.CreatedAt, u.LastSignInAt, u.LockedOutUntil);
+        u.MfaEnabled, u.Providers, u.CustomClaims, u.CreatedAt, u.LastSignInAt, u.LockedOutUntil, u.PhotoSource);
 
     public async Task<(IReadOnlyList<DirectoryUser> Users, int Total)> ListAsync(string? search, int offset, int limit, CancellationToken ct)
     {
@@ -63,6 +63,9 @@ internal sealed class WincheAuthDirectory(IWincheAuth auth) : IUserDirectory
     }
 
     public Task RequestEmailChangeAsync(string uid, string email, CancellationToken ct) => auth.ChangeEmailAsync(uid, email, ct);
+
+    public async Task<DirectoryUser> SetPhotoAsync(string uid, byte[] image, CancellationToken ct) => From(await auth.SetPhotoAsync(uid, image, ct));
+    public async Task<DirectoryUser> RemovePhotoAsync(string uid, CancellationToken ct) => From(await auth.RemovePhotoAsync(uid, ct));
 
     public async Task<DirectoryUser> SetPasswordAsync(string uid, string password, CancellationToken ct) => From(await auth.SetPasswordAsync(uid, password, ct));
 }

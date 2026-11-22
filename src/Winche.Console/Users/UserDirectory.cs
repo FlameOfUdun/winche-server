@@ -6,7 +6,7 @@ namespace Winche.Console.Users;
 public sealed record DirectoryUser(
     string Uid, string? Email, bool EmailVerified, string? DisplayName, string? PhotoUrl, bool IsAnonymous, bool Disabled, bool MfaEnabled,
     IReadOnlyList<string> Providers, IReadOnlyDictionary<string, object?> CustomClaims, DateTimeOffset? CreatedAt, DateTimeOffset? LastSignInAt,
-    DateTimeOffset? LockedOutUntil);
+    DateTimeOffset? LockedOutUntil, string? PhotoSource = null);
 
 public sealed record DirectorySession(string Id, string Provider, DateTimeOffset CreatedAt, DateTimeOffset LastUsedAt, DateTimeOffset? ExpiresAt,
     string? UserAgent, string? IpAddress);
@@ -16,7 +16,7 @@ public sealed record DirectoryUserDetail(DirectoryUser User, IReadOnlyList<Direc
 /// <summary>What a directory can do, so the console offers only that.</summary>
 public sealed record DirectoryCapabilities(
     bool Create, bool Claims, string ClaimsLabel, bool Sessions, bool Unlock, bool ResetMfa, bool UnlinkProviders, bool PasswordReset,
-    bool Verify, bool Delete, bool Disable, bool Profile = false, bool Email = false, bool Password = false);
+    bool Verify, bool Delete, bool Disable, bool Profile = false, bool Email = false, bool Password = false, bool Photo = false);
 
 /// <summary>An operation this directory doesn't support.</summary>
 public sealed class DirectoryNotSupportedException(string message) : Exception(message);
@@ -61,6 +61,10 @@ public interface IUserDirectory
     Task<DirectoryUser> SetEmailAsync(string uid, string email, bool verified, bool sendVerification, CancellationToken ct);
     /// <summary>Emails the new address a link: the change happens when it's opened (the old address is told, with an undo link).</summary>
     Task RequestEmailChangeAsync(string uid, string email, CancellationToken ct);
+    /// <summary>Keeps <paramref name="image"/> as the user's photo (small: JPEG, PNG or WebP, at most 100 KB).</summary>
+    Task<DirectoryUser> SetPhotoAsync(string uid, byte[] image, CancellationToken ct);
+    /// <summary>Removes an uploaded photo.</summary>
+    Task<DirectoryUser> RemovePhotoAsync(string uid, CancellationToken ct);
     /// <summary>Sets a new password (their sessions end).</summary>
     Task<DirectoryUser> SetPasswordAsync(string uid, string password, CancellationToken ct);
 }
