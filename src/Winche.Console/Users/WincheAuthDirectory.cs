@@ -54,6 +54,9 @@ internal sealed class WincheAuthDirectory(IWincheAuth auth) : IUserDirectory
     public async Task<DirectoryUser> UpdateProfileAsync(string uid, string? displayName, string? photoUrl, CancellationToken ct) =>
         From(await auth.UpdateProfileAsync(uid, displayName, photoUrl, ct));
 
+    public async Task<DirectoryUser> PatchProfileAsync(string uid, Winche.Auth.ProfilePatch patch, CancellationToken ct) =>
+        From(await auth.PatchProfileAsync(uid, patch, ct));
+
     public async Task<DirectoryUser> SetEmailAsync(string uid, string email, bool verified, bool sendVerification, CancellationToken ct)
     {
         var user = await auth.SetEmailAsync(uid, email, ct);   // at once, marked verified, sessions ended

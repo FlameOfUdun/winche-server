@@ -300,7 +300,10 @@ changes need two-step sign-in where settings do. Also new:
   and a column to each project's auth database when it starts. `PATCH /auth/v1/me` is now a patch: a field left out
   stays as it is (before, a missing `photoUrl` cleared the photo).
 - **Editing users in the console:** a user's dialog edits their name, photo (upload or link), email (at once, or by a
-  link to the new address) and password; users from Keycloak are changed in Keycloak, except their photo.
+  link to the new address) and password. Users from a Keycloak with sync on are changed in Keycloak (the console
+  refuses here), except their photo.
+- **Forwarded headers are believed only from proxies on loopback and private networks** (`Winche__TrustedProxies__0`, …
+  names others; `*` any, as before). A server reached directly can't be told another caller's address or host.
 - **The console refuses changes another site's page makes** with its cookie (a browser's `Sec-Fetch-Site` or `Origin`
   says so). The console's own pages, the CLI and service accounts aren't affected.
 

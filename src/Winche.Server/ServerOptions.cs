@@ -53,6 +53,13 @@ public sealed class ServerOptions
     /// </summary>
     public bool RequireTwoFactorForSettings { get; set; } = true;
 
+    /// <summary>
+    /// The proxies whose X-Forwarded-For/-Proto/-Host are believed (addresses or networks, like <c>10.0.0.0/8</c>;
+    /// <c>*</c>: any). Default: loopback and private networks, where a proxy in front of the server usually is. A
+    /// caller elsewhere can't pose as another address (which rate limits go by) or another host.
+    /// </summary>
+    public string[] TrustedProxies { get; set; } = [];
+
     /// <summary>The longest a service account's key may last, in days (<c>Winche__ServiceAccountKeyMaxDays</c>, default 730).</summary>
     public int ServiceAccountKeyMaxDays { get; set; } = 730;
 
@@ -132,6 +139,9 @@ public sealed class ServerOptions
         if (!Uri.TryCreate(PublicUrl, UriKind.Absolute, out var u) || u.Scheme is not ("https" or "http"))
             problems.Add("Winche__PublicUrl: the address apps reach this server at, e.g. https://api.example.com.");
         if (Email is { Provider.Length: > 0 } e) problems.AddRange(e.Problems());
+        foreach (var t in TrustedProxies.Where(t => t != "*"))
+            if (!System.Net.IPNetwork.TryParse(t.Contains('/') ? t : t + (t.Contains(':') ? "/128" : "/32"), out _))
+                problems.Add($"Winche__TrustedProxies: '{t}' isn't an address or network (like 10.0.0.5 or 10.0.0.0/8), or * for any.");
         return problems;
     }
 

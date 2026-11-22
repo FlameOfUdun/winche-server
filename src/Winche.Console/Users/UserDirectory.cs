@@ -54,6 +54,8 @@ public interface IUserDirectory
     Task DeleteAsync(string uid, CancellationToken ct);
     /// <summary>The name and photo shown for the user (null or empty clears one).</summary>
     Task<DirectoryUser> UpdateProfileAsync(string uid, string? displayName, string? photoUrl, CancellationToken ct);
+    /// <summary>Changes only what <paramref name="patch"/> sets (read and written together).</summary>
+    Task<DirectoryUser> PatchProfileAsync(string uid, Winche.Auth.ProfilePatch patch, CancellationToken ct);
     /// <summary>
     /// Changes the user's email at once (their sessions end), marked verified or not; with <paramref name="sendVerification"/>
     /// and not verified, a verify link goes to the new address.

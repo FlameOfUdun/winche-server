@@ -328,6 +328,9 @@ public class ServerTests(PostgresFixture pg)
         var request = new HttpRequestMessage(HttpMethod.Post, "/projects/wards/auth/v1/signIn/anonymous");
         request.Headers.Add("X-Winche-Integrity", clinic);
         Assert.Equal(HttpStatusCode.Forbidden, (await server.CreateClient().SendAsync(request)).StatusCode);
+        // The key set and discovery document other services check tokens with stay open, enforced or not.
+        Assert.Equal(HttpStatusCode.OK, (await server.CreateClient().GetAsync("/projects/wards/.well-known/jwks.json")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await server.CreateClient().GetAsync("/projects/wards/.well-known/openid-configuration")).StatusCode);
         // Clinic itself isn't enforced: it answers with or without a token.
         Assert.NotEqual(HttpStatusCode.Forbidden, (await server.CreateClient().PostAsync("/projects/clinic/auth/v1/signIn/anonymous", null)).StatusCode);
 

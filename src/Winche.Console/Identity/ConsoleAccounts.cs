@@ -159,7 +159,7 @@ public sealed class ConsoleAccounts(ConsoleOptions options)
         {
             var c = From(u);
             var name = string.Join(' ', new[] { c.FirstName, c.LastName }.Where(n => !string.IsNullOrWhiteSpace(n)));
-            u = await a.UpdateProfileAsync(id, name.Length > 0 ? name : null, null, ct);
+            u = await a.PatchProfileAsync(id, Winche.Auth.ProfilePatch.Name(name.Length > 0 ? name : null), ct);   // the name only: a photo stays
         }
         return From(u);
     });

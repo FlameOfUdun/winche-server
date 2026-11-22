@@ -238,7 +238,8 @@ internal static class ProjectApp
         app.UseRouting();   // the apps' routes, matched after the console's branch
         // CORS: any origin. The apps' APIs take a bearer token in a header, never a cookie, so another site's page can't
         // act as a signed-in user; which apps may call at all is Integrity's (enforced per product).
-        app.UseCors(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
+        // Retry-After and Date: web apps wait as long as asked when rate-limited, and time tokens by the server's clock.
+        app.UseCors(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("Retry-After", "Date"));
         // Compression for the apps' APIs (a bearer token in a header: another site can't make the browser send it). Never
         // the console's API (cookies), where a compressed answer's size could give away what it holds (BREACH).
         app.UseWhen(http => Compressible(http.Request.Path), branch => branch.UseResponseCompression());

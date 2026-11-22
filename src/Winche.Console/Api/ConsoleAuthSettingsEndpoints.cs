@@ -269,8 +269,9 @@ public static class ConsoleAuthSettingsEndpoints
                 var restored = old.Deserialize<Winche.Integrity.IntegritySettings>(SettingsArea.Json) ?? new();
                 var kept = restored with { DebugTokens = [.. integrity.Current.DebugTokens.Where(t => restored.Apps.Any(a => a.Id == t.App))] };
                 if (kept.Problems().FirstOrDefault() is { } problem) return Problem($"That version no longer fits: {problem}");
-                await integrity.SaveAsync(kept, Who(http.User), $"{body.Reason.Trim()} (restored version {version.Number}; today's debug tokens kept)", ct);
-                return Results.Json(Version((await store.HistoryAsync(Winche.Integrity.IntegritySettings.Area, 1, ct))[0], store));
+                // Saved as a new version (the store's restore can't leave tokens out); the reason says which version it came from.
+                var saved = await integrity.SaveAsync(kept, Who(http.User), $"{body.Reason.Trim()} (restored version {version.Number}; today's debug tokens kept)", ct);
+                return Results.Json(Version(saved, store));
             }
             try { return Results.Json(Version(await store.RestoreAsync(id, Who(http.User), body.Reason, ct), store)); }
             catch (KeyNotFoundException) { return Results.NotFound(); }
