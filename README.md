@@ -7,8 +7,8 @@ rules, sign-in methods, identity providers, indexes, where files are kept, webho
 
 ## Quickstart
 
-You need Docker. The image is `ghcr.io/flameofudun/winche-server` (amd64 and arm64), tagged by version: `2` follows the
-latest 2.x, `2.0` the latest 2.0.x, `2.0.0` stays put. The compose file in this repository uses `2`; copy it (with
+You need Docker. The image is `ghcr.io/flameofudun/winche-server` (amd64 and arm64), tagged by version: `4` follows the
+latest 4.x, `4.0` the latest 4.0.x, `4.0.0` stays put. The compose file in this repository uses `4`; copy it (with
 nothing else) to wherever the server will run.
 
 1. **Configure.** Create a `.env` file beside `docker-compose.yml`:

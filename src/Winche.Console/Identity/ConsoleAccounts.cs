@@ -202,8 +202,11 @@ public sealed class ConsoleAccounts(ConsoleOptions options)
                 if ((await secrets.InfoAsync(name, ct))?.Reference?.ToString() != reference.ToString())
                     await secrets.SetReferenceAsync(name, reference, "winche", allowAppCredentials: true, ct);
             }
-            else if (await syncSecret(p.Id, ct) is { Length: > 0 } secret && await secrets.GetAsync(name, ct) != secret)
-                await secrets.SetAsync(name, secret, "winche", ct);
+            else if (await syncSecret(p.Id, ct) is { Length: > 0 } secret)
+            {
+                if (await secrets.GetAsync(name, ct) != secret) await secrets.SetAsync(name, secret, "winche", ct);
+            }
+            else await secrets.DeleteAsync(name, keepInSource: true, ct);   // cleared on the server: cleared here too
         }
         // A provider gone, or no longer synced: its sync secret goes from the accounts too (here only: the server's is its own).
         if (only is null)

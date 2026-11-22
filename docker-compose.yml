@@ -18,7 +18,7 @@ services:
     restart: unless-stopped
 
   winche:
-    # The published image (2: the latest 2.x). To run your own build instead: docker build -t winche-server:local .
+    # The published image (4: the latest 4.x). To run your own build instead: docker build -t winche-server:local .
     # and set WINCHE_IMAGE=winche-server:local in .env.
     image: ${WINCHE_IMAGE:-ghcr.io/flameofudun/winche-server:4}
     depends_on:

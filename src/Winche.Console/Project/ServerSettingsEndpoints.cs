@@ -57,6 +57,22 @@ public static class ServerSettingsEndpoints
     public sealed record TestEmailRequest(string? To);
     public sealed record SignInTestRequest(Identity.ConsoleOidcSettings? Settings, string? ClientSecret);
 
+    /// <summary>
+    /// The console sign-in providers a posted settings document keeps, by id → whether each keeps a Keycloak sync. Names
+    /// in any case, as the settings themselves are read.
+    /// </summary>
+    private static Dictionary<string, bool> ProvidersIn(JsonNode node)
+    {
+        static JsonNode? Get(JsonNode? o, string name) =>
+            o is JsonObject obj ? obj.FirstOrDefault(p => string.Equals(p.Key, name, StringComparison.OrdinalIgnoreCase)).Value : null;
+        var found = new Dictionary<string, bool>();
+        if (Get(node, "consoleProviders") is JsonArray list)
+            foreach (var p in list)
+                if (Get(p, "id") is JsonValue id && id.TryGetValue<string>(out var value))
+                    found[value] = Get(p, "keycloakSync") is JsonObject;
+        return found;
+    }
+
     private static string? Who(ClaimsPrincipal user) => user.FindFirstValue(ClaimTypes.Email) ?? user.FindFirstValue("email") ?? user.Identity?.Name;
 
     private static IResult? Refuse(HttpContext http, Options.ConsoleOptions options) =>
@@ -101,15 +117,23 @@ public static class ServerSettingsEndpoints
             try
             {
                 var node = JsonNode.Parse(doc.GetRawText())!;
-                // A provider taken off the list takes its client and sync secrets with it, first (AWS may refuse: then
-                // nothing changes).
-                var after = (node["consoleProviders"] as JsonArray)?.Select(p => p?["id"]?.GetValue<string>()).OfType<string>().ToHashSet() ?? [];
-                foreach (var gone in options.ServerSettings!.ConsoleProviders.Select(p => p.Id).Where(id => !after.Contains(id)))
+                var s = options.ServerSettings!;
+                // Only settings that will be saved remove anything: checked first, and against the version they were based on.
+                if (s.Area.Validate(node) is { Count: > 0 } problems) return ConsoleErrors.Problem("invalid-settings", "These settings can't be saved.", problems);
+                if (body.BasedOn is { } based && s.Area.Version is { } now && now.Number != based)
+                    return new WincheError(WincheErrorCode.Aborted, "Someone saved these settings since you opened them: reload and try again.", "settings-conflict").ToResult();
+                // A provider taken off the list takes its client and sync secrets with it, and one no longer synced its
+                // sync secret, first (AWS may refuse: then nothing changes).
+                var after = ProvidersIn(node);
+                foreach (var p in s.ConsoleProviders)
                 {
-                    await options.ServerSettings.Secrets.DeleteAsync(ConsoleOidc.SecretFor(gone), keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct);
-                    await options.ServerSettings.Secrets.DeleteAsync(ConsoleOidcSettings.KeycloakSyncSecretFor(gone), keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct);
+                    bool? stays = after.TryGetValue(p.Id, out var synced) ? synced : null;
+                    if (stays is null)
+                        await s.Secrets.DeleteAsync(ConsoleOidc.SecretFor(p.Id), keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct);
+                    if (stays is null || (p.KeycloakSync is not null && stays == false))
+                        await s.Secrets.DeleteAsync(ConsoleOidcSettings.KeycloakSyncSecretFor(p.Id), keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct);
                 }
-                var v = await options.ServerSettings.Store.SaveAsync(options.ServerSettings.Area.Name, node, Who(http.User), body.Reason, body.BasedOn, ct);
+                var v = await s.Store.SaveAsync(s.Area.Name, node, Who(http.User), body.Reason, body.BasedOn, ct);
                 return Results.Json(new { number = v.Number, at = v.At, by = v.By, reason = v.Reason });
             }
             catch (SettingsValidationException ex) { return ConsoleErrors.Problem("invalid-settings", "These settings can't be saved.", ex.Errors); }
