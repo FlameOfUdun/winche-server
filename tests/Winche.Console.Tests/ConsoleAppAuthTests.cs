@@ -144,6 +144,47 @@ public class ConsoleAppAuthTests(PostgresFixture fx) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Admins_edit_a_users_profile_email_and_password()
+    {
+        using var app = new ConsoleAppFactory(fx);
+        using var client = app.CreateClient();
+        await client.SetupAdminAsync();
+        await client.LoginAsync();
+        var outbox = app.Services.GetRequiredService<RecordingEmailSender>();
+        var caps = (await Json(await client.GetAsync("/console/v1/auth/config"))).GetProperty("directory").GetProperty("capabilities");
+        Assert.True(caps.GetProperty("profile").GetBoolean() && caps.GetProperty("email").GetBoolean() && caps.GetProperty("password").GetBoolean());
+        var signUp = await Json(await client.PostAsJsonAsync("/auth/v1/signUp", new { email = "bea@example.com", password = "correct horse battery" }));
+        var uid = signUp.GetProperty("user").GetProperty("uid").GetString()!;
+        var refresh = signUp.GetProperty("refreshToken").GetString();
+
+        // The profile: name and photo (empty clears).
+        var profile = await Json(await client.PatchAsJsonAsync($"/console/v1/auth/users/{uid}/profile", new { displayName = "Bea Smith", photoUrl = "https://example.com/bea.png" }));
+        Assert.Equal(("Bea Smith", "https://example.com/bea.png"), (profile.GetProperty("displayName").GetString(), profile.GetProperty("photoUrl").GetString()));
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PatchAsJsonAsync($"/console/v1/auth/users/{uid}/profile", new { displayName = "Bea", photoUrl = "not a url" })).StatusCode);
+        Assert.Equal(JsonValueKind.Null, (await Json(await client.PatchAsJsonAsync($"/console/v1/auth/users/{uid}/profile", new { displayName = "Bea Smith", photoUrl = "" }))).GetProperty("photoUrl").ValueKind);
+
+        // Email at once: not verified unless said, a verify link if asked; their sessions end.
+        var now = await Json(await client.PutAsJsonAsync($"/console/v1/auth/users/{uid}/email", new { email = "bea.smith@example.com", sendVerification = true }));
+        Assert.Equal(("bea.smith@example.com", false), (now.GetProperty("email").GetString(), now.GetProperty("emailVerified").GetBoolean()));
+        lock (outbox.Sent) Assert.Equal("verifyEmail", outbox.Sent.Last(m => m.To == "bea.smith@example.com").Kind);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/auth/v1/token", new { refreshToken = refresh })).StatusCode);
+        Assert.True((await Json(await client.PutAsJsonAsync($"/console/v1/auth/users/{uid}/email", new { email = "bea@clinic.example", verified = true }))).GetProperty("emailVerified").GetBoolean());
+        await client.PostAsJsonAsync("/auth/v1/signUp", new { email = "taken@example.com", password = "correct horse battery" });
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PutAsJsonAsync($"/console/v1/auth/users/{uid}/email", new { email = "taken@example.com" })).StatusCode);
+
+        // Email by confirmation: a link to the new address; nothing changes until it's opened.
+        Assert.True((await Json(await client.PutAsJsonAsync($"/console/v1/auth/users/{uid}/email", new { email = "bea.new@example.com", confirm = true }))).GetProperty("pending").GetBoolean());
+        for (var i = 0; i < 100; i++) { lock (outbox.Sent) if (outbox.Sent.Any(m => m.To == "bea.new@example.com")) break; await Task.Delay(20); }
+        lock (outbox.Sent) Assert.Contains(outbox.Sent, m => m.To == "bea.new@example.com");
+        Assert.Equal("bea@clinic.example", (await Json(await client.GetAsync($"/console/v1/auth/users/{uid}"))).GetProperty("user").GetProperty("email").GetString());
+
+        // A new password: they sign in with it.
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync($"/console/v1/auth/users/{uid}/password", new { password = "short" })).StatusCode);
+        await Json(await client.PutAsJsonAsync($"/console/v1/auth/users/{uid}/password", new { password = "a brand new password" }));
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/auth/v1/signIn", new { email = "bea@clinic.example", password = "a brand new password" })).StatusCode);
+    }
+
+    [Fact]
     public async Task Providers_show_and_can_be_unlinked()
     {
         using var app = new ConsoleAppFactory(fx);

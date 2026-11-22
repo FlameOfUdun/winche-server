@@ -8,7 +8,7 @@ internal sealed class WincheAuthDirectory(IWincheAuth auth) : IUserDirectory
     public string Kind => "wincheAuth";
     public string Label => "Winche Auth";
     public DirectoryCapabilities Capabilities { get; } = new(Create: true, Claims: true, ClaimsLabel: "Custom claims", Sessions: true, Unlock: true,
-        ResetMfa: true, UnlinkProviders: true, PasswordReset: true, Verify: true, Delete: true, Disable: true);
+        ResetMfa: true, UnlinkProviders: true, PasswordReset: true, Verify: true, Delete: true, Disable: true, Profile: true, Email: true, Password: true);
 
     internal static DirectoryUser From(WincheUserInfo u) => new(u.Uid, u.Email, u.EmailVerified, u.DisplayName, u.PhotoUrl, u.IsAnonymous, u.Disabled,
         u.MfaEnabled, u.Providers, u.CustomClaims, u.CreatedAt, u.LastSignInAt, u.LockedOutUntil);
@@ -50,4 +50,19 @@ internal sealed class WincheAuthDirectory(IWincheAuth auth) : IUserDirectory
     public Task SendVerificationAsync(string uid, CancellationToken ct) => auth.SendEmailVerificationAsync(uid, ct);
     public async Task<DirectoryUser> SetEmailVerifiedAsync(string uid, bool verified, CancellationToken ct) => From(await auth.SetEmailVerifiedAsync(uid, verified, ct));
     public Task DeleteAsync(string uid, CancellationToken ct) => auth.DeleteUserAsync(uid, ct);
+
+    public async Task<DirectoryUser> UpdateProfileAsync(string uid, string? displayName, string? photoUrl, CancellationToken ct) =>
+        From(await auth.UpdateProfileAsync(uid, displayName, photoUrl, ct));
+
+    public async Task<DirectoryUser> SetEmailAsync(string uid, string email, bool verified, bool sendVerification, CancellationToken ct)
+    {
+        var user = await auth.SetEmailAsync(uid, email, ct);   // at once, marked verified, sessions ended
+        if (!verified && user.EmailVerified) user = await auth.SetEmailVerifiedAsync(uid, false, ct);
+        if (!verified && sendVerification) await auth.SendEmailVerificationAsync(uid, ct);
+        return From(user);
+    }
+
+    public Task RequestEmailChangeAsync(string uid, string email, CancellationToken ct) => auth.ChangeEmailAsync(uid, email, ct);
+
+    public async Task<DirectoryUser> SetPasswordAsync(string uid, string password, CancellationToken ct) => From(await auth.SetPasswordAsync(uid, password, ct));
 }

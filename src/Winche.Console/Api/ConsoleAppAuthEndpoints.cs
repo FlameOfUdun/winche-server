@@ -25,6 +25,12 @@ public static class ConsoleAppAuthEndpoints
     public sealed record DisabledRequest(bool Disabled);
     public sealed record ClaimsRequest(JsonElement? Claims);
     public sealed record VerifiedRequest(bool Verified);
+    public sealed record ProfileRequest(string? DisplayName, string? PhotoUrl);
+    /// <param name="Confirm">Email the new address a link and change it when opened, rather than at once.</param>
+    /// <param name="Verified">At once: mark the new address verified (it's the admin's word for it).</param>
+    /// <param name="SendVerification">At once and not verified: email the new address a verify link.</param>
+    public sealed record EmailRequest(string? Email, bool Confirm = false, bool Verified = false, bool SendVerification = false);
+    public sealed record PasswordRequest(string? Password);
     public sealed record TemplateRequest(string? Subject, string? Body);
 
     private static string? AdminEmail(ClaimsPrincipal user) =>
@@ -209,6 +215,39 @@ public static class ConsoleAppAuthEndpoints
 
         group.MapPost("/users/{uid}/verified", (string uid, VerifiedRequest body, HttpContext http, UserDirectories dirs) =>
             WithDirectory(http, dirs, async d => Results.Json(User(await d.SetEmailVerifiedAsync(uid, body.Verified, http.RequestAborted)))));
+
+        // A user from a Keycloak with sync on is managed there: Winche follows Keycloak, so its profile, email and password aren't changed here.
+        static async Task<IResult?> ManagedElsewhereAsync(IUserDirectory d, string uid, HttpContext http)
+        {
+            var synced = http.RequestServices.GetService<WincheAuthOptions>()?.IdentityProviders.Where(p => p.KeycloakSync is not null).Select(p => p.Name).ToHashSet() ?? [];
+            if (synced.Count == 0) return null;
+            var user = (await d.GetAsync(uid, http.RequestAborted))?.User;
+            return user is not null && user.Providers.Any(synced.Contains)
+                ? Results.Json(new { error = new { code = "MANAGED_IN_KEYCLOAK", message = "This user comes from Keycloak (sync on): change their profile, email and password in Keycloak." } }, statusCode: 409)
+                : null;
+        }
+
+        group.MapPatch("/users/{uid}/profile", (string uid, ProfileRequest body, HttpContext http, UserDirectories dirs) => WithDirectory(http, dirs, async d =>
+            await ManagedElsewhereAsync(d, uid, http) ?? Results.Json(User(await d.UpdateProfileAsync(uid, body.DisplayName, body.PhotoUrl, http.RequestAborted)))));
+
+        group.MapPut("/users/{uid}/email", (string uid, EmailRequest body, HttpContext http, UserDirectories dirs) => WithDirectory(http, dirs, async d =>
+        {
+            if (await ManagedElsewhereAsync(d, uid, http) is { } managed) return managed;
+            if (string.IsNullOrWhiteSpace(body.Email)) return Results.Json(new { error = new { code = "INVALID_ARGUMENT", message = "Give the new email address." } }, statusCode: 400);
+            if (body.Confirm)
+            {
+                await d.RequestEmailChangeAsync(uid, body.Email.Trim(), http.RequestAborted);
+                return Results.Json(new { pending = true });   // changes when the link is opened
+            }
+            return Results.Json(User(await d.SetEmailAsync(uid, body.Email.Trim(), body.Verified, body.SendVerification, http.RequestAborted)));
+        }));
+
+        group.MapPut("/users/{uid}/password", (string uid, PasswordRequest body, HttpContext http, UserDirectories dirs) => WithDirectory(http, dirs, async d =>
+        {
+            if (await ManagedElsewhereAsync(d, uid, http) is { } managed) return managed;
+            if (string.IsNullOrEmpty(body.Password)) return Results.Json(new { error = new { code = "INVALID_ARGUMENT", message = "Give the new password." } }, statusCode: 400);
+            return Results.Json(User(await d.SetPasswordAsync(uid, body.Password, http.RequestAborted)));
+        }));
 
         group.MapDelete("/users/{uid}", (string uid, HttpContext http, UserDirectories dirs) => WithDirectory(http, dirs, async d =>
         {

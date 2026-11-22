@@ -16,7 +16,7 @@ public sealed record DirectoryUserDetail(DirectoryUser User, IReadOnlyList<Direc
 /// <summary>What a directory can do, so the console offers only that.</summary>
 public sealed record DirectoryCapabilities(
     bool Create, bool Claims, string ClaimsLabel, bool Sessions, bool Unlock, bool ResetMfa, bool UnlinkProviders, bool PasswordReset,
-    bool Verify, bool Delete, bool Disable);
+    bool Verify, bool Delete, bool Disable, bool Profile = false, bool Email = false, bool Password = false);
 
 /// <summary>An operation this directory doesn't support.</summary>
 public sealed class DirectoryNotSupportedException(string message) : Exception(message);
@@ -52,6 +52,17 @@ public interface IUserDirectory
     Task SendVerificationAsync(string uid, CancellationToken ct);
     Task<DirectoryUser> SetEmailVerifiedAsync(string uid, bool verified, CancellationToken ct);
     Task DeleteAsync(string uid, CancellationToken ct);
+    /// <summary>The name and photo shown for the user (null or empty clears one).</summary>
+    Task<DirectoryUser> UpdateProfileAsync(string uid, string? displayName, string? photoUrl, CancellationToken ct);
+    /// <summary>
+    /// Changes the user's email at once (their sessions end), marked verified or not; with <paramref name="sendVerification"/>
+    /// and not verified, a verify link goes to the new address.
+    /// </summary>
+    Task<DirectoryUser> SetEmailAsync(string uid, string email, bool verified, bool sendVerification, CancellationToken ct);
+    /// <summary>Emails the new address a link: the change happens when it's opened (the old address is told, with an undo link).</summary>
+    Task RequestEmailChangeAsync(string uid, string email, CancellationToken ct);
+    /// <summary>Sets a new password (their sessions end).</summary>
+    Task<DirectoryUser> SetPasswordAsync(string uid, string password, CancellationToken ct);
 }
 
 /// <summary>The Users tab's directory: Winche Auth's users, when Winche Auth is in the app.</summary>
