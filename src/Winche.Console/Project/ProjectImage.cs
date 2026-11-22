@@ -123,7 +123,7 @@ public static class ProjectImageEndpoints
         // PUT project/image: the image's bytes as the body (PNG, JPEG or WebP, 256 KB at most).
         app.MapPut("/project/image", async (HttpContext http, ProjectImageStore store, CancellationToken ct) =>
         {
-            if (!store.Available) return Problem("This console has nowhere to keep an image (AddWincheConfig).");
+            if (!store.Available) return Problem("Images can't be kept on this server.");
             if (http.Request.ContentLength > ProjectImageStore.MaxBytes) return Problem("The image is too big: 256 KB at most.");
             using var buffer = new MemoryStream();
             await http.Request.Body.CopyToAsync(buffer, ct);

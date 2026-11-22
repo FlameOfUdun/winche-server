@@ -143,7 +143,7 @@ public static class ConsoleFunctionsEndpoints
         group.MapPut("/resources/{hash}", async (string hash, HttpContext http, WincheFunctions functions, CancellationToken ct) =>
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
-            if (http.Request.ContentLength > WincheFunctions.MaxResourceBytes) return Problem($"An resource is at most {WincheFunctions.MaxResourceBytes / 1024 / 1024} MB.");
+            if (http.Request.ContentLength > WincheFunctions.MaxResourceBytes) return Problem($"A resource is at most {WincheFunctions.MaxResourceBytes / 1024 / 1024} MB.");
             using var content = new MemoryStream();
             await http.Request.Body.CopyToAsync(content, ct);
             try { await functions.PutResourceAsync(content.ToArray(), hash, ct); }

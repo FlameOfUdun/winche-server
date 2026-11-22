@@ -199,7 +199,7 @@ public static class ProjectEndpoints
 
         admin.MapPost("", async (CreateRequest body, HttpContext http, ProjectSetup setup, ProjectImageStore images, ProductSetupRunner runner, CancellationToken ct) =>
         {
-            if (!setup.Enabled) return Problem("This console has no project setup (UseProjectSetup).");
+            if (!setup.Enabled) return Problem("Products can't be set up from this console.");
             if (setup.Current.Created) return Problem("The project already exists.");
             if (string.IsNullOrWhiteSpace(body.Name)) return Problem("Name the project.");
             if (!ProjectSetup.IsValidId(body.Id)) return Problem("The project id is 3 to 40 lower-case letters, digits and dashes, starting with a letter.");

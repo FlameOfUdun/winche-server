@@ -199,7 +199,7 @@ public static class ConsoleAuthSettingsEndpoints
         {
             if (await RequireTwoFactorAsync(http) is { } refused) return refused;
             var store = sp.GetService<SettingsStore>();
-            if (providers.Area is null || store is null) return Problem("These settings are set in the app's code and can't be changed here.");
+            if (providers.Area is null || store is null) return Problem("These are set in the server's configuration, not here.");
             if (body.Settings is not { ValueKind: JsonValueKind.Object } doc) return Problem("Send the settings to save.");
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're making this change: it goes in the history.");
             try

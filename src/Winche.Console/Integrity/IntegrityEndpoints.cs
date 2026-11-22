@@ -28,7 +28,7 @@ public static class ConsoleIntegrityEndpoints
     private static string? Who(ClaimsPrincipal user) => user.FindFirstValue(ClaimTypes.Email) ?? user.FindFirstValue("email") ?? user.Identity?.Name;
     private static IResult Problem(string message) => ConsoleErrors.Problem("integrity", message, null);
     private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
-    private const string NotAvailable = "Integrity is set up once the console runs project setup (UseProjectSetup).";
+    private const string NotAvailable = "Integrity isn't available on this server.";
 
     private static object Counts(IEnumerable<IntegrityUsage.Usage> rows) => rows.ToDictionary(u => u.Product, u => new { today = u.Today, last7Days = u.Last7Days, lastSeen = u.LastSeen });
 

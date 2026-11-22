@@ -182,7 +182,7 @@ public static class ConsoleAssetsEndpoints
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
             if (sp.GetService<SettingsArea<AssetCdnSettings>>() is not { } area || sp.GetService<SettingsStore>() is not { } store)
-                return Problem("CDNs are set in the app's code here.");
+                return Problem("CDNs are set in the server's configuration, not here.");
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why: it goes in the settings history.");
             var cdn = new AssetCdn { Id = id, Kind = string.IsNullOrWhiteSpace(body.Kind) ? "cloudfront" : body.Kind.Trim(), BaseUrl = body.BaseUrl?.Trim() ?? "",
                 KeyPairId = body.KeyPairId?.Trim() ?? "", LinkMinutes = body.LinkMinutes ?? 10 };
@@ -211,7 +211,7 @@ public static class ConsoleAssetsEndpoints
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
             if (sp.GetService<SettingsArea<AssetCdnSettings>>() is not { } area || sp.GetService<SettingsStore>() is not { } store)
-                return Problem("CDNs are set in the app's code here.");
+                return Problem("CDNs are set in the server's configuration, not here.");
             if (area.Current.Cdns.FirstOrDefault(c => c.Id == id) is not { } cdn) return Refused(new AssetsException("not-found", $"There's no CDN {id}."));
             // Apps still reading a channel's release on it would get nothing.
             foreach (var channel in await assets.ChannelsAsync(ct))

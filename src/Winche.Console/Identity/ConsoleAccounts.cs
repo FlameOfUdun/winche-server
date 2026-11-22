@@ -29,7 +29,8 @@ public static class ConsoleAccountsApp
     /// <param name="issuer">The issuer of its tokens (they never leave the server).</param>
     /// <param name="actionUrl">The console page its emailed links open (password resets).</param>
     public static async Task<WebApplication> StartAsync(string connectionString, string masterKey, string[] previousMasterKeys, string issuer,
-        string actionUrl, IConfiguration? configuration = null, CancellationToken ct = default, Winche.Auth.Email.IAuthEmailSender? email = null)
+        string actionUrl, IConfiguration? configuration = null, CancellationToken ct = default, Winche.Auth.Email.IAuthEmailSender? email = null,
+        Action<IServiceCollection>? secrets = null)
     {
         var builder = WebApplication.CreateBuilder();
         if (configuration is not null) builder.Configuration.AddConfiguration(configuration);
@@ -41,6 +42,7 @@ public static class ConsoleAccountsApp
             o.PreviousMasterKeys = previousMasterKeys;
         });
         Winche.Secrets.SecretsServiceCollectionExtensions.AddWincheSecrets(builder.Services);
+        secrets?.Invoke(builder.Services);   // the host's sources (AWS) and where it keeps its own secrets there
         builder.Services.AddWincheAuth(o =>
         {
             o.ConnectionString = connectionString;

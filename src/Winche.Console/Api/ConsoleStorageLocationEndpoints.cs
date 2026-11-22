@@ -46,8 +46,8 @@ public static class ConsoleStorageLocationEndpoints
         return archive.GetType().Name switch
         {
             "FileSystemArchive" => "On this server's disk",
-            "S3Archive" => "the S3 bucket set in the app's code",
-            "NullArchive" => "nowhere yet (no archive in the app's code)",
+            "S3Archive" => "the S3 bucket set in the server's configuration",
+            "NullArchive" => "nowhere yet",
             var name => $"the app's own archive ({name})",
         };
     }
