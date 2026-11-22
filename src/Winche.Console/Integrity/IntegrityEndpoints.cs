@@ -16,7 +16,7 @@ public static class ConsoleIntegrityEndpoints
 {
     // ---- The console's side ----
 
-    public sealed record AppRequest(string? Name, string? Sdk, string? AndroidPackage, string? AppleBundleId, string? AppleTeamId, string? Id = null, bool? AppleDevelopment = null,
+    public sealed record AppRequest(string? Name, string? AndroidPackage, string? AppleBundleId, string? AppleTeamId, string? Id = null, bool? AppleDevelopment = null,
         long? AndroidCloudProjectNumber = null, bool? AndroidSideloaded = null, string? AndroidDeviceIntegrity = null, string[]? AndroidCertificates = null,
         string? WebSiteKey = null, string[]? WebHostnames = null);
     /// <summary>The Google service account's key file (its JSON), or a reference to where it's kept (aws-sm:…).</summary>
@@ -43,7 +43,7 @@ public static class ConsoleIntegrityEndpoints
             tokenMinutes = s.TokenMinutes,
             apps = s.Apps.Select(a => new
             {
-                id = a.Id, name = a.Name, sdk = a.Sdk, androidPackage = a.AndroidPackage, appleBundleId = a.AppleBundleId, appleTeamId = a.AppleTeamId,
+                id = a.Id, name = a.Name, androidPackage = a.AndroidPackage, appleBundleId = a.AppleBundleId, appleTeamId = a.AppleTeamId,
                 appleDevelopment = a.AppleDevelopment, androidCloudProjectNumber = a.AndroidCloudProjectNumber, androidSideloaded = a.AndroidSideloaded,
                 androidDeviceIntegrity = a.AndroidDeviceIntegrity, androidCertificates = a.AndroidCertificates,
                 webSiteKey = a.WebSiteKey, webHostnames = a.WebHostnames, turnstileSecret = turnstileSecrets.GetValueOrDefault(a.Id), createdAt = a.CreatedAt, usage = Counts(usage.Where(u => u.AppId == a.Id)),
@@ -60,7 +60,6 @@ public static class ConsoleIntegrityEndpoints
     private static IntegrityApp From(AppRequest body, IntegrityApp? old) => (old ?? new IntegrityApp()) with
     {
         Name = body.Name?.Trim() ?? "",
-        Sdk = Blank(body.Sdk) ?? old?.Sdk ?? "flutter",
         AndroidPackage = Blank(body.AndroidPackage),
         AppleBundleId = Blank(body.AppleBundleId),
         AppleTeamId = Blank(body.AppleTeamId)?.ToUpperInvariant(),
