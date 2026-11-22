@@ -40,11 +40,12 @@ internal static class ForwardedHeadersDiagnostic
         http.RequestServices.GetRequiredService<ILoggerFactory>()
             .CreateLogger("Winche.Console")
             .LogWarning(
-                "WincheConsole is behind a TLS-terminating proxy (X-Forwarded-Proto: {ForwardedProto}) but the " +
-                "request scheme is '{Scheme}' — forwarded headers are not being honored. Cookie/OIDC console login " +
-                "will fail with 401 immediately after sign-in. Register app.UseForwardedHeaders(...) as the FIRST " +
-                "middleware, configured for your proxy topology. " +
-                "See https://learn.microsoft.com/aspnet/core/host-and-deploy/proxy-load-balancer",
-                proto.ToString(), request.Scheme);
+                "The console is behind a TLS-terminating proxy (X-Forwarded-Proto: {ForwardedProto}) but the request " +
+                "scheme is '{Scheme}': the proxy's forwarded headers aren't believed, so console sign-in will fail " +
+                "with 401 right after signing in. The proxy connected from {Proxy}. Winche Server believes proxies on " +
+                "loopback and private networks; for one elsewhere (a cloud load balancer, a CDN) set " +
+                "Winche__TrustedProxies__0 to its address or network (or * for any). A host of your own: register " +
+                "app.UseForwardedHeaders(...) first, configured for your proxy.",
+                proto.ToString(), request.Scheme, http.Connection.RemoteIpAddress?.ToString() ?? "an unknown address");
     }
 }

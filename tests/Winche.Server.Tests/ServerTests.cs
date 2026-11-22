@@ -82,6 +82,24 @@ public class ServerTests(PostgresFixture pg)
     }
 
     [Fact]
+    public void Forwarded_headers_are_believed_from_private_networks_unless_told_otherwise()
+    {
+        static bool Trusted(ServerOptions o, string address) => o.ProxyNetworks()!.Any(n => n.Contains(System.Net.IPAddress.Parse(address)));
+        var standard = new ServerOptions();
+        Assert.True(Trusted(standard, "172.17.0.1"));   // Docker's bridge
+        Assert.True(Trusted(standard, "10.0.4.2"));
+        Assert.True(Trusted(standard, "fd00::5"));
+        Assert.False(Trusted(standard, "35.191.10.20"));   // a cloud load balancer: set it
+        var cloud = new ServerOptions { TrustedProxies = ["35.191.0.0/16", "130.211.0.5"] };
+        Assert.True(Trusted(cloud, "35.191.10.20"));
+        Assert.True(Trusted(cloud, "130.211.0.5"));
+        Assert.False(Trusted(cloud, "10.0.4.2"));   // named ones replace the default
+        Assert.Null(new ServerOptions { TrustedProxies = ["*"] }.ProxyNetworks());
+        Assert.Contains(new ServerOptions { MasterKey = new string('k', 40), PublicUrl = "https://api.example.com", ConnectionString = "Host=x",
+            TrustedProxies = ["proxy.example.com"] }.Problems(), p => p.Contains("TrustedProxies"));
+    }
+
+    [Fact]
     public void Missing_settings_are_named_with_how_to_set_them()
     {
         var problems = new ServerOptions { MasterKey = "short", PublicUrl = "api.example.com" }.Problems();
@@ -313,6 +331,12 @@ public class ServerTests(PostgresFixture pg)
         preflight.Headers.Add("Access-Control-Request-Method", "POST");
         var allowed = await server.CreateClient().SendAsync(preflight);
         Assert.Equal("*", allowed.Headers.GetValues("Access-Control-Allow-Origin").Single());
+        // Web apps may read when to try again and the server's clock.
+        var cross = new HttpRequestMessage(HttpMethod.Post, "/projects/clinic/auth/v1/signIn/anonymous");
+        cross.Headers.Add("Origin", "https://anything.example.com");
+        var exposed = string.Join(",", (await server.CreateClient().SendAsync(cross)).Headers.GetValues("Access-Control-Expose-Headers"));
+        Assert.Contains("Retry-After", exposed);
+        Assert.Contains("Date", exposed);
 
         // The same app id and a debug token in both projects: clinic's Integrity token is refused by wards.
         async Task<string> TokenAsync(string project)

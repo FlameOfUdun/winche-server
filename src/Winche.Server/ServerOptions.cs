@@ -60,6 +60,16 @@ public sealed class ServerOptions
     /// </summary>
     public string[] TrustedProxies { get; set; } = [];
 
+    /// <summary>The networks forwarded headers are believed from (<see cref="TrustedProxies"/>, or the default); null: any.</summary>
+    public IReadOnlyList<System.Net.IPNetwork>? ProxyNetworks()
+    {
+        string[] trusted = TrustedProxies is { Length: > 0 } set ? set
+            : ["127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"];
+        if (trusted.Contains("*")) return null;
+        // ASP.NET Core unwraps IPv4 addresses mapped to IPv6 (::ffff:172.17.0.1) before matching.
+        return [.. trusted.Select(t => System.Net.IPNetwork.Parse(t.Contains('/') ? t : t + (t.Contains(':') ? "/128" : "/32")))];
+    }
+
     /// <summary>The longest a service account's key may last, in days (<c>Winche__ServiceAccountKeyMaxDays</c>, default 730).</summary>
     public int ServiceAccountKeyMaxDays { get; set; } = 730;
 

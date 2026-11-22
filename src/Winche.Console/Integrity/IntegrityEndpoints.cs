@@ -77,7 +77,6 @@ public static class ConsoleIntegrityEndpoints
             : old?.AndroidCertificates ?? [],
     };
 
-    /// <summary>Each app's Turnstile secret key: when it was set (never the key).</summary>
     /// <summary>Each app's Turnstile secret key: when it was set, and (for admins) by whom and where it's read from.</summary>
     private static async Task<IReadOnlyDictionary<string, object?>> TurnstileSecretsAsync(WincheIntegrity integrity, IServiceProvider sp, CancellationToken ct, bool admin = true)
     {

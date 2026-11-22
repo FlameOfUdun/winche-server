@@ -30,11 +30,8 @@ builder.Services.Configure<ForwardedHeadersOptions>(o =>
     o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
     o.KnownIPNetworks.Clear();
     o.KnownProxies.Clear();
-    string[] trusted = server.TrustedProxies is { Length: > 0 } set ? set
-        : ["127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7", "::ffff:10.0.0.0/104", "::ffff:172.16.0.0/108", "::ffff:192.168.0.0/112", "::ffff:127.0.0.0/104"];
-    if (trusted.Contains("*")) return;   // any (empty lists: ASP.NET Core then believes every sender)
-    foreach (var t in trusted)
-        o.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(t.Contains('/') ? t : t + (t.Contains(':') ? "/128" : "/32")));
+    if (server.ProxyNetworks() is not { } networks) return;   // any (empty lists: ASP.NET Core then believes every sender)
+    foreach (var n in networks) o.KnownIPNetworks.Add(n);
 });
 // The server's own settings (Server settings in the console, for server admins): in the control database's "server"
 // schema, starting from what the deployment sets. The schema is made first.

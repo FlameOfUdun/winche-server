@@ -58,7 +58,9 @@ nothing else) to wherever the server will run.
    `…/auth/v1`, functions under `…/functions/v1`, assets under `…/assets/v1`. `GET /projects/<id>/.well-known/winche`
    describes it (nothing secret).
 
-Run it behind HTTPS (a proxy or load balancer) for anything but trying it out: it trusts the `X-Forwarded-*` headers.
+Run it behind HTTPS (a proxy or load balancer) for anything but trying it out. It believes the `X-Forwarded-*` headers
+of proxies on loopback and private networks; a proxy that connects from elsewhere (a cloud load balancer, a CDN in
+front of the server) needs `Winche__TrustedProxies` (below), or console sign-in fails.
 
 ## Projects
 
@@ -89,6 +91,7 @@ Environment variables (or `appsettings.json`, section `Winche`):
 | `Winche__PublicUrl` | Where apps reach the server (tokens' issuer, file links), e.g. `https://api.example.com`. Set here only. |
 | `Winche__SetupCode` | Optional: the code first-run setup asks for. Unset, the server makes one and prints it in its log (`Setup code: …`) until someone has set it up. A wrong code takes a second to be refused. |
 | `Winche__ConsoleSignIn__Issuer`, `__ClientId`, `__ClientSecret` | Optional: console sign-in through an OpenID Connect provider from the start (also `__ButtonLabel`, `__RoleClaim`, `__AdminValues__0` (the groups that make server admins), `__PasswordsOnlyForAdmins`). It becomes the first of the console's identity providers; more are added in **Server settings → Authentication → Sign-in method**. Register `<PublicUrl>/console/v1/session/oidc/callback` at each provider, and optionally `<PublicUrl>/console/v1/session/oidc/backchannel-logout` as its back-channel logout URL. |
+| `Winche__TrustedProxies__0`, `__1`, … | Optional: the proxies whose `X-Forwarded-For`, `-Proto` and `-Host` are believed, as addresses or networks (`35.191.0.0/16`), or `*` for any. Default: loopback and private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`). Behind a proxy that connects from a public address, set it, or console sign-in fails (the log says which address the proxy came from). |
 | `Winche__RequireTwoFactorForSettings` | Default `true`: changing settings needs two-step sign-in (a trusted provider's own second step counts). Set `false` only to try the server out. Also in **Server settings → Authentication → Sign-in method**. |
 | `Winche__FunctionsMaxMinutes` | Optional: the longest any function may run, in minutes (default 9, at most 60). Also in **Server settings → General**; projects set their default and each function's own time up to it (**Functions → Settings**). |
 | `Winche__FunctionsMaxMemoryMb`, `__FunctionsMaxConcurrency`, `__FunctionsSharedProcessMb`, `__FunctionsMaxProcesses` | Optional: the most memory a function may ask for (default 1024 MB), runs at once per project (default 8 per CPU, at least 8), each run's heap limit in a project's shared functions process (default 1024 MB), and functions processes per project (default 4). Also in **Server settings → General**. |
@@ -301,9 +304,11 @@ changes need two-step sign-in where settings do. Also new:
   stays as it is (before, a missing `photoUrl` cleared the photo).
 - **Editing users in the console:** a user's dialog edits their name, photo (upload or link), email (at once, or by a
   link to the new address) and password. Users from a Keycloak with sync on are changed in Keycloak (the console
-  refuses here), except their photo.
-- **Forwarded headers are believed only from proxies on loopback and private networks** (`Winche__TrustedProxies__0`, …
-  names others; `*` any, as before). A server reached directly can't be told another caller's address or host.
+  refuses here); their photo can still be uploaded here.
+- **Forwarded headers are believed only from proxies on loopback and private networks.** **Behind a proxy that
+  connects from a public address** (Google Cloud's load balancer, a CDN proxying straight to the server), set
+  `Winche__TrustedProxies__0` to its network (`*`: any, as before) **before upgrading**, or console sign-in fails. A
+  server reached directly can't be told another caller's address or host.
 - **The console refuses changes another site's page makes** with its cookie (a browser's `Sec-Fetch-Site` or `Origin`
   says so). The console's own pages, the CLI and service accounts aren't affected.
 
