@@ -330,7 +330,8 @@ internal static class ConsoleOidc
         // linked to this provider account; else one with the same, verified, email (linked now); else a new one.
         var accounts = http.RequestServices.GetRequiredService<ConsoleAccounts>();
         var server = options.ServerSettings!;
-        await accounts.MirrorProvidersAsync(server.ConsoleProviders, (id, c) => server.Secrets.GetAsync(ConsoleOidcSettings.KeycloakSyncSecretFor(id), c), s.Id, ct);
+        await accounts.MirrorProvidersAsync(server.ConsoleProviders, (id, c) => server.Secrets.GetAsync(ConsoleOidcSettings.KeycloakSyncSecretFor(id), c), s.Id, ct,
+            async (id, c) => (await server.Secrets.InfoAsync(ConsoleOidcSettings.KeycloakSyncSecretFor(id), c))?.Reference);
         var linked = await accounts.UseAsync(a => a.FindByProviderAsync(s.Id, subject, ct));
         ConsoleAccount? byEmail = null;
         if (linked is null)

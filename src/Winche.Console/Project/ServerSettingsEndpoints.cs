@@ -100,11 +100,16 @@ public static class ServerSettingsEndpoints
             if (string.IsNullOrWhiteSpace(body.Reason)) return ConsoleErrors.Problem("invalid-settings", "Say why you're making this change: it goes in the history.", null);
             try
             {
-                var before = options.ServerSettings!.ConsoleProviders.Select(p => p.Id).ToList();
-                var v = await options.ServerSettings!.Store.SaveAsync(options.ServerSettings.Area.Name, JsonNode.Parse(doc.GetRawText())!, Who(http.User), body.Reason, body.BasedOn, ct);
-                // A provider taken off the list takes its client secret with it.
-                foreach (var gone in before.Except(options.ServerSettings.ConsoleProviders.Select(p => p.Id)))
-                    await options.ServerSettings.Secrets.DeleteAsync(ConsoleOidc.SecretFor(gone), ct);
+                var node = JsonNode.Parse(doc.GetRawText())!;
+                // A provider taken off the list takes its client and sync secrets with it, first (AWS may refuse: then
+                // nothing changes).
+                var after = (node["consoleProviders"] as JsonArray)?.Select(p => p?["id"]?.GetValue<string>()).OfType<string>().ToHashSet() ?? [];
+                foreach (var gone in options.ServerSettings!.ConsoleProviders.Select(p => p.Id).Where(id => !after.Contains(id)))
+                {
+                    await options.ServerSettings.Secrets.DeleteAsync(ConsoleOidc.SecretFor(gone), keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct);
+                    await options.ServerSettings.Secrets.DeleteAsync(ConsoleOidcSettings.KeycloakSyncSecretFor(gone), keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct);
+                }
+                var v = await options.ServerSettings.Store.SaveAsync(options.ServerSettings.Area.Name, node, Who(http.User), body.Reason, body.BasedOn, ct);
                 return Results.Json(new { number = v.Number, at = v.At, by = v.By, reason = v.Reason });
             }
             catch (SettingsValidationException ex) { return ConsoleErrors.Problem("invalid-settings", "These settings can't be saved.", ex.Errors); }

@@ -53,7 +53,8 @@ public sealed class ConsoleAccounts(ServerOptions server, ServerSettingsProvider
     /// <summary>Brings the accounts' Sign-in method providers (and Keycloak sync secrets) in step with Server settings.</summary>
     internal Task MirrorAsync(CancellationToken ct) =>
         new Winche.Console.Identity.ConsoleAccounts(new Winche.Console.Options.ConsoleOptions { Accounts = this }).MirrorProvidersAsync(
-            settings.Current.ConsoleProviders, (id, c) => settings.Secrets.GetAsync(Winche.Console.Identity.ConsoleOidcSettings.KeycloakSyncSecretFor(id), c), ct: ct);
+            settings.Current.ConsoleProviders, (id, c) => settings.Secrets.GetAsync(Winche.Console.Identity.ConsoleOidcSettings.KeycloakSyncSecretFor(id), c), ct: ct,
+            syncReference: async (id, c) => (await settings.Secrets.InfoAsync(Winche.Console.Identity.ConsoleOidcSettings.KeycloakSyncSecretFor(id), c))?.Reference);
 
     public async Task StopAsync(CancellationToken ct)
     {

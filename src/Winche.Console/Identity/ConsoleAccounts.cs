@@ -171,8 +171,10 @@ public sealed class ConsoleAccounts(ConsoleOptions options)
     /// checked there, accounts linked there, Keycloak synced there, and its back-channel logouts end sessions there.
     /// <paramref name="only"/>: just that provider (made sure of before a sign-in), else the whole list (others removed).
     /// </summary>
+    /// <param name="syncReference">Where a provider's sync secret is read from, when the server keeps it as a reference
+    /// (in AWS): the accounts keep the same reference, never a copy of the value.</param>
     public async Task MirrorProvidersAsync(IReadOnlyList<ConsoleOidcSettings> providers, Func<string, CancellationToken, Task<string?>> syncSecret,
-        string? only = null, CancellationToken ct = default)
+        string? only = null, CancellationToken ct = default, Func<string, CancellationToken, Task<Winche.Secrets.SecretReference?>>? syncReference = null)
     {
         await using var scope = Root.CreateAsyncScope();
         var sp = scope.ServiceProvider;
@@ -193,9 +195,22 @@ public sealed class ConsoleAccounts(ConsoleOptions options)
                 System.Text.Json.JsonSerializer.SerializeToNode(current with { Providers = next }, SettingsArea.Json)!, "winche",
                 "The console's identity providers (Server settings)", ct);
         foreach (var p in providers.Where(p => p.KeycloakSync is not null && (only is null || p.Id == only)))
-            if (await syncSecret(p.Id, ct) is { Length: > 0 } secret
-                && await secrets.GetAsync(Winche.Auth.Settings.KeycloakSyncSettings.SecretName(p.Id), ct) != secret)
-                await secrets.SetAsync(Winche.Auth.Settings.KeycloakSyncSettings.SecretName(p.Id), secret, "winche", ct);
+        {
+            var name = Winche.Auth.Settings.KeycloakSyncSettings.SecretName(p.Id);
+            if (syncReference is not null && await syncReference(p.Id, ct) is { } reference)
+            {
+                if ((await secrets.InfoAsync(name, ct))?.Reference?.ToString() != reference.ToString())
+                    await secrets.SetReferenceAsync(name, reference, "winche", allowAppCredentials: true, ct);
+            }
+            else if (await syncSecret(p.Id, ct) is { Length: > 0 } secret && await secrets.GetAsync(name, ct) != secret)
+                await secrets.SetAsync(name, secret, "winche", ct);
+        }
+        // A provider gone, or no longer synced: its sync secret goes from the accounts too (here only: the server's is its own).
+        if (only is null)
+            foreach (var kept in await secrets.ListAsync("auth.provider.", ct))
+                if (kept.Name.Split('.') is ["auth", "provider", var id, "keycloakSync", "clientSecret"]
+                    && !providers.Any(p => p.Id == id && p.KeycloakSync is not null))
+                    await secrets.DeleteAsync(kept.Name, keepInSource: true, ct);
     }
 
     /// <summary>How many active server admins there are (the last one can't be demoted, turned off or deleted).</summary>
