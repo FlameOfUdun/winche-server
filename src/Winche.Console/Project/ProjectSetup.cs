@@ -252,7 +252,8 @@ public static class ProjectEndpoints
             var path = http.Request.Path.Value ?? "";
             foreach (var (prefix, product) in WincheProducts.Paths)
             {
-                if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || (path.Length > prefix.Length && path[prefix.Length] != '/')) continue;
+                // The product's own path: /documents/v1, /documents/v1/…, and its colon verbs (/documents/v1:commit, :runQuery, …).
+                if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || (path.Length > prefix.Length && path[prefix.Length] is not ('/' or ':'))) continue;
                 if (setup.Current.IsStarted(product) && http.RequestServices.GetService<ProductSetupRunner>() is { } runner && !runner.IsReady(product))
                 {
                     var name = $"{char.ToUpperInvariant(product[0])}{product[1..]}";

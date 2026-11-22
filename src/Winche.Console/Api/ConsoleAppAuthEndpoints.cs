@@ -227,8 +227,18 @@ public static class ConsoleAppAuthEndpoints
                 : null;
         }
 
-        group.MapPatch("/users/{uid}/profile", (string uid, ProfileRequest body, HttpContext http, UserDirectories dirs) => WithDirectory(http, dirs, async d =>
-            await ManagedElsewhereAsync(d, uid, http) ?? Results.Json(User(await d.UpdateProfileAsync(uid, body.DisplayName, body.PhotoUrl, http.RequestAborted)))));
+        // A patch: a field left out stays as it is (an uploaded photo isn't lost to a rename); null clears it.
+        group.MapPatch("/users/{uid}/profile", (string uid, HttpContext http, UserDirectories dirs) => WithDirectory(http, dirs, async d =>
+        {
+            if (await ManagedElsewhereAsync(d, uid, http) is { } managed) return managed;
+            if (await Winche.Auth.AspNetCore.WincheAuthEndpoints.ReadPatchAsync(http.Request, http.RequestAborted) is not { } body)
+                return Results.Json(new { error = new { code = "INVALID_ARGUMENT", message = "Send a JSON object: displayName and/or photoUrl." } }, statusCode: 400);
+            if (await d.GetAsync(uid, http.RequestAborted) is not { } current) return Results.NotFound();
+            static string? Text(System.Text.Json.Nodes.JsonNode? x) => x is System.Text.Json.Nodes.JsonValue v && v.TryGetValue<string>(out var t) ? t : null;
+            var name = body.TryGetPropertyValue("displayName", out var n) ? Text(n) : current.User.DisplayName;
+            var photo = body.TryGetPropertyValue("photoUrl", out var p) ? Text(p) : current.User.PhotoUrl;
+            return Results.Json(User(await d.UpdateProfileAsync(uid, name, photo, http.RequestAborted)));
+        }));
 
         group.MapPut("/users/{uid}/email", (string uid, EmailRequest body, HttpContext http, UserDirectories dirs) => WithDirectory(http, dirs, async d =>
         {

@@ -149,7 +149,7 @@ function optionsOut(options) {
     return { ...options, secrets: names };
 }
 const define = (trigger, run, options = {}) => ({
-    __winche: 1, trigger, options: optionsOut(options), run,
+    __winche: options?.integrity === true ? 2 : 1, trigger, options: optionsOut(options), run,
     handler: async (arg, raw) => {
         const r = raw;
         return changesOut(trigger, await run(eventOf(trigger, arg, r.call), contextOf(r)));

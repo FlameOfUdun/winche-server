@@ -189,6 +189,25 @@ public static class WincheConsoleExtensions
         return branch;
     }
 
+    /// <summary>
+    /// A change (not GET, HEAD or OPTIONS) riding on the console's cookie that a browser says came from another site:
+    /// <c>Sec-Fetch-Site</c> cross-site or same-site, or an <c>Origin</c> other than this one. Calls with a token, the
+    /// console's own (they send <c>X-Winche-Console</c>, which another site's page can't), and clients that aren't
+    /// browsers pass.
+    /// </summary>
+    internal static bool CrossSite(HttpRequest request)
+    {
+        if (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method) || HttpMethods.IsOptions(request.Method)) return false;
+        if (request.Headers.Authorization.Count > 0 || request.Headers.ContainsKey("X-Winche-Console")) return false;
+        if (!request.Cookies.Keys.Any(k => k.StartsWith("WincheConsoleSession", StringComparison.Ordinal))) return false;
+        var site = request.Headers["Sec-Fetch-Site"].ToString();
+        if (site is "cross-site" or "same-site") return true;
+        if (site is "same-origin" or "none") return false;
+        var origin = request.Headers.Origin.ToString();
+        return origin.Length > 0 && !(Uri.TryCreate(origin, UriKind.Absolute, out var o)
+            && string.Equals(o.Authority, request.Host.Value, StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <param name="project">A project's calls (<c>/console/v1/projects/&lt;id&gt;/…</c>): its own areas only. Signing in,
     /// the accounts, invites, the projects and Server settings are the server's console's.</param>
     private static void MapApi(IEndpointRouteBuilder endpoints, RouteGroupBuilder group, string pages, string api, bool project)
@@ -207,6 +226,11 @@ public static class WincheConsoleExtensions
         });
         // What the products throw for a bad request: answered as such (400/409), not as a server error.
         group.AddEndpointFilter(Api.ConsoleExceptionFilter.InvokeAsync);
+        // Changes sent with the console's cookie must come from the console itself, never from another site's page
+        // (the cookie is Lax, which a sibling subdomain still gets).
+        group.AddEndpointFilter(async (ctx, next) => CrossSite(ctx.HttpContext.Request)
+            ? Results.Json(new { error = new { code = "PERMISSION_DENIED", message = "Changes to the console come from the console's own pages." } }, statusCode: 403)
+            : await next(ctx));
 
         if (!project) group.MapAuthConfigEndpoint(options);
 

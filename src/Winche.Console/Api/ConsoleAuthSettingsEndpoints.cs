@@ -261,6 +261,17 @@ public static class ConsoleAuthSettingsEndpoints
             if (await RequireTwoFactorAsync(http) is { } refused) return refused;
             if (sp.GetService<SettingsStore>() is not { } store) return Problem("Settings aren't saved in this app.");
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're restoring it: it goes in the history.");
+            // Integrity: an old version brings back its apps and modes, never debug tokens removed since (one that leaked
+            // and was removed would work again). Today's stay, for the apps that are still there.
+            if (await store.GetAsync(id, ct) is { Area: Winche.Integrity.IntegritySettings.Area, Document: { } old } version
+                && sp.GetService<Winche.Integrity.WincheIntegrity>() is { Available: true } integrity)
+            {
+                var restored = old.Deserialize<Winche.Integrity.IntegritySettings>(SettingsArea.Json) ?? new();
+                var kept = restored with { DebugTokens = [.. integrity.Current.DebugTokens.Where(t => restored.Apps.Any(a => a.Id == t.App))] };
+                if (kept.Problems().FirstOrDefault() is { } problem) return Problem($"That version no longer fits: {problem}");
+                await integrity.SaveAsync(kept, Who(http.User), $"{body.Reason.Trim()} (restored version {version.Number}; today's debug tokens kept)", ct);
+                return Results.Json(Version((await store.HistoryAsync(Winche.Integrity.IntegritySettings.Area, 1, ct))[0], store));
+            }
             try { return Results.Json(Version(await store.RestoreAsync(id, Who(http.User), body.Reason, ct), store)); }
             catch (KeyNotFoundException) { return Results.NotFound(); }
             catch (SettingsValidationException ex) { return Problem("That version no longer fits this app's settings.", ex.Errors); }

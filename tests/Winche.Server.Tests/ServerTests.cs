@@ -275,11 +275,31 @@ public class ServerTests(PostgresFixture pg)
     }
 
     [Fact]
-    public async Task Any_origin_may_call_and_a_projects_Integrity_tokens_work_only_in_it()
+    public async Task Integrity_changes_need_two_step_sign_in_where_settings_do()
     {
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         var projectsPath = Directory.CreateTempSubdirectory("winche-server-projects-").FullName;
         await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:ProjectsPath", projectsPath));
+        var console = server.CreateClient();
+        await Json(await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        await TestProjects.CreateAsync(console, "clinic", "Clinic", "authentication");
+        foreach (var refused in new[]
+        {
+            await console.PostAsJsonAsync("/console/v1/projects/clinic/integrity/apps", new { name = "App", id = "my-app" }),
+            await console.PutAsJsonAsync("/console/v1/projects/clinic/integrity/enforcement", new { enforcement = new Dictionary<string, string> { ["database"] = "off" }, reason = "x" }),
+            await console.PostAsJsonAsync("/console/v1/projects/clinic/integrity/debug-tokens", new { app = "my-app", name = "CI" }),
+        })
+            Assert.Contains("TWO_FACTOR_REQUIRED", await refused.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, (await console.GetAsync("/console/v1/projects/clinic/integrity")).StatusCode);   // reading needs none
+    }
+
+    [Fact]
+    public async Task Any_origin_may_call_and_a_projects_Integrity_tokens_work_only_in_it()
+    {
+        var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
+        var projectsPath = Directory.CreateTempSubdirectory("winche-server-projects-").FullName;
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:ProjectsPath", projectsPath), ("Winche:RequireTwoFactorForSettings", "false"));
         var console = server.CreateClient();
         await Json(await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
         await Json(await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
@@ -310,6 +330,37 @@ public class ServerTests(PostgresFixture pg)
         Assert.Equal(HttpStatusCode.Forbidden, (await server.CreateClient().SendAsync(request)).StatusCode);
         // Clinic itself isn't enforced: it answers with or without a token.
         Assert.NotEqual(HttpStatusCode.Forbidden, (await server.CreateClient().PostAsync("/projects/clinic/auth/v1/signIn/anonymous", null)).StatusCode);
+
+        // The database's colon verbs (writes, queries) are the database's too: enforced like the rest of it.
+        await StartProductAsync(console, "/projects/wards", "database");
+        await Json(await console.PutAsJsonAsync("/console/v1/projects/wards/integrity/enforcement",
+            new { enforcement = new Dictionary<string, string> { ["database"] = "enforce" }, reason = "Only our apps" }));
+        var commit = await server.CreateClient().PostAsJsonAsync("/projects/wards/documents/v1:commit", new { writes = Array.Empty<object>() });
+        Assert.Equal(HttpStatusCode.Forbidden, commit.StatusCode);
+        Assert.Contains("integrity-required", await commit.Content.ReadAsStringAsync());
+        var query = await server.CreateClient().PostAsJsonAsync("/projects/wards/documents/v1:runQuery", new { });
+        Assert.Contains("integrity-required", await query.Content.ReadAsStringAsync());
+
+        // A change on the console's cookie that a browser says came from another site is refused; the console's own pass.
+        var forged = new HttpRequestMessage(HttpMethod.Post, "/console/v1/projects/wards/integrity/debug-tokens") { Content = JsonContent.Create(new { app = "shared-app", name = "Evil" }) };
+        forged.Headers.Add("Sec-Fetch-Site", "same-site");
+        Assert.Equal(HttpStatusCode.Forbidden, (await console.SendAsync(forged)).StatusCode);
+        var fromOrigin = new HttpRequestMessage(HttpMethod.Post, "/console/v1/projects/wards/integrity/debug-tokens") { Content = JsonContent.Create(new { app = "shared-app", name = "Evil" }) };
+        fromOrigin.Headers.Add("Origin", "https://evil.example.com");
+        Assert.Equal(HttpStatusCode.Forbidden, (await console.SendAsync(fromOrigin)).StatusCode);
+        var own = new HttpRequestMessage(HttpMethod.Post, "/console/v1/projects/wards/integrity/debug-tokens") { Content = JsonContent.Create(new { app = "shared-app", name = "Laptop" }) };
+        own.Headers.Add("Sec-Fetch-Site", "same-origin");
+        own.Headers.Add("X-Winche-Console", "1");
+        var laptop = await Json(await console.SendAsync(own));
+
+        // Restoring an older version keeps today's debug tokens: one removed since doesn't come back.
+        var history = await Json(await console.GetAsync("/console/v1/projects/wards/auth/settings/history?area=integrity"));
+        var withLaptop = history.GetProperty("versions")[0].GetProperty("id").GetInt64();
+        await console.DeleteAsync($"/console/v1/projects/wards/integrity/debug-tokens/{laptop.GetProperty("id").GetString()}");
+        await Json(await console.PostAsJsonAsync($"/console/v1/projects/wards/auth/settings/history/{withLaptop}/restore", new { reason = "Undo" }));
+        var exchanged = await server.CreateClient().PostAsJsonAsync("/projects/wards/integrity/v1/exchange",
+            new { app = "shared-app", provider = "debug", debugToken = laptop.GetProperty("token").GetString() });
+        Assert.Equal(HttpStatusCode.Forbidden, exchanged.StatusCode);
     }
 
     [Fact]
@@ -547,7 +598,7 @@ public class ServerTests(PostgresFixture pg)
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
         var projectsPath = Directory.CreateTempSubdirectory("winche-server-projects-").FullName;
         var control = await pg.NewDatabaseAsync();
-        await using var server = new ServerFactory(control, files, ("Winche:ProjectsPath", projectsPath));
+        await using var server = new ServerFactory(control, files, ("Winche:ProjectsPath", projectsPath), ("Winche:RequireTwoFactorForSettings", "false"));
         var admin = server.CreateClient();
         await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
         await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));

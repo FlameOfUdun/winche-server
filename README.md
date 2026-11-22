@@ -292,7 +292,17 @@ first. Several servers can be replaced one at a time.
 only" and the browser origins are gone: the project APIs answer any origin, and apps no longer send `X-Winche-App`.
 Every product starts in monitor: nothing is refused until you enforce it (**Integrity**). Apps built with the Winche
 SDKs before 4.0 keep working while nothing is enforced; to enforce, update them and give each a way to prove itself
-(App Attest on iOS and macOS, Play Integrity on Android, the browser check on the web, or a debug token).
+(App Attest on iOS and macOS, Play Integrity on Android, the browser check on the web, or a debug token). Integrity's
+changes need two-step sign-in where settings do. Also new:
+
+- **Users' photos** (Winche Auth 2.1): apps upload a small photo (`POST /auth/v1/me/photo`) kept with the user and served
+  at an address of its own; sign-in providers' pictures stay links, refreshed at each sign-in. A migration adds a table
+  and a column to each project's auth database when it starts. `PATCH /auth/v1/me` is now a patch: a field left out
+  stays as it is (before, a missing `photoUrl` cleared the photo).
+- **Editing users in the console:** a user's dialog edits their name, photo (upload or link), email (at once, or by a
+  link to the new address) and password; users from Keycloak are changed in Keycloak, except their photo.
+- **The console refuses changes another site's page makes** with its cookie (a browser's `Sec-Fetch-Site` or `Origin`
+  says so). The console's own pages, the CLI and service accounts aren't affected.
 
 **3.1.4:** with an SMTP server, sign-in-link and password-reset emails are sent again (they were lost, "Cannot access a
 disposed object" in the log; Winche Auth 2.0.1). Authentication → Settings → Emails to users can now send them before

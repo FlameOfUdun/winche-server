@@ -129,7 +129,8 @@ public class ConsoleProjectTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Contains("integrity-rejected", await forged.Content.ReadAsStringAsync());
         // Play Integrity: the app's Android settings; the challenge carries its Cloud project number; the service account is checked, kept, never shown.
         await Json(await client.PutAsJsonAsync($"/console/v1/integrity/apps/{id}", new { name = "Clinic app", androidPackage = "com.example.clinic", appleBundleId = "com.example.clinic",
-            appleTeamId = "ABCDE12345", androidCloudProjectNumber = 123456789012, androidSideloaded = true, androidDeviceIntegrity = "strong" }));
+            appleTeamId = "ABCDE12345", androidCloudProjectNumber = 123456789012, androidSideloaded = true, androidDeviceIntegrity = "strong",
+            androidCertificates = new[] { new string('a', 43) } }));   // sideloading needs the signing certificate
         var android = (await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("apps")[0];
         Assert.Equal((123456789012, true, "strong"), (android.GetProperty("androidCloudProjectNumber").GetInt64(), android.GetProperty("androidSideloaded").GetBoolean(), android.GetProperty("androidDeviceIntegrity").GetString()));
         Assert.True(android.GetProperty("appleDevelopment").GetBoolean());   // kept when not sent

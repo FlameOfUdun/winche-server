@@ -185,6 +185,9 @@ public class ConsoleAppAuthTests(PostgresFixture fx) : IAsyncLifetime
         var photo = await client.GetAsync(new Uri(withPhoto.GetProperty("photoUrl").GetString()!).AbsolutePath);
         Assert.Equal(("image/png", png.Length), (photo.Content.Headers.ContentType?.MediaType, (await photo.Content.ReadAsByteArrayAsync()).Length));
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsync($"/console/v1/auth/users/{uid}/photo", new ByteArrayContent("not an image"u8.ToArray()))).StatusCode);
+        // A rename alone keeps the photo (a patch: what isn't sent stays).
+        var renamed = await Json(await client.PatchAsJsonAsync($"/console/v1/auth/users/{uid}/profile", new { displayName = "Renamed" }));
+        Assert.Equal(("Renamed", "upload"), (renamed.GetProperty("displayName").GetString(), renamed.GetProperty("photoSource").GetString()));
         Assert.Equal(JsonValueKind.Null, (await Json(await client.DeleteAsync($"/console/v1/auth/users/{uid}/photo"))).GetProperty("photoUrl").ValueKind);
 
         // A new password: they sign in with it.

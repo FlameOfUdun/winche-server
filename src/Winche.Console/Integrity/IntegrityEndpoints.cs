@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Winche.Console.Api;
 using Winche.Console.Identity;
 using Winche.Console.Project;
@@ -77,20 +78,23 @@ public static class ConsoleIntegrityEndpoints
     };
 
     /// <summary>Each app's Turnstile secret key: when it was set (never the key).</summary>
-    private static async Task<IReadOnlyDictionary<string, object?>> TurnstileSecretsAsync(WincheIntegrity integrity, IServiceProvider sp, CancellationToken ct)
+    /// <summary>Each app's Turnstile secret key: when it was set, and (for admins) by whom and where it's read from.</summary>
+    private static async Task<IReadOnlyDictionary<string, object?>> TurnstileSecretsAsync(WincheIntegrity integrity, IServiceProvider sp, CancellationToken ct, bool admin = true)
     {
         var result = new Dictionary<string, object?>();
         if (sp.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets) return result;
         foreach (var a in integrity.Current.Apps.Where(a => a.WebSiteKey is not null))
             if (await secrets.InfoAsync(WincheIntegrity.TurnstileSecret(a.Id), ct) is { } i)
-                result[a.Id] = new { setAt = i.SetAt, setBy = i.SetBy, reference = Api.ConsoleSecretsEndpoints.ReferenceOf(i) };
+                result[a.Id] = admin ? new { setAt = i.SetAt, setBy = i.SetBy, reference = Api.ConsoleSecretsEndpoints.ReferenceOf(i) } : new { setAt = i.SetAt };
         return result;
     }
 
-    private static async Task<object?> PlayServiceAccountAsync(IServiceProvider sp, CancellationToken ct)
+    /// <summary>The Play service account: when it was set, and (for admins) by whom, where it's read from and its address.</summary>
+    private static async Task<object?> PlayServiceAccountAsync(IServiceProvider sp, CancellationToken ct, bool admin = true)
     {
         if (sp.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets) return null;
         if (await secrets.InfoAsync(WincheIntegrity.PlayServiceAccountSecret, ct) is not { } info) return null;
+        if (!admin) return new { setAt = info.SetAt };
         string? email = null;
         try { email = Winche.Integrity.PlayIntegrity.GoogleServiceAccount.Parse(await secrets.GetAsync(WincheIntegrity.PlayServiceAccountSecret, ct))?.ClientEmail; }
         catch (Exception e) when (e is not OperationCanceledException) { }   // a reference that can't be read now: no address shown
@@ -102,13 +106,17 @@ public static class ConsoleIntegrityEndpoints
         app.MapGet("/integrity", async (HttpContext http, WincheIntegrity integrity, IntegrityUsage usage, IntegrityStore store, CancellationToken ct) =>
         {
             var admin = Tabs.ConsoleRolePolicy.Highest(http.User, options) >= Tabs.ConsoleRole.Admin;
+            // Viewers see when secrets were set, not where they're kept, who set them or the service account's address.
+            var account = integrity.Available ? await PlayServiceAccountAsync(http.RequestServices, ct, admin) : null;
+            var turnstile = integrity.Available ? await TurnstileSecretsAsync(integrity, http.RequestServices, ct, admin) : new Dictionary<string, object?>();
             return Results.Json(Body(integrity, integrity.Available ? await usage.ReadAsync(ct) : [],
                 integrity.Available ? await store.CountKeysAsync(ct) : new Dictionary<string, (long, long, DateTimeOffset?)>(),
-                integrity.Available ? await PlayServiceAccountAsync(http.RequestServices, ct) : null,
-                integrity.Available ? await TurnstileSecretsAsync(integrity, http.RequestServices, ct) : new Dictionary<string, object?>(), integrity.Available && admin));
+                account, turnstile, integrity.Available && admin));
         }).RequireAuthorization(ConsoleRoles.ViewerPolicy);
 
-        var admin = app.MapGroup("/integrity").RequireAuthorization(ConsoleRoles.AdminPolicy);
+        // Every change here can open or close the project to scripts (or mint a way in): two-step sign-in when required.
+        var admin = app.MapGroup("/integrity").RequireAuthorization(ConsoleRoles.AdminPolicy)
+            .AddEndpointFilter(async (ctx, next) => await Api.ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(ctx.HttpContext) is { } refused ? refused : await next(ctx));
 
         admin.MapPost("/apps", async (AppRequest body, HttpContext http, WincheIntegrity integrity, CancellationToken ct) =>
         {
@@ -195,7 +203,10 @@ public static class ConsoleIntegrityEndpoints
         admin.MapDelete("/play-service-account", async (HttpContext http, CancellationToken ct) =>
         {
             if (http.RequestServices.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets) return Results.NotFound();
-            return await secrets.DeleteAsync(WincheIntegrity.PlayServiceAccountSecret, ct) ? Results.NoContent() : Results.NotFound();
+            if (!await secrets.DeleteAsync(WincheIntegrity.PlayServiceAccountSecret, ct)) return Results.NotFound();
+            http.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("Winche.Console.Integrity")
+                .LogInformation("{Who} removed the Google service account Play Integrity signs in as.", Who(http.User));
+            return Results.NoContent();
         });
 
         // A debug token, shown this once (only its hash is kept).
