@@ -123,6 +123,7 @@ internal static class ProjectApp
         builder.Services.AddWincheFunctions(o =>
         {
             o.ConnectionString = config;   // deployments and schedules are configuration
+            o.AppProof = Winche.Console.Integrity.FunctionsIntegrity.ProofOf;   // ctx.app, and integrity: true callables
             o.DenoPath = string.IsNullOrWhiteSpace(server.DenoPath) ? null : server.DenoPath;   // the image has deno on the PATH
             if (server.FunctionPackagesPath is { Length: > 0 } packages && Directory.Exists(packages))
                 foreach (var dir in Directory.EnumerateDirectories(packages, "*", SearchOption.AllDirectories))

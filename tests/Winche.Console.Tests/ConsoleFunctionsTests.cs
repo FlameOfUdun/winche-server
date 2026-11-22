@@ -94,6 +94,41 @@ public class ConsoleFunctionsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Contains((await ci.PostAsJsonAsync("/functions/v1/deploy", new { files = new Dictionary<string, string>() })).StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
     }
     [Fact]
+    public async Task Callables_see_which_app_proved_itself_and_can_require_it()
+    {
+        if (Environment.GetEnvironmentVariable("WINCHE_DENO") is not { Length: > 0 }) return;   // deploying needs Deno
+        using var app = new ConsoleAppFactory(fx, ("Sample:ProjectSetup", "true"));
+        using var client = app.CreateClient();
+        await client.SetupAdminAsync();
+        await client.LoginAsync();
+        await Json(await client.PostAsJsonAsync("/console/v1/project", new { name = "Clinic", id = "clinic", products = new[] { "functions" } }));
+        for (var i = 0; i < 100 && (await Json(await client.GetAsync("/console/v1/project"))).GetProperty("products").EnumerateArray()
+                 .Any(p => p.GetProperty("id").GetString() == "functions" && !p.GetProperty("ready").GetBoolean()); i++) await Task.Delay(100);
+        await Json(await client.PostAsJsonAsync("/console/v1/integrity/apps", new { name = "Clinic app", id = "clinic-app" }));
+        var debug = (await Json(await client.PostAsJsonAsync("/console/v1/integrity/debug-tokens", new { app = "clinic-app", name = "CI" }))).GetProperty("token").GetString();
+        var token = (await Json(await client.PostAsJsonAsync("/integrity/v1/exchange", new { app = "clinic-app", provider = "debug", debugToken = debug }))).GetProperty("token").GetString()!;
+        // Functions not checked at all (off): the callable still sees the proof, and still requires it.
+        await Json(await client.PutAsJsonAsync("/console/v1/integrity/enforcement", new { enforcement = new Dictionary<string, string> { ["functions"] = "off" }, reason = "Callables decide" }));
+        await Json(await client.PostAsJsonAsync("/console/v1/functions/deploy", new { files = new Dictionary<string, string> { ["index.ts"] = """
+            import { callable } from "@winche-technologies/winche-functions";
+            export const who = callable((_d, ctx) => ctx.app);
+            export const pay = callable((_d, ctx) => ({ from: ctx.app!.id }), { integrity: true });
+            """ }, note = "Integrity" }));
+        async Task<HttpResponseMessage> Call(string name, string? integrity)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, $"/functions/v1/call/{name}") { Content = JsonContent.Create(new { data = (object?)null }) };
+            if (integrity is not null) request.Headers.Add("X-Winche-Integrity", integrity);
+            return await client.SendAsync(request);
+        }
+        var who = await Json(await Call("who", token));
+        Assert.Equal(("clinic-app", "debug"), (who.GetProperty("data").GetProperty("id").GetString(), who.GetProperty("data").GetProperty("provider").GetString()));
+        Assert.Equal(JsonValueKind.Null, (await Json(await Call("who", null))).GetProperty("data").ValueKind);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Call("pay", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Call("pay", "wit1.forged.AAAA")).StatusCode);
+        Assert.Equal("clinic-app", (await Json(await Call("pay", token))).GetProperty("data").GetProperty("from").GetString());
+    }
+
+    [Fact]
     public async Task Secrets_are_set_listed_without_values_and_removed()
     {
         using var app = new ConsoleAppFactory(fx);

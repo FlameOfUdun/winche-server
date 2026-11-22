@@ -201,7 +201,9 @@ and a deploy reaches every task within seconds.
   account, kept as a secret, signs the server in to Google to read each verdict). Web apps pass a browser check
   (Cloudflare Turnstile: the app's site key, sites and secret key) — weaker: it tells a browser from a script. Debug tokens (shown once)
   let simulators, desktop builds and CI in. Email action links, identity providers' notices, HTTP
-  functions (webhooks) and signed file links never need a token. See Winche.Integrity's README.
+  functions (webhooks) and signed file links never need a token. Functions see which app called (`ctx.app`), and a
+  callable with `{ integrity: true }` answers only apps with a valid token whatever Functions' mode (Winche.Functions
+  3.2). See Winche.Integrity's README.
 - **Logs:** every product's requests and events, as plain sentences, with filters and saved queries. Changes are always
   logged; successful reads are sampled.
 - **Project settings:** the project (name, id, image), members and invites, service accounts, and

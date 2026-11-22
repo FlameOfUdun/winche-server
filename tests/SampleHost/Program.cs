@@ -27,6 +27,7 @@ Winche.Webhooks.ServiceCollectionExtensions.AddWincheHooks(builder.Services, o =
 Winche.Functions.ServiceCollectionExtensions.AddWincheFunctions(builder.Services, o =>
 {
     o.ConnectionString = wincheConn;
+    o.AppProof = Winche.Console.Integrity.FunctionsIntegrity.ProofOf;   // ctx.app, and integrity: true callables
     o.DenoPath = Environment.GetEnvironmentVariable("WINCHE_DENO") is { Length: > 0 } deno ? deno : null;
     // The TypeScript SDKs the tests carry (tests/SdkPackages), for code that doesn't name them in deno.json.
     foreach (var name in new[] { "winche-functions", "winche-admin" })
