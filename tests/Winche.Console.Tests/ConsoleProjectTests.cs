@@ -147,6 +147,20 @@ public class ConsoleProjectTests(PostgresFixture fx) : IAsyncLifetime
         Assert.DoesNotContain("PRIVATE KEY", account);
         Assert.Contains("Google service account (Play Integrity)", await client.GetStringAsync("/console/v1/secrets"));
         Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/console/v1/integrity/play-service-account")).StatusCode);
+        // The browser check: the site key and hostnames; the secret key write-only; the challenge carries the site key.
+        await Json(await client.PutAsJsonAsync($"/console/v1/integrity/apps/{id}", new { name = "Clinic app", androidPackage = "com.example.clinic",
+            webSiteKey = "0x4AAAAAAAsitekey123", webHostnames = new[] { "App.Example.com" } }));
+        var web = (await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("apps")[0];
+        Assert.Equal(("0x4AAAAAAAsitekey123", "app.example.com"), (web.GetProperty("webSiteKey").GetString(), web.GetProperty("webHostnames")[0].GetString()));
+        Assert.Equal(JsonValueKind.Null, web.GetProperty("turnstileSecret").ValueKind);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync($"/console/v1/integrity/apps/{id}", new { name = "Clinic app", webHostnames = new[] { "https://app.example.com/" } })).StatusCode);
+        Assert.Equal("0x4AAAAAAAsitekey123", (await Json(await client.PostAsJsonAsync("/integrity/v1/challenge", new { app = id }))).GetProperty("webSiteKey").GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync($"/console/v1/integrity/apps/{id}/turnstile-secret", new { value = "not a key" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PutAsJsonAsync($"/console/v1/integrity/apps/{id}/turnstile-secret", new { value = "0x4AAAAAAAsecretsecret" })).StatusCode);
+        var withSecret = await client.GetStringAsync("/console/v1/integrity");
+        Assert.DoesNotContain("0x4AAAAAAAsecretsecret", withSecret);
+        Assert.NotEqual(JsonValueKind.Null, (await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("apps")[0].GetProperty("turnstileSecret").ValueKind);
+        Assert.Contains("Turnstile secret key of the app", await client.GetStringAsync("/console/v1/secrets"));
 
         // An id can be chosen when adding: valid, and not taken. Editing never changes it.
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/integrity/apps", new { name = "Bad", id = "Not An Id" })).StatusCode);

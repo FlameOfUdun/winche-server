@@ -17,7 +17,8 @@ public static class ConsoleIntegrityEndpoints
     // ---- The console's side ----
 
     public sealed record AppRequest(string? Name, string? Sdk, string? AndroidPackage, string? AppleBundleId, string? AppleTeamId, string? Id = null, bool? AppleDevelopment = null,
-        long? AndroidCloudProjectNumber = null, bool? AndroidSideloaded = null, string? AndroidDeviceIntegrity = null, string[]? AndroidCertificates = null);
+        long? AndroidCloudProjectNumber = null, bool? AndroidSideloaded = null, string? AndroidDeviceIntegrity = null, string[]? AndroidCertificates = null,
+        string? WebSiteKey = null, string[]? WebHostnames = null);
     /// <summary>The Google service account's key file (its JSON), or a reference to where it's kept (aws-sm:…).</summary>
     public sealed record ServiceAccountRequest(string? Value, string? Reference);
     public sealed record EnforcementRequest(Dictionary<string, string>? Enforcement, int? TokenMinutes, string? Reason);
@@ -31,7 +32,7 @@ public static class ConsoleIntegrityEndpoints
     private static object Counts(IEnumerable<IntegrityUsage.Usage> rows) => rows.ToDictionary(u => u.Product, u => new { today = u.Today, last7Days = u.Last7Days, lastSeen = u.LastSeen });
 
     private static object Body(WincheIntegrity integrity, IReadOnlyList<IntegrityUsage.Usage> usage, IReadOnlyDictionary<string, (long Keys, long Development, DateTimeOffset? LastUsed)> keys,
-        object? playServiceAccount, bool editable)
+        object? playServiceAccount, IReadOnlyDictionary<string, object?> turnstileSecrets, bool editable)
     {
         var s = integrity.Current;
         return new
@@ -44,7 +45,8 @@ public static class ConsoleIntegrityEndpoints
             {
                 id = a.Id, name = a.Name, sdk = a.Sdk, androidPackage = a.AndroidPackage, appleBundleId = a.AppleBundleId, appleTeamId = a.AppleTeamId,
                 appleDevelopment = a.AppleDevelopment, androidCloudProjectNumber = a.AndroidCloudProjectNumber, androidSideloaded = a.AndroidSideloaded,
-                androidDeviceIntegrity = a.AndroidDeviceIntegrity, androidCertificates = a.AndroidCertificates, createdAt = a.CreatedAt, usage = Counts(usage.Where(u => u.AppId == a.Id)),
+                androidDeviceIntegrity = a.AndroidDeviceIntegrity, androidCertificates = a.AndroidCertificates,
+                webSiteKey = a.WebSiteKey, webHostnames = a.WebHostnames, turnstileSecret = turnstileSecrets.GetValueOrDefault(a.Id), createdAt = a.CreatedAt, usage = Counts(usage.Where(u => u.AppId == a.Id)),
                 // Devices that attested a key (App Attest): how many, development builds among them, last proof.
                 devices = keys.TryGetValue(a.Id, out var k) ? new { count = k.Keys, development = k.Development, lastUsed = k.LastUsed } : null,
             }),
@@ -66,10 +68,25 @@ public static class ConsoleIntegrityEndpoints
         AndroidCloudProjectNumber = body.AndroidCloudProjectNumber,
         AndroidSideloaded = body.AndroidSideloaded ?? old?.AndroidSideloaded ?? false,
         AndroidDeviceIntegrity = Blank(body.AndroidDeviceIntegrity) ?? old?.AndroidDeviceIntegrity ?? "device",
+        WebSiteKey = Blank(body.WebSiteKey),
+        WebHostnames = body.WebHostnames is { } hosts
+            ? [.. hosts.Select(h => h.Trim().ToLowerInvariant()).Where(h => h.Length > 0).Distinct()]
+            : old?.WebHostnames ?? [],
         AndroidCertificates = body.AndroidCertificates is { } certs
             ? [.. certs.Select(c => c.Trim().TrimEnd('=')).Where(c => c.Length > 0).Distinct()]
             : old?.AndroidCertificates ?? [],
     };
+
+    /// <summary>Each app's Turnstile secret key: when it was set (never the key).</summary>
+    private static async Task<IReadOnlyDictionary<string, object?>> TurnstileSecretsAsync(WincheIntegrity integrity, IServiceProvider sp, CancellationToken ct)
+    {
+        var result = new Dictionary<string, object?>();
+        if (sp.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets) return result;
+        foreach (var a in integrity.Current.Apps.Where(a => a.WebSiteKey is not null))
+            if (await secrets.InfoAsync(WincheIntegrity.TurnstileSecret(a.Id), ct) is { } i)
+                result[a.Id] = new { setAt = i.SetAt, setBy = i.SetBy, reference = Api.ConsoleSecretsEndpoints.ReferenceOf(i) };
+        return result;
+    }
 
     private static async Task<object?> PlayServiceAccountAsync(IServiceProvider sp, CancellationToken ct)
     {
@@ -88,7 +105,8 @@ public static class ConsoleIntegrityEndpoints
             var admin = Tabs.ConsoleRolePolicy.Highest(http.User, options) >= Tabs.ConsoleRole.Admin;
             return Results.Json(Body(integrity, integrity.Available ? await usage.ReadAsync(ct) : [],
                 integrity.Available ? await store.CountKeysAsync(ct) : new Dictionary<string, (long, long, DateTimeOffset?)>(),
-                integrity.Available ? await PlayServiceAccountAsync(http.RequestServices, ct) : null, integrity.Available && admin));
+                integrity.Available ? await PlayServiceAccountAsync(http.RequestServices, ct) : null,
+                integrity.Available ? await TurnstileSecretsAsync(integrity, http.RequestServices, ct) : new Dictionary<string, object?>(), integrity.Available && admin));
         }).RequireAuthorization(ConsoleRoles.ViewerPolicy);
 
         var admin = app.MapGroup("/integrity").RequireAuthorization(ConsoleRoles.AdminPolicy);
@@ -129,7 +147,8 @@ public static class ConsoleIntegrityEndpoints
                 : current.Enforcement.ToDictionary(e => e.Key, e => e.Value == "enforce" ? "monitor" : e.Value);
             await integrity.SaveAsync(current with { Apps = rest, DebugTokens = [.. current.DebugTokens.Where(t => t.App != id)], Enforcement = enforcement },
                 Who(http.User), $"Removed the app {gone.Name}", ct);
-            await store.RemoveKeysAsync(id, ct);   // its devices' keys go too
+            await store.RemoveKeysAsync(id, ct);   // its devices' keys go too, and its Turnstile secret key
+            if (http.RequestServices.GetService<Winche.Secrets.SecretStore>() is { Available: true } kept) await kept.DeleteAsync(WincheIntegrity.TurnstileSecret(id), ct);
             return Results.NoContent();
         });
 
@@ -158,6 +177,20 @@ public static class ConsoleIntegrityEndpoints
                 return Problem("That isn't a Google service account's key file: in Google Cloud, IAM → Service accounts → the account → Keys → Add key → JSON.");
             if (await Api.ConsoleSecretsEndpoints.SetAsync(secrets, WincheIntegrity.PlayServiceAccountSecret, body.Value, body.Reference, http, ct) is { } refused) return refused;
             return Results.Json(await PlayServiceAccountAsync(http.RequestServices, ct));
+        });
+
+        // An app's Turnstile secret key (the browser check): the widget's secret key, or a reference to where it's kept.
+        admin.MapPut("/apps/{id}/turnstile-secret", async (string id, ServiceAccountRequest body, HttpContext http, WincheIntegrity integrity, CancellationToken ct) =>
+        {
+            if (integrity.Find(id) is not { } app) return Results.NotFound();
+            if (http.RequestServices.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets)
+                return Problem("Secrets need the project's master key: set WincheConfigOptions.MasterKey.");
+            if (string.IsNullOrWhiteSpace(body.Value) == string.IsNullOrWhiteSpace(body.Reference))
+                return Problem("Give the widget's secret key (Cloudflare dashboard → Turnstile → the widget) or a reference to where it's kept.");
+            if (body.Value is { Length: > 0 } v && !System.Text.RegularExpressions.Regex.IsMatch(v.Trim(), @"^[0-9]x[A-Za-z0-9_-]{10,200}$"))
+                return Problem("That isn't a Turnstile secret key (like 0x4AAAAAAA…).");
+            if (await Api.ConsoleSecretsEndpoints.SetAsync(secrets, WincheIntegrity.TurnstileSecret(app.Id), body.Value?.Trim(), body.Reference, http, ct) is { } refused) return refused;
+            return Results.NoContent();
         });
 
         admin.MapDelete("/play-service-account", async (HttpContext http, CancellationToken ct) =>
