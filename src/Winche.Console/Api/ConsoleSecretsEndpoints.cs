@@ -38,10 +38,26 @@ internal static class ConsoleSecretsEndpoints
     /// </summary>
     public static async Task<IResult?> SetAsync(SecretStore secrets, string name, string? value, string? reference, HttpContext http, CancellationToken ct)
     {
-        try { await secrets.SetFromAsync(name, value, reference, Who(http.User), MayUseAppCredentials(http), ct); return null; }
+        try
+        {
+            if (KeepIn(reference) is { } source)
+            {
+                if (string.IsNullOrEmpty(value)) return Problem("Give the value to keep in AWS.");
+                await secrets.SetInSourceAsync(name, source, value, Who(http.User), MayUseAppCredentials(http), ct);
+            }
+            else await secrets.SetFromAsync(name, value, reference, Who(http.User), MayUseAppCredentials(http), ct);
+            return null;
+        }
         catch (SecretReferenceException e) when (e.Code == "permission-denied") { return new WincheError(WincheErrorCode.PermissionDenied, e.Message, "secrets").ToResult(); }
         catch (SecretReferenceException e) { return Problem(e.Message); }
     }
+
+    /// <summary>A form's "keep it in AWS": the reference <c>keep:&lt;source&gt;</c> beside a value (<c>keep:aws-sm</c>), else null.</summary>
+    public static string? KeepIn(string? reference) =>
+        reference?.Trim() is { } r && r.StartsWith(KeepPrefix, StringComparison.Ordinal) && r.Length > KeepPrefix.Length ? r[KeepPrefix.Length..] : null;
+
+    /// <summary>What a form sends as the reference to keep the value it sends in a source, e.g. <c>keep:aws-sm</c>.</summary>
+    public const string KeepPrefix = "keep:";
 
     /// <summary>
     /// A bucket's secret key from a form: typed (<paramref name="value"/>) or read now through
@@ -49,7 +65,7 @@ internal static class ConsoleSecretsEndpoints
     /// </summary>
     public static async Task<(string? Value, IResult? Problem)> KeyFromAsync(IServiceProvider sp, string? value, string? reference, HttpContext http, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(reference)) return (string.IsNullOrEmpty(value) ? null : value, null);
+        if (string.IsNullOrWhiteSpace(reference) || KeepIn(reference) is not null) return (string.IsNullOrEmpty(value) ? null : value, null);   // kept in AWS once saved
         if (!string.IsNullOrEmpty(value)) return (null, Problem("Send the secret key or where to read it from, not both."));
         if (sp.GetService<SecretStore>() is not { Available: true } secrets) return (null, Problem("Secrets need the master key."));
         if (SecretReference.Parse(reference, out var bad) is not { } r) return (null, Problem(bad!));
@@ -59,9 +75,17 @@ internal static class ConsoleSecretsEndpoints
     }
 
     /// <summary>Keeps a location's secret key as <paramref name="reference"/> (before its move starts). Null when kept.</summary>
-    public static Task<IResult?> KeepKeyReferenceAsync(IServiceProvider sp, string secretName, string? reference, HttpContext http, CancellationToken ct) =>
-        string.IsNullOrWhiteSpace(reference) ? Task.FromResult<IResult?>(null)
-            : SetAsync(sp.GetRequiredService<SecretStore>(), secretName, null, reference, http, ct);
+    public static async Task<IResult?> KeepKeyReferenceAsync(IServiceProvider sp, string secretName, string? reference, HttpContext http, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(reference)) return null;
+        if (KeepIn(reference) is { } source)   // saved with the location as a value: now moved into AWS
+        {
+            try { await sp.GetRequiredService<SecretStore>().MoveToSourceAsync(secretName, source, Who(http.User), MayUseAppCredentials(http), ct); return null; }
+            catch (SecretReferenceException e) when (e.Code == "permission-denied") { return new WincheError(WincheErrorCode.PermissionDenied, e.Message, "secrets").ToResult(); }
+            catch (SecretReferenceException e) { return Problem(e.Message); }
+        }
+        return await SetAsync(sp.GetRequiredService<SecretStore>(), secretName, null, reference, http, ct);
+    }
 
     private static Dictionary<string, string> Locations(IEnumerable<Winche.Storage.Locations.ArchiveLocation?> list) =>
         list.OfType<Winche.Storage.Locations.ArchiveLocation>().Where(l => l.Kind != "code").DistinctBy(l => l.SecretName).ToDictionary(l => l.SecretName, l => l.Describe());
@@ -108,9 +132,12 @@ internal static class ConsoleSecretsEndpoints
             });
         });
 
-        group.MapGet("/sources", async (HttpContext http, IServiceProvider sp, CancellationToken ct) =>
+        group.MapGet("/sources", async (HttpContext http, IServiceProvider sp, bool? fresh, CancellationToken ct) =>
         {
             var secrets = sp.GetService<SecretStore>();
+            // What the key each source would use may do there (found without changing anything; remembered a few minutes).
+            var access = new Dictionary<string, SecretSourceAccess>();
+            foreach (var s in secrets?.Sources ?? []) access[s.Name] = await secrets!.AccessAsync(s.Name, MayUseAppCredentials(http), fresh == true, ct);
             var keys = new List<object>();
             foreach (var key in (secrets?.Sources ?? []).Select(s => s.Key).OfType<SourceKey>().DistinctBy(k => k.SecretName))
             {
@@ -126,7 +153,11 @@ internal static class ConsoleSecretsEndpoints
             {
                 available = secrets?.Available ?? false,
                 appCredentials = MayUseAppCredentials(http),
-                sources = (secrets?.Sources ?? []).OrderBy(s => s.Name).Select(s => new { name = s.Name, title = s.Title, hint = s.LocatorHint, key = s.Key?.SecretName }),
+                sources = (secrets?.Sources ?? []).OrderBy(s => s.Name).Select(s => new
+                {
+                    name = s.Name, title = s.Title, hint = s.LocatorHint, key = s.Key?.SecretName,
+                    access = access[s.Name] is var a ? new { read = a.Read, write = a.Write, delete = a.Delete, missing = a.Missing, problem = a.Problem } : null,
+                }),
                 keys,
             });
         });

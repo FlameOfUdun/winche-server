@@ -25,7 +25,9 @@ public static class ConsoleFunctionsEndpoints
     public sealed record ResourcesRequest(List<string>? Hashes);
     public sealed record NoteRequest(string? Note);
     public sealed record RunRequest(string? Name, JsonElement? Data, string? AsUid);
+    /// <summary>A secret from a form: a value, a reference, or a value with the reference <c>keep:aws-sm</c> (kept in AWS).</summary>
     public sealed record SecretRequest(string? Value, string? Reference = null);
+    public sealed record MoveSecretRequest(string? Store);
 
     internal static bool Capability(IServiceProvider sp, ConsoleRole? role) => role == ConsoleRole.Admin && sp.GetService<WincheFunctions>() is not null;
 
@@ -166,7 +168,7 @@ public static class ConsoleFunctionsEndpoints
             return Results.Json(new
             {
                 available = secrets.Available,
-                secrets = (await secrets.ListAsync(functions.Current, ct)).Select(s => new { name = s.Name, isSet = s.IsSet, setAt = s.SetAt, setBy = s.SetBy, usedBy = s.UsedBy, reference = s.Reference?.ToString() }),
+                secrets = (await secrets.ListAsync(functions.Current, ct)).Select(s => new { name = s.Name, isSet = s.IsSet, setAt = s.SetAt, setBy = s.SetBy, usedBy = s.UsedBy, reference = s.Reference?.ToString(), managed = s.Managed }),
             });
         });
 
@@ -192,7 +194,22 @@ public static class ConsoleFunctionsEndpoints
         {
             if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
             if (FunctionSecrets.Problem(name) is { } bad) return Problem(bad);
-            return await secrets.RemoveAsync(name, ct) ? Results.NoContent() : new WincheError(WincheErrorCode.NotFound, $"There's no secret {name}.").ToResult();
+            // One Winche keeps in AWS is deleted there too (recoverable for a week in Secrets Manager); AWS refusing stops it.
+            try { return await secrets.RemoveAsync(name, ct) ? Results.NoContent() : new WincheError(WincheErrorCode.NotFound, $"There's no secret {name}.").ToResult(); }
+            catch (Winche.Secrets.SecretReferenceException e) when (e.Code == "permission-denied") { return new WincheError(WincheErrorCode.PermissionDenied, e.Message, "secrets").ToResult(); }
+            catch (Winche.Secrets.SecretReferenceException e) { return Problem(e.Message); }
+        });
+
+        // Moves a value kept here into AWS (Secrets Manager or Parameter Store): only the reference stays here.
+        group.MapPost("/secrets/{name}/move", async (string name, MoveSecretRequest body, HttpContext http, FunctionSecrets secrets, CancellationToken ct) =>
+        {
+            if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } refused) return refused;
+            if (FunctionSecrets.Problem(name) is { } bad) return Problem(bad);
+            if (string.IsNullOrWhiteSpace(body.Store)) return Problem("Say where to keep it: aws-sm or aws-ssm.");
+            var store = http.RequestServices.GetRequiredService<Winche.Secrets.SecretStore>();
+            try { await store.MoveToSourceAsync(FunctionSecrets.Prefix + name, body.Store.Trim(), Who(http.User), ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct); return Results.NoContent(); }
+            catch (Winche.Secrets.SecretReferenceException e) when (e.Code == "permission-denied") { return new WincheError(WincheErrorCode.PermissionDenied, e.Message, "secrets").ToResult(); }
+            catch (Winche.Secrets.SecretReferenceException e) { return Problem(e.Message); }
         });
 
         // Runs a callable now, as a signed-out caller or as a given user id, showing its result and what it logged.

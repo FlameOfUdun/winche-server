@@ -42,7 +42,7 @@ builder.Services.AddWincheConfig(o =>
     o.MasterKey = server.MasterKey;
     o.PreviousMasterKeys = server.PreviousMasterKeys;
 });
-Winche.Secrets.Aws.SecretsAwsServiceCollectionExtensions.AddWincheSecretsAws(builder.Services);   // secrets may be references to AWS Secrets Manager or Parameter Store
+Winche.Secrets.Aws.SecretsAwsServiceCollectionExtensions.AddWincheSecretsAws(builder.Services, o => o.ServiceUrl = server.SecretsAwsServiceUrl);   // secrets may be references to AWS Secrets Manager or Parameter Store
 var deployed = ServerSettings.From(server);
 // The public address is the deployment's (Winche__PublicUrl): where DNS and the proxy put the server, and the issuer of
 // its tokens. The console shows it but can't change it.

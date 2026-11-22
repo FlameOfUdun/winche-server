@@ -92,6 +92,7 @@ Environment variables (or `appsettings.json`, section `Winche`):
 | `Winche__SetupCode` | Optional: the code first-run setup asks for. Unset, the server makes one and prints it in its log (`Setup code: …`) until someone has set it up. A wrong code takes a second to be refused. |
 | `Winche__ConsoleSignIn__Issuer`, `__ClientId`, `__ClientSecret` | Optional: console sign-in through an OpenID Connect provider from the start (also `__ButtonLabel`, `__RoleClaim`, `__AdminValues__0` (the groups that make server admins), `__PasswordsOnlyForAdmins`). It becomes the first of the console's identity providers; more are added in **Server settings → Authentication → Sign-in method**. Register `<PublicUrl>/console/v1/session/oidc/callback` at each provider, and optionally `<PublicUrl>/console/v1/session/oidc/backchannel-logout` as its back-channel logout URL. |
 | `Winche__TrustedProxies__0`, `__1`, … | Optional: the proxies whose `X-Forwarded-For`, `-Proto` and `-Host` are believed, as addresses or networks (`35.191.0.0/16`), or `*` for any. Default: loopback and private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`). Behind a proxy that connects from a public address, set it, or console sign-in fails (the log says which address the proxy came from). |
+| `Winche__SecretsPrefix`, `Winche__SecretsAwsServiceUrl` | Optional: what names of secrets Winche keeps in AWS start with (default `winche`, then the project's id), and another endpoint for Secrets Manager and Parameter Store (LocalStack, a VPC endpoint). |
 | `Winche__RequireTwoFactorForSettings` | Default `true`: changing settings needs two-step sign-in (a trusted provider's own second step counts). Set `false` only to try the server out. Also in **Server settings → Authentication → Sign-in method**. |
 | `Winche__FunctionsMaxMinutes` | Optional: the longest any function may run, in minutes (default 9, at most 60). Also in **Server settings → General**; projects set their default and each function's own time up to it (**Functions → Settings**). |
 | `Winche__FunctionsMaxMemoryMb`, `__FunctionsMaxConcurrency`, `__FunctionsSharedProcessMb`, `__FunctionsMaxProcesses` | Optional: the most memory a function may ask for (default 1024 MB), runs at once per project (default 8 per CPU, at least 8), each run's heap limit in a project's shared functions process (default 1024 MB), and functions processes per project (default 4). Also in **Server settings → General**. |
@@ -173,7 +174,12 @@ and a deploy reaches every task within seconds.
   password, a sync's or provider's client secret, a bucket's key), on one page. Each is a value kept encrypted and never
   shown again, or a reference read from AWS Secrets Manager or Parameter Store (`aws-ssm:/app/key`, with Test). A
   project can keep an AWS access key of its own for those (optional); without one, references use the server's AWS
-  credentials and region (`AWS_REGION`, the task's role), which only server admins may choose.
+  credentials and region (`AWS_REGION`, the task's role), which only server admins may choose. Where the key may write,
+  Winche can also keep a secret in AWS itself (Secrets Manager, or Parameter Store as a SecureString) under
+  `winche/<project>/<NAME>`: only the reference stays here; replacing writes a new version there, removing deletes it
+  there (Secrets Manager: recoverable for 7 days), and a value kept here can be moved. The console offers only what the
+  key may do, found without changing anything in AWS; the key needs, under that prefix, `secretsmanager:GetSecretValue`,
+  `CreateSecret`, `PutSecretValue`, `DeleteSecret` and/or `ssm:GetParameter`, `PutParameter`, `DeleteParameter`.
 - **Assets:** versioned content apps read (translations, pages, media): numbered releases published from the CLI
   (`winche assets deploy`, or a service account with the `assets` scope), channels apps follow (moving one back is a
   rollback), and rules per path. Kept in the project's files folder unless the console moves them to a bucket. Large
@@ -305,6 +311,8 @@ changes need two-step sign-in where settings do. Also new:
 - **Editing users in the console:** a user's dialog edits their name, photo (upload or link), email (at once, or by a
   link to the new address) and password. Users from a Keycloak with sync on are changed in Keycloak (the console
   refuses here); their photo can still be uploaded here.
+- **Secrets can be kept in AWS** by Winche (where the project's key, or the server's for its admins, may write), and
+  values kept here moved there (Winche.Secrets 2.1: a column is added to each project's secrets table at start).
 - **Forwarded headers are believed only from proxies on loopback and private networks.** **Behind a proxy that
   connects from a public address** (Google Cloud's load balancer, a CDN proxying straight to the server), set
   `Winche__TrustedProxies__0` to its network (`*`: any, as before) **before upgrading**, or console sign-in fails. A

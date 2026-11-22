@@ -46,6 +46,8 @@ public sealed class ServerFactory(string connection, string? files, params (stri
         builder.UseSetting("Winche:ConnectionString", connection);
         if (!extra.Any(e => e.Key == "Winche:MasterKey")) builder.UseSetting("Winche:MasterKey", "server-tests-master-key-0123456789abcdefghij");
         builder.UseSetting("Winche:PublicUrl", "http://localhost");
+        // AWS out of reach: tests never call the real one (what a key may do is asked of a port nobody answers on).
+        if (!extra.Any(e => e.Key == "Winche:SecretsAwsServiceUrl")) builder.UseSetting("Winche:SecretsAwsServiceUrl", "http://127.0.0.1:9");
         builder.UseSetting("Winche:FunctionPackagesPath", Path.Combine(AppContext.BaseDirectory, "SdkPackages"));   // the SDKs the tests carry
         if (!extra.Any(e => e.Key == "Winche:SetupCode")) builder.UseSetting("Winche:SetupCode", SetupCode);
         if (files is not null) builder.UseSetting("Winche:ProjectsPath", files);   // projects' files under this folder
@@ -1856,6 +1858,21 @@ public class ServerEmailTests(PostgresFixture pg)
         Assert.False(tried.GetProperty("ok").GetBoolean());
         Assert.Contains("isn't a Secrets Manager ARN", tried.GetProperty("problem").GetString());
         Assert.Equal(HttpStatusCode.NoContent, (await bob.PutAsJsonAsync("/console/v1/projects/wards/functions/secrets/OTHER", new { value = "plain" })).StatusCode);
+
+        // Keeping secrets in AWS: only what the key may do is offered. Here AWS can't be asked (no AWS in tests): no rights,
+        // and why; a request to keep one there anyway says so, and nothing changes.
+        var access = (await Json(await bob.GetAsync("/console/v1/projects/wards/secrets/sources?fresh=true"))).GetProperty("sources")[0].GetProperty("access");
+        Assert.False(access.GetProperty("write").GetBoolean());
+        Assert.False(string.IsNullOrEmpty(access.GetProperty("problem").GetString()));
+        Assert.Equal(HttpStatusCode.BadRequest, (await bob.PutAsJsonAsync("/console/v1/projects/wards/functions/secrets/KEPT", new { reference = "keep:aws-sm" })).StatusCode);   // no value
+        var notKept = await bob.PutAsJsonAsync("/console/v1/projects/wards/functions/secrets/KEPT", new { value = "v", reference = "keep:aws-sm" });
+        Assert.NotEqual(HttpStatusCode.NoContent, notKept.StatusCode);
+        Assert.Contains("AWS Secrets Manager", await notKept.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.BadRequest, (await bob.PutAsJsonAsync("/console/v1/projects/wards/functions/secrets/KEPT", new { value = "v", reference = "keep:vault" })).StatusCode);
+        var moved = await bob.PostAsJsonAsync("/console/v1/projects/wards/functions/secrets/OTHER/move", new { store = "aws-ssm" });
+        Assert.NotEqual(HttpStatusCode.NoContent, moved.StatusCode);
+        var still = (await Json(await bob.GetAsync("/console/v1/projects/wards/functions/secrets"))).GetProperty("secrets").EnumerateArray().Single(x => x.GetProperty("name").GetString() == "OTHER");
+        Assert.Equal((JsonValueKind.Null, false), (still.GetProperty("reference").ValueKind, still.GetProperty("managed").GetBoolean()));   // still a value here
         // The Secrets page's list of what the products keep: functions' own and the source keys are listed elsewhere.
         var kept = await Json(await bob.GetAsync("/console/v1/projects/wards/secrets"));
         Assert.True(kept.GetProperty("available").GetBoolean());

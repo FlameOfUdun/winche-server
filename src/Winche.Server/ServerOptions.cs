@@ -60,6 +60,12 @@ public sealed class ServerOptions
     /// </summary>
     public string[] TrustedProxies { get; set; } = [];
 
+    /// <summary>Another endpoint for AWS Secrets Manager and Parameter Store (LocalStack, a VPC endpoint); unset: AWS's own.</summary>
+    public string? SecretsAwsServiceUrl { get; set; }
+
+    /// <summary>What names of secrets Winche keeps in AWS start with, before the project's id: default <c>winche</c> (<c>winche/&lt;project&gt;/MAIL_KEY</c>).</summary>
+    public string SecretsPrefix { get; set; } = "winche";
+
     /// <summary>The networks forwarded headers are believed from (<see cref="TrustedProxies"/>, or the default); null: any.</summary>
     public IReadOnlyList<System.Net.IPNetwork>? ProxyNetworks()
     {

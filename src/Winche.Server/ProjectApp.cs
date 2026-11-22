@@ -96,7 +96,9 @@ internal static class ProjectApp
 
         // Settings the console changes, and its encrypted secrets.
         builder.Services.AddWincheConfig(o => { o.ConnectionString = config; o.MasterKey = server.MasterKey; o.PreviousMasterKeys = server.PreviousMasterKeys; });
-        Winche.Secrets.Aws.SecretsAwsServiceCollectionExtensions.AddWincheSecretsAws(builder.Services);   // secrets may be references to AWS Secrets Manager or Parameter Store
+        Winche.Secrets.Aws.SecretsAwsServiceCollectionExtensions.AddWincheSecretsAws(builder.Services, o => o.ServiceUrl = server.SecretsAwsServiceUrl);   // secrets may be references to AWS Secrets Manager or Parameter Store
+        // Kept in AWS by Winche: under <prefix>/<project>/ (a key may be allowed to write there only).
+        Winche.Secrets.SecretsServiceCollectionExtensions.AddWincheSecrets(builder.Services, o => o.ManagedPrefix = $"{server.SecretsPrefix.Trim('/')}/{project.Id}/");
 
         // Users: Winche Auth (email and password and two-step sign-in to start with; everything else in the console).
         builder.Services.AddWincheAuth(o =>

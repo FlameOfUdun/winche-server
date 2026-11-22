@@ -61,7 +61,7 @@ public sealed class ServerConsoleApp(ServerOptions server, ServerSettingsProvide
             o.MasterKey = server.MasterKey;
             o.PreviousMasterKeys = server.PreviousMasterKeys;
         });
-        Winche.Secrets.Aws.SecretsAwsServiceCollectionExtensions.AddWincheSecretsAws(builder.Services);   // secrets may be references to AWS Secrets Manager or Parameter Store
+        Winche.Secrets.Aws.SecretsAwsServiceCollectionExtensions.AddWincheSecretsAws(builder.Services, o => o.ServiceUrl = server.SecretsAwsServiceUrl);   // secrets may be references to AWS Secrets Manager or Parameter Store
         builder.Services.AddSingleton<Winche.Console.Project.IWincheProjects>(new ServerProjectsForConsole(projects, null, server));
         // Server settings → Authentication runs on the accounts' own services (each request gets them first): these
         // say they exist here too, so the console's endpoints for them map.
