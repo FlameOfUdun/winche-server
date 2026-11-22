@@ -157,7 +157,7 @@ public static class ConsoleFunctionsEndpoints
             catch (FunctionsUnavailableException ex) { return Problem(ex.Message); }
         }).WithMetadata(ci);
 
-        // Secrets functions read with ctx.secrets.get: names, when and by whom they were set, which functions declare them.
+        // Secrets functions read (secrets.define, key.value()): names, when and by whom they were set, which functions list them.
         // Values go in and never come back out. Setting or removing one needs two-step sign-in where settings do. Admins
         // only: a CI token deploys, it doesn't handle secrets.
         group.MapGet("/secrets", async (WincheFunctions functions, FunctionSecrets secrets, CancellationToken ct) =>
