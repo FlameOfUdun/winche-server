@@ -37,7 +37,7 @@ public static class ConsoleFunctionsEndpoints
     private static object Info(FunctionInfo f, WincheFunctions? functions = null) => new
     {
         name = f.Name, kind = f.Trigger.Kind, events = f.Trigger.Events, path = f.Trigger.Path, cron = f.Trigger.Cron, timeZone = f.Trigger.TimeZone,
-        description = f.Trigger.Describe(), timeoutSeconds = functions?.TimeoutFor(f) ?? f.TimeoutSeconds, codeTimeoutSeconds = f.CodeTimeoutSeconds,
+        description = f.Describe(), timeoutSeconds = functions?.TimeoutFor(f) ?? f.TimeoutSeconds, codeTimeoutSeconds = f.CodeTimeoutSeconds,
         secrets = f.Secrets ?? [], plugin = f.Plugin, integrity = f.RequireIntegrity,
         about = f.About, input = f.Input?.DeepClone(), output = f.Output?.DeepClone(), example = f.ExampleInput,
         // Its instances: what's in force (and from where: setting, code, default), and what its code says.
