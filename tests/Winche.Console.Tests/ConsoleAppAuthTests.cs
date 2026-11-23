@@ -112,7 +112,7 @@ public class ConsoleAppAuthTests(PostgresFixture fx) : IAsyncLifetime
         var outbox = app.Services.GetRequiredService<RecordingEmailSender>();
 
         var templates = (await Json(await client.GetAsync("/console/v1/auth/email-templates"))).GetProperty("templates").EnumerateArray().ToArray();
-        Assert.Equal(["verifyEmail", "resetPassword", "signIn", "emailChanged"], templates.Select(t => t.GetProperty("kind").GetString()));
+        Assert.Equal(["verifyEmail", "resetPassword", "signIn", "emailChanged", "providerLinked"], templates.Select(t => t.GetProperty("kind").GetString()));
         Assert.False(templates[1].GetProperty("isCustom").GetBoolean());
 
         var bad = await client.PutAsJsonAsync("/console/v1/auth/email-templates/resetPassword", new { subject = "Reset", body = "no link" });
