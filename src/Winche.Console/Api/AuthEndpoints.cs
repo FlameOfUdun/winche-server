@@ -24,6 +24,7 @@ public static class AuthEndpoints
     public sealed record ForgotPasswordRequest(string Email);
     /// <param name="Code">The code from the reset link (<c>?mode=resetPassword&amp;code=…</c>).</param>
     public sealed record ResetPasswordBody(string? Code, string? NewPassword);
+    public sealed record RemoveSignInMethodBody(string? Code);
 
     // manageUsers/invites/etc. describe the Identity provider (role-gated client-side); database/storage are
     // per-user (tab enabled AND the user's role meets its MinRole).
@@ -249,6 +250,21 @@ public static class AuthEndpoints
                 return Results.Ok();
             }
             catch (Winche.Auth.AuthException ex) when (ex.Code == Winche.Auth.AuthErrorCodes.WeakPassword) { return Results.BadRequest(new { error = ex.Message }); }
+            catch (Winche.Auth.AuthException) { return Results.BadRequest(new { error = "Invalid or expired link." }); }
+        });
+
+        // A "sign-in method added" email's link: removes that provider from the account and signs every device out. Only
+        // those links (a reset's or any other code is refused, and left as it was). Anonymous.
+        auth.MapPost("/remove-sign-in-method", async (RemoveSignInMethodBody body, ConsoleAccounts accounts, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(body.Code)) return Results.BadRequest(new { error = "Invalid or expired link." });
+            try
+            {
+                var info = await accounts.UseAsync(a => a.CheckActionCodeAsync(body.Code, ct));
+                if (info.Mode != "unlinkProvider") return Results.BadRequest(new { error = "Invalid or expired link." });
+                await accounts.UseAsync(a => a.ApplyActionCodeAsync(body.Code, ct));
+                return Results.Ok();
+            }
             catch (Winche.Auth.AuthException) { return Results.BadRequest(new { error = "Invalid or expired link." }); }
         });
 

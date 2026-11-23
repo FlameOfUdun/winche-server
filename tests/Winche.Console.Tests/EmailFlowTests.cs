@@ -66,6 +66,23 @@ public class EmailFlowTests(PostgresFixture fx) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_remove_a_sign_in_method_link_takes_only_its_own_codes()
+    {
+        await fx.ResetAuthAsync();
+        using var app = new ConsoleAppFactory(fx);
+        var fake = new FakeEmailSender();
+        using var emailApp = WithEmail(app, fake);
+        using var client = emailApp.CreateClient();
+        await client.SetupAdminAsync();
+        await client.PostAsJsonAsync("/console/v1/session/forgot-password", new { email = "admin@example.com" });
+        var resetCode = QueryParam(fake.LastResetLink!, "code");
+        // A reset link's code isn't a "remove it" one: refused, and not used up.
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/session/remove-sign-in-method", new { code = resetCode })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/console/v1/session/remove-sign-in-method", new { code = "x" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/console/v1/session/reset-password", new { code = resetCode, newPassword = "Reset3d!" })).StatusCode);
+    }
+
+    [Fact]
     public async Task Direct_create_requires_a_password()
     {
         await fx.ResetAuthAsync();
