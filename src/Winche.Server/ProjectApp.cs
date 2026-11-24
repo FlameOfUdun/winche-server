@@ -140,6 +140,7 @@ internal static class ProjectApp
         });
         builder.Services.AddHostedService(sp => new FunctionsLongestRun(settings, sp.GetRequiredService<Winche.Functions.FunctionsOptions>()));
         builder.Services.AddWincheFunctionsForDatabase().AddWincheFunctionsForStorage().AddWincheFunctionsForAuth();
+        Winche.Functions.Realtime.RealtimeFunctionsExtensions.AddWincheFunctionsForRealtime(builder.Services);   // realtime.* and onRealtime.closed
         Winche.Functions.Assets.AssetsFunctionsExtensions.AddWincheFunctionsForAssets(builder.Services);   // ctx.assets, assets triggers
 
         // Documents: REST and live (WebSocket) APIs; rules start as "deny everything" until published in the console.
