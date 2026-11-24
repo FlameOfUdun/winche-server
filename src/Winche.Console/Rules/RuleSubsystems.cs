@@ -10,4 +10,5 @@ public static class RuleSubsystems
     public const string Database = "database";
     public const string Storage = "storage";
     public const string Assets = "assets";
+    public const string Realtime = "realtime";
 }

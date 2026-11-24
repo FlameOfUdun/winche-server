@@ -15,6 +15,8 @@ using Winche.Functions;
 using Winche.Functions.Auth;
 using Winche.Functions.Database;
 using Winche.Functions.Storage;
+using Winche.Realtime;
+using Winche.Realtime.AspNetCore;
 using Winche.Storage.AspNetCore.DependencyInjection;
 using Winche.Storage.AspNetCore.Rest.DependencyInjection;
 using Winche.Storage.DependencyInjection;
@@ -175,6 +177,11 @@ internal static class ProjectApp
             o.UseSettings();
         });
 
+        // Realtime: lists, channels and presence over its own socket, in the project's database. Rules start as "deny
+        // everything" until published.
+        builder.Services.AddWincheRealtime(o => o.ConnectionString = conn);
+        builder.Services.AddWincheRealtimeWsApi();
+
         // The project's console API (its calls come as /console/v1/projects/<id>/…). Accounts are the server's: one sign-in, every project.
         builder.Services.AddWincheConsole(o =>
         {
@@ -186,6 +193,7 @@ internal static class ProjectApp
             o.AddDatabaseTab(b => { b.UseRulesEditor(); b.UseLogs(); b.UseHistory(); });
             o.AddStorageTab(b => { b.UseRulesEditor(); b.UseLogs(); });
             o.AddAssetsTab(b => b.UseRulesEditor());
+            o.AddRealtimeTab(b => b.UseRulesEditor());
             o.AddAuthenticationTab();
             o.AddLogsTab();
             // Console emails: the server's own SMTP server (Server settings), never this project's.
@@ -262,6 +270,7 @@ internal static class ProjectApp
         app.MapWincheFunctions();
         Winche.Integrity.AspNetCore.IntegrityEndpoints.MapWincheIntegrity(app);   // POST /integrity/v1/exchange: apps trade proof for an Integrity token
         app.MapWincheAssets();
+        app.MapWincheRealtimeWsApi();   // /realtime/v1/ws
         Winche.Console.Apps.AppSetupEndpoints.MapWincheAppSetup(app);   // GET /.well-known/winche: winche configure reads it
         app.MapGet("/", () => Results.Redirect($"{ServerOptions.ConsolePath}/projects/{project.Id}"));   // people opening the project's address
 

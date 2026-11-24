@@ -84,6 +84,15 @@ public static class WincheConsoleExtensions
                     options.AssetsRulesEditor.ApplyPersistedRulesOnStartup,
                     options.AssetsRulesEditor.SyncInterval));
             }
+
+            if (options.RealtimeRulesEditor is not null)
+            {
+                services.AddSingleton(new RuleSubsystemRegistration(
+                    RuleSubsystems.Realtime,
+                    Winche.Realtime.ServiceCollectionExtensions.RulesKey,
+                    options.RealtimeRulesEditor.ApplyPersistedRulesOnStartup,
+                    options.RealtimeRulesEditor.SyncInterval));
+            }
         }
 
         if (options.AnyLogs)

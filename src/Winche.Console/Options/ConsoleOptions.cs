@@ -192,6 +192,8 @@ public sealed class ConsoleOptions
     internal RulesEditorOptions? StorageRulesEditor => StorageTab?.RulesEditor;
     internal BuiltInTabConfig? AssetsTab { get; private set; }
     internal RulesEditorOptions? AssetsRulesEditor => AssetsTab?.RulesEditor;
+    internal BuiltInTabConfig? RealtimeTab { get; private set; }
+    internal RulesEditorOptions? RealtimeRulesEditor => RealtimeTab?.RulesEditor;
 
     /// <summary>Enable the Database browser tab (requires AddWincheDatabase). Configure its min role and optional rules editor.</summary>
     public ConsoleOptions AddDatabaseTab(Action<BuiltInTabBuilder>? configure = null)
@@ -215,6 +217,15 @@ public sealed class ConsoleOptions
         AssetsTab = BuildBuiltInTab(configure, AssetsTab, "Assets");
         if (AssetsTab.History || AssetsTab.Logs)
             throw new InvalidOperationException("The Assets tab has no history or logs of its own: its rules editor only.");
+        return this;
+    }
+
+    /// <summary>Enable the Realtime page (requires AddWincheRealtime): its lists, presence, rules editor and settings.</summary>
+    public ConsoleOptions AddRealtimeTab(Action<BuiltInTabBuilder>? configure = null)
+    {
+        RealtimeTab = BuildBuiltInTab(configure, RealtimeTab, "Realtime");
+        if (RealtimeTab.History || RealtimeTab.Logs)
+            throw new InvalidOperationException("The Realtime tab has no history or logs of its own: its rules editor only.");
         return this;
     }
 

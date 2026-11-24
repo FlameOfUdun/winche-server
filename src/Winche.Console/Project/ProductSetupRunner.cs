@@ -26,6 +26,7 @@ public sealed class ProductSetupRunner(ProjectSetup project, IServiceProvider se
         [WincheProducts.Authentication] = [WincheProductNames.Hooks, WincheProductNames.Authentication],
         [WincheProducts.Functions] = [WincheProductNames.Functions],
         [WincheProducts.Assets] = [WincheProductNames.Hooks, Winche.Assets.AssetsServiceCollectionExtensions.Product],
+        [WincheProducts.Realtime] = [Winche.Realtime.RealtimeProductSetup.Name],
     };
 
     private readonly ConcurrentDictionary<string, ProductSetupRun> _runs = new();
