@@ -179,7 +179,14 @@ internal static class ProjectApp
 
         // Realtime: lists, channels and presence over its own socket, in the project's database. Rules start as "deny
         // everything" until published.
-        builder.Services.AddWincheRealtime(o => o.ConnectionString = conn);
+        // Closed lists can be archived into the project's storage (Project settings → Realtime turns it on).
+        var realtimeArchive = new ProjectRealtimeArchive();
+        builder.Services.AddWincheRealtime(o =>
+        {
+            o.ConnectionString = conn;
+            o.UseSettings();
+            o.UseArchive(realtimeArchive, on: false);
+        });
         builder.Services.AddWincheRealtimeWsApi();
 
         // The project's console API (its calls come as /console/v1/projects/<id>/…). Accounts are the server's: one sign-in, every project.
@@ -274,6 +281,7 @@ internal static class ProjectApp
         Winche.Console.Apps.AppSetupEndpoints.MapWincheAppSetup(app);   // GET /.well-known/winche: winche configure reads it
         app.MapGet("/", () => Results.Redirect($"{ServerOptions.ConsolePath}/projects/{project.Id}"));   // people opening the project's address
 
+        realtimeArchive.Services = app.Services;
         await app.StartAsync(ct);
         return (app, inProcess);
     }

@@ -3,6 +3,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Winche.Server.Tests;
@@ -22,7 +23,7 @@ public class RealtimeTests(PostgresFixture pg)
     public async Task A_project_starts_realtime_and_its_app_users_append_and_follow_lists()
     {
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
-        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files);
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
         var console = server.CreateClient();
         await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" });
         await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" });
@@ -64,6 +65,24 @@ public class RealtimeTests(PostgresFixture pg)
             ["items"] = new JsonArray(new JsonObject { ["key"] = "someone-else:1", ["payload"] = Convert.ToBase64String([1]) }),
         });
         Assert.Equal("permission-denied", (string?)refused["error"]!["code"]);
+
+        // Archiving closed lists: off until Project settings turn it on; into the project's storage, once it's started.
+        var settings = (await Json(await console.GetAsync("/console/v1/projects/clinic/settings/realtime")));
+        Assert.False(settings.GetProperty("settings").GetProperty("archiveClosedLists").GetBoolean());
+        var on = System.Text.Json.Nodes.JsonNode.Parse(settings.GetProperty("settings").GetRawText())!.AsObject();
+        on["archiveClosedLists"] = true;
+        await Json(await console.PutAsJsonAsync("/console/v1/projects/clinic/settings/realtime", new { settings = on, reason = "Archive" }));
+        var services = server.ProjectServices("clinic");
+        var options = services.GetRequiredService<Winche.Realtime.WincheRealtimeOptions>();
+        Assert.True(options.ArchiveClosedLists);
+        var list = await services.GetRequiredService<Winche.Realtime.RealtimeStore>().CloseAsync("sessions/s1");
+        using var gz = new MemoryStream([1, 2, 3]);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => options.Archive!.ArchiveAsync(list, gz, default));   // no storage yet: kept
+        await TestProjects.StartAsync(console, "clinic", "storage");
+        gz.Position = 0;
+        await options.Archive!.ArchiveAsync(list, gz, default);
+        var file = await services.GetRequiredService<Winche.Storage.Services.FileStorage>().GetAsync("realtime/sessions/s1/archive.ndjson.gz");
+        Assert.Equal(("application/gzip", 3L), (file!.MimeType, file.SizeBytes));
 
         // Integrity can be enforced on it like the other products.
         var integrity = await Json(await console.GetAsync("/console/v1/projects/clinic/integrity"));

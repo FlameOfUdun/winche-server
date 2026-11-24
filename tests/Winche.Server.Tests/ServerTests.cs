@@ -39,6 +39,10 @@ public sealed class ServerFactory(string connection, string? files, params (stri
     /// <summary>The first-run setup code the test servers use (a deployment's Winche__SetupCode).</summary>
     public const string SetupCode = "TEST-SETUP-CODE";
 
+    /// <summary>A running project's own services (its products), for checking what an API call did.</summary>
+    internal IServiceProvider ProjectServices(string id) =>
+        Services.GetRequiredService<ProjectHosts>().Find(id)?.App.Services ?? throw new InvalidOperationException($"Project {id} isn't running.");
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         foreach (var (k, v) in extra) builder.UseSetting(k, v);
