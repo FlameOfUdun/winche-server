@@ -300,7 +300,14 @@ public static class WincheConsoleExtensions
                 throw new InvalidOperationException("AddAssetsTab() requires AddWincheAssets() — the Assets page manages its releases.");
             group.MapConsoleAssetsEndpoints();
         }
-        if (options.DatabaseRulesEditor is not null || options.StorageRulesEditor is not null || options.AssetsRulesEditor is not null)
+        if (options.RealtimeTab is not null)
+        {
+            if (isService?.IsService(typeof(Winche.Realtime.RealtimeStore)) == false)
+                throw new InvalidOperationException("AddRealtimeTab() requires AddWincheRealtime(): the Realtime page shows its lists.");
+            group.MapConsoleRealtimeEndpoints();
+        }
+        if (options.DatabaseRulesEditor is not null || options.StorageRulesEditor is not null || options.AssetsRulesEditor is not null
+            || options.RealtimeRulesEditor is not null)
         {
             group.MapConsoleRulesEndpoints();
         }

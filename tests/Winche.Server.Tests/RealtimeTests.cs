@@ -66,6 +66,15 @@ public class RealtimeTests(PostgresFixture pg)
         });
         Assert.Equal("permission-denied", (string?)refused["error"]!["code"]);
 
+        // The console's Realtime page: the lists, a list's items as text, who's present; an admin closes and deletes.
+        var lists = await Json(await console.GetAsync("/console/v1/projects/clinic/realtime/lists?prefix=sessions/"));
+        Assert.Equal(("sessions/s1", "open", 1), (lists.GetProperty("lists")[0].GetProperty("path").GetString(), lists.GetProperty("lists")[0].GetProperty("state").GetString(), lists.GetProperty("lists")[0].GetProperty("count").GetInt32()));
+        var page = await Json(await console.GetAsync("/console/v1/projects/clinic/realtime/lists/items?path=sessions/s1"));
+        Assert.Equal(("start", uid), (page.GetProperty("items")[0].GetProperty("text").GetString(), page.GetProperty("items")[0].GetProperty("by").GetString()));
+        Assert.Equal(0, (await Json(await console.GetAsync("/console/v1/projects/clinic/realtime/presence?path=sessions/s1"))).GetProperty("members").GetArrayLength());
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await console.DeleteAsync("/console/v1/projects/clinic/realtime/lists?path=sessions/s1")).StatusCode);   // open: close it first
+        Assert.True((await Json(await console.GetAsync("/console/v1/projects/clinic/access"))).GetProperty("capabilities").GetProperty("realtime").GetBoolean());
+
         // Archiving closed lists: off until Project settings turn it on; into the project's storage, once it's started.
         var settings = (await Json(await console.GetAsync("/console/v1/projects/clinic/settings/realtime")));
         Assert.False(settings.GetProperty("settings").GetProperty("archiveClosedLists").GetBoolean());

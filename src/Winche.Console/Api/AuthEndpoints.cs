@@ -49,6 +49,7 @@ public static class AuthEndpoints
         hooks = ConsoleHooksEndpoints.Capability(sp, role),
         functions = ConsoleFunctionsEndpoints.Capability(sp, role),
         assets = ConsoleAssetsEndpoints.Capability(options, role),
+        realtime = ConsoleRealtimeEndpoints.Capability(options, role),
         consolePages = role is not null && sp.GetService<Winche.Functions.WincheFunctions>() is not null,
         // The Integrity page (the project's apps): anyone with a role, where Integrity is set up (project setup).
         integrity = role is not null && sp.GetService<Winche.Integrity.WincheIntegrity>() is { Available: true },
