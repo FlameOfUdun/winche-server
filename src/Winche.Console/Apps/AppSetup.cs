@@ -25,6 +25,7 @@ public static class AppSetup
         if (Has(typeof(Winche.Auth.IWincheAuth)) && Started("authentication")) list.Add(new("auth", "/auth/v1"));
         if (Has(typeof(Winche.Functions.WincheFunctions)) && Started("functions")) list.Add(new("functions", "/functions/v1"));
         if (Has(typeof(Winche.Assets.WincheAssets)) && Started("assets")) list.Add(new("assets", "/assets/v1"));
+        if (Has(typeof(Winche.Realtime.RealtimeStore)) && Started("realtime")) list.Add(new("realtime", "/realtime/v1", "/realtime/v1/ws"));
         var providers = services.GetService<Winche.Auth.WincheAuthOptions>()?.IdentityProviders
             .Select(p => new WincheAppSetupProvider(p.Name, p.Kind, p.DisplayName ?? p.Name, [.. p.Audiences]))
             .ToList() ?? [];

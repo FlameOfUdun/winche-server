@@ -93,6 +93,9 @@ public class RealtimeTests(PostgresFixture pg)
         var file = await services.GetRequiredService<Winche.Storage.Services.FileStorage>().GetAsync("realtime/sessions/s1/archive.ndjson.gz");
         Assert.Equal(("application/gzip", 3L), (file!.MimeType, file.SizeBytes));
 
+        // Apps find it in the project's setup (winche configure).
+        Assert.Contains("/realtime/v1/ws", await server.CreateClient().GetStringAsync("/projects/clinic/.well-known/winche"));
+
         // Integrity can be enforced on it like the other products.
         var integrity = await Json(await console.GetAsync("/console/v1/projects/clinic/integrity"));
         Assert.Contains("realtime", integrity.GetRawText());
