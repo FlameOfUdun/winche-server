@@ -94,6 +94,25 @@ public class RealtimeTests(PostgresFixture pg)
         Assert.Matches(@"^realtime/sessions/s1/\d{8}T\d{9}Z\.ndjson\.gz$", Winche.Server.ProjectRealtimeArchive.PathOf(list));
         Assert.Equal(("application/gzip", 3L), (file!.MimeType, file.SizeBytes));
 
+        // Archives are the console's and functions' only: app users can't reach realtime/ whatever the Storage rules say.
+        var allowAll = await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/rules/text/parse", new { text = "match {path=**} { allow read, write: if true; }" }));
+        await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/rules/storage", new { rulesJson = allowAll.GetProperty("rulesJson").GetString(), note = "Test mode" }));
+        string FileUrl(string path) => "/projects/clinic/files/v1/" + Convert.ToBase64String(Encoding.UTF8.GetBytes(path)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        HttpRequestMessage AsAnn(HttpMethod method, string url, object? body = null) =>
+            new(method, url) { Headers = { { "Authorization", $"Bearer {token}" } }, Content = body is null ? null : JsonContent.Create(body) };
+        var archived = Winche.Server.ProjectRealtimeArchive.PathOf(list);
+        Assert.Equal(System.Net.HttpStatusCode.OK, (await app.SendAsync(AsAnn(HttpMethod.Put, FileUrl("notes/a.txt"), new { mimeType = "text/plain", sizeBytes = 1 }))).StatusCode);   // the rules do allow everything
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await app.SendAsync(AsAnn(HttpMethod.Get, FileUrl(archived)))).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await app.SendAsync(AsAnn(HttpMethod.Post, FileUrl(archived) + ":download"))).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await app.SendAsync(AsAnn(HttpMethod.Put, FileUrl("realtime/sessions/x/forged.ndjson.gz"), new { mimeType = "application/gzip", sizeBytes = 1 }))).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await app.SendAsync(AsAnn(HttpMethod.Delete, FileUrl("realtime")))).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await app.SendAsync(AsAnn(HttpMethod.Post, FileUrl("realtime/sessions") + ":list"))).StatusCode);
+        var core = services.GetRequiredService<Winche.Storage.Services.FileStorage>();
+        Assert.NotNull(await core.GetAsync(archived));   // still there, for the console
+        var top = await Winche.Server.ServerOnlyFiles.Wrap(core).ListAsync("");   // the top, as the rules would let it be listed
+        Assert.Contains("notes", top.Prefixes);
+        Assert.DoesNotContain(top.Prefixes, p => p.StartsWith("realtime"));
+
         // Apps find it in the project's setup (winche configure).
         Assert.Contains("/realtime/v1/ws", await server.CreateClient().GetStringAsync("/projects/clinic/.well-known/winche"));
 

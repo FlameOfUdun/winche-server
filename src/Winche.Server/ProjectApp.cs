@@ -169,6 +169,8 @@ internal static class ProjectApp
                 fs.RoutePrefix = SignedFiles;   // links to files kept on the server's disk: storage's own path
             });
         });
+        // realtime/ (Realtime's archives) is the server's: app users can't reach it, whatever the Storage rules say.
+        ServerOnlyFiles.Guard(builder.Services);
 
         // Assets: versioned content apps read (translations, pages, media), published from the CLI; kept in the project's
         // files folder unless the console moves them to a bucket. Rules start as "deny everything" until published.
