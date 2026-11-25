@@ -90,7 +90,8 @@ public class RealtimeTests(PostgresFixture pg)
         await TestProjects.StartAsync(console, "clinic", "storage");
         gz.Position = 0;
         await options.Archive!.ArchiveAsync(list, gz, default);
-        var file = await services.GetRequiredService<Winche.Storage.Services.FileStorage>().GetAsync("realtime/sessions/s1/archive.ndjson.gz");
+        var file = await services.GetRequiredService<Winche.Storage.Services.FileStorage>().GetAsync(Winche.Server.ProjectRealtimeArchive.PathOf(list));
+        Assert.Matches(@"^realtime/sessions/s1/\d{8}T\d{9}Z\.ndjson\.gz$", Winche.Server.ProjectRealtimeArchive.PathOf(list));
         Assert.Equal(("application/gzip", 3L), (file!.MimeType, file.SizeBytes));
 
         // Apps find it in the project's setup (winche configure).

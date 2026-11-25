@@ -7,14 +7,14 @@ namespace Winche.Server;
 
 /// <summary>
 /// Where a project's closed Realtime lists go when its settings ask for archiving: one file each in the project's
-/// storage, <c>realtime/{path}/archive.ndjson.gz</c>. Storage not started: the list stays for a later sweep.
+/// storage, <c>realtime/{path}/{closed at}.ndjson.gz</c>. Storage not started: the list stays for a later sweep.
 /// </summary>
 internal sealed class ProjectRealtimeArchive : IRealtimeArchive
 {
     /// <summary>The project app's services, set once it's built.</summary>
     public IServiceProvider? Services { get; set; }
 
-    public static string PathOf(string list) => "realtime/" + RealtimeArchives.FileName(list);
+    public static string PathOf(RealtimeListInfo list) => "realtime/" + RealtimeArchives.FileName(list);
 
     public async Task ArchiveAsync(RealtimeListInfo list, Stream file, CancellationToken ct)
     {
@@ -25,6 +25,6 @@ internal sealed class ProjectRealtimeArchive : IRealtimeArchive
         {
             ["list"] = list.Path, ["items"] = list.Count, ["closedAt"] = list.ClosedAt?.ToString("O"),
         };
-        await services.GetRequiredService<FileStorage>().WriteAsync(PathOf(list.Path), file, "application/gzip", file.Length, metadata, ct: ct);
+        await services.GetRequiredService<FileStorage>().WriteAsync(PathOf(list), file, "application/gzip", file.Length, metadata, ct: ct);
     }
 }
