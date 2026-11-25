@@ -190,6 +190,15 @@ and a deploy reaches every task within seconds.
   reference to AWS): releases name them by address, apps never see it and get links that work for a few minutes.
   **Assets → Files** lists what apps get on each channel, with previews; admins can make a release there too (add,
   replace or take out files), and a later deploy from the repository's folder asks before taking those out.
+- **Realtime:** live, ordered lists apps append to and follow (each item once, in order, through reconnects), channels
+  for messages that aren't kept, and presence (who's connected, and what to append when they drop), over one socket at
+  `/projects/<id>/realtime/v1/ws` (the Dart SDK `winche_realtime`). Rules per path: a path's channels at
+  `{path}/channels/{name}`, its presence at `{path}/presence`. **Realtime → Lists** shows each list's items and who's
+  present; admins close and delete lists (with two-step sign-in, where settings need it). Lists idle for a while close,
+  and closed lists are kept for a time, then deleted; with archiving on (**Realtime → Settings**, needs Storage
+  started) each is first kept as one file in the project's Storage under `realtime/`, a folder apps can't reach
+  whatever the Storage rules say. Functions append, read, close and publish with the server's rights
+  (`realtime.*` in `@winche-technologies/winche-admin`) and run on `onRealtime.closed`.
 - **Project pages:** pages of the project's own in the console's sidebar: its HTML, JS and CSS, deployed with its
   functions, shown in a sandboxed frame, reading and writing the project's data with @winche-technologies/winche-admin as the person
   who opened it (their role limits it). See Winche.Functions' README.
@@ -206,7 +215,8 @@ and a deploy reaches every task within seconds.
 - **Integrity** (`winche integrity`): the project's apps (Android package, Apple bundle and team id; each app's id goes
   in its `winche_options.dart`) prove they're its own, trade that for an Integrity token at
   `/projects/<id>/integrity/v1/exchange`, and send it with every request (`X-Winche-Integrity`). Each product is off,
-  monitor (the default: checked and counted per app, never refused) or enforce (refused without a valid token). Apps on
+  monitor (checked and counted per app, never refused) or enforce (refused without a valid token). A product starts in
+  monitor, or in the mode the project's other started products all share (all enforced, say). Apps on
   iOS and macOS prove themselves with Apple's App Attest (`winche_app_attest`; the app's Apple team and bundle id, and
   whether development builds are accepted); the console shows how many devices attested. Android apps prove themselves
   with Google Play Integrity (the app's Google Cloud project number and device level; the project's Google service
@@ -299,6 +309,14 @@ PostgreSQL server is backed up there.
 
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
+
+**4.1.1:** closing and deleting Realtime lists in the console need two-step sign-in where settings do; a product a
+project starts takes the Integrity mode its other started products share (else monitor); Realtime's archives are
+kept from apps by Storage itself (Winche.Storage 11.2, `KeepFromApps`), for functions acting as a user too; functions'
+`realtime.*` is refused until the project has started Realtime; the overview has a Realtime card.
+
+**4.1.0 (Realtime):** Winche Realtime is a product (start it in **Realtime**): lists, channels and presence for apps,
+with rules, settings, Integrity and the CLI's emulator. Nothing changes for projects that don't start it.
 
 **4.0.0 (Integrity):** registered apps became Integrity's apps (they carry over, ids and all) and "registered apps
 only" and the browser origins are gone: the project APIs answer any origin, and apps no longer send `X-Winche-App`.

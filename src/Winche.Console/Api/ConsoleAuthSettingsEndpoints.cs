@@ -48,7 +48,7 @@ public static class ConsoleAuthSettingsEndpoints
             error = new
             {
                 code = "TWO_FACTOR_REQUIRED",
-                message = "Turn on two-step sign-in for your console account (your account menu) before changing these settings.",
+                message = "Turn on two-step sign-in for your console account (your account menu) first: this needs it.",
                 errors = Array.Empty<string>(),
             },
         }, statusCode: 403);
