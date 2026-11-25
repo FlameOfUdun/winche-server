@@ -117,6 +117,17 @@ public static class ConsoleOverviewEndpoints
                 changes.AddRange(releases.Select(r => new Change(r.At, $"Assets release #{r.Number}{Note(r.Note)}", r.By)));
             }
 
+            if (ConsoleRealtimeEndpoints.Capability(options, role) && sp.GetService<Winche.Realtime.RealtimeStore>() is { } realtime)
+            {
+                var stats = new List<Stat>();
+                // Open lists, up to a hundred counted ("100+" past that): a quick look, not a census.
+                var open = Ready("realtime") ? await Try("realtime lists", () => realtime.ListsAsync(null, "open", null, 101, ct)) : null;
+                if (open is not null) stats.Add(new("open lists", open.Count > 100 ? "100+" : open.Count.ToString()));
+                var realtimeVersions = options.RealtimeRulesEditor is not null ? await Try("realtime rules", () => RuleVersions("realtime")) ?? [] : [];
+                if (realtimeVersions.FirstOrDefault(v => v.IsActive) is { } active) stats.Add(new("rules", $"v{active.Version}"));
+                products.Add(new("realtime", "Realtime", "/realtime", On("realtime", open is { Count: > 0 }), "Live lists, channels and presence for your apps", stats));
+            }
+
             if (role >= ConsoleRole.Admin && sp.GetService<SettingsStore>() is { } store
                 && await Try("settings history", () => store.HistoryAsync(null, 10, ct)) is { } history)
             {

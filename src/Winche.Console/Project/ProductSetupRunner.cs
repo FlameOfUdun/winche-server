@@ -76,6 +76,29 @@ public sealed class ProductSetupRunner(ProjectSetup project, IServiceProvider se
             await RunAsync(product, null, markStarted: false, ct);
     }
 
+    /// <summary>
+    /// A product just started with no Integrity mode of its own: if the project's other started products all share one
+    /// (all enforced, say), it gets that one too, instead of the default (monitor). Kept quiet if it can't be saved.
+    /// </summary>
+    private async Task IntegrityAsTheOthersAsync(string product, string? by, CancellationToken ct)
+    {
+        if (services.GetService<Winche.Integrity.WincheIntegrity>() is not { } integrity) return;
+        var current = integrity.Current;
+        if (!Winche.Integrity.IntegritySettings.Products.Contains(product) || current.Enforcement.ContainsKey(product)) return;
+        var others = project.Current.Products.Where(p => p != product && Winche.Integrity.IntegritySettings.Products.Contains(p))
+            .Select(current.ModeOf).Distinct().ToList();
+        if (others is not [var shared] || shared == current.ModeOf(product)) return;
+        try
+        {
+            await integrity.SaveAsync(current with { Enforcement = new Dictionary<string, string>(current.Enforcement) { [product] = shared } },
+                by, $"{product} started: Integrity {shared}, as the project's other products", ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "{Product} started, but its Integrity mode couldn't be set to {Mode} like the others'.", product, shared);
+        }
+    }
+
     private async Task RunAsync(string product, string? by, bool markStarted, CancellationToken ct)
     {
         var setups = SetupsFor(product);
@@ -105,7 +128,11 @@ public sealed class ProductSetupRunner(ProjectSetup project, IServiceProvider se
                 }
                 Readiness?.MarkReady(setup.Product);
             }
-            if (markStarted) await project.StartAsync(product, by, ct);
+            if (markStarted)
+            {
+                await project.StartAsync(product, by, ct);
+                await IntegrityAsTheOthersAsync(product, by, ct);
+            }
             Publish("done", DateTimeOffset.UtcNow);
         }
         finally { _one.Release(); }

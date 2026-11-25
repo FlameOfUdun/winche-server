@@ -73,6 +73,14 @@ public class RealtimeTests(PostgresFixture pg)
         Assert.Equal(("start", uid), (page.GetProperty("items")[0].GetProperty("text").GetString(), page.GetProperty("items")[0].GetProperty("by").GetString()));
         Assert.Equal(0, (await Json(await console.GetAsync("/console/v1/projects/clinic/realtime/presence?path=sessions/s1"))).GetProperty("members").GetArrayLength());
         Assert.Equal(System.Net.HttpStatusCode.BadRequest, (await console.DeleteAsync("/console/v1/projects/clinic/realtime/lists?path=sessions/s1")).StatusCode);   // open: close it first
+        // Where settings need two-step sign-in, so do closing and deleting lists.
+        var consoleOptions = server.ProjectServices("clinic").GetRequiredService<Winche.Console.Options.ConsoleOptions>();
+        consoleOptions.RequireTwoFactorForSettings = true;
+        var refusedClose = await console.PostAsJsonAsync("/console/v1/projects/clinic/realtime/lists/close", new { path = "sessions/s1" });
+        Assert.Equal((System.Net.HttpStatusCode.Forbidden, true), (refusedClose.StatusCode, (await refusedClose.Content.ReadAsStringAsync()).Contains("TWO_FACTOR_REQUIRED")));
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await console.DeleteAsync("/console/v1/projects/clinic/realtime/lists?path=sessions/s1")).StatusCode);
+        Assert.Equal("open", (await server.ProjectServices("clinic").GetRequiredService<Winche.Realtime.RealtimeStore>().InfoAsync("sessions/s1"))!.State);   // nothing closed
+        consoleOptions.RequireTwoFactorForSettings = false;
         Assert.True((await Json(await console.GetAsync("/console/v1/projects/clinic/access"))).GetProperty("capabilities").GetProperty("realtime").GetBoolean());
 
         // Archiving closed lists: off until Project settings turn it on; into the project's storage, once it's started.
@@ -107,11 +115,31 @@ public class RealtimeTests(PostgresFixture pg)
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await app.SendAsync(AsAnn(HttpMethod.Put, FileUrl("realtime/sessions/x/forged.ndjson.gz"), new { mimeType = "application/gzip", sizeBytes = 1 }))).StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await app.SendAsync(AsAnn(HttpMethod.Delete, FileUrl("realtime")))).StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.Forbidden, (await app.SendAsync(AsAnn(HttpMethod.Post, FileUrl("realtime/sessions") + ":list"))).StatusCode);
-        var core = services.GetRequiredService<Winche.Storage.Services.FileStorage>();
-        Assert.NotNull(await core.GetAsync(archived));   // still there, for the console
-        var top = await Winche.Server.ServerOnlyFiles.Wrap(core).ListAsync("");   // the top, as the rules would let it be listed
-        Assert.Contains("notes", top.Prefixes);
-        Assert.DoesNotContain(top.Prefixes, p => p.StartsWith("realtime"));
+        Assert.NotNull(await services.GetRequiredService<Winche.Storage.Services.FileStorage>().GetAsync(archived));   // still there, for the console
+        // A function acting as an app user is refused too.
+        await Assert.ThrowsAsync<Winche.Storage.Authorization.AccessDeniedException>(() => services.GetRequiredService<Winche.Storage.Authorization.RuleGuardedFileStorage>().GetAsync(archived));
+
+        // Simulating Realtime rules: the request and the list as Realtime makes them (no document fields), and Realtime's fields suggested.
+        var simulated = await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/rules/text/parse", new
+        {
+            text = "match sessions/{s} { allow create: if request.resource.device == request.auth.uid && !('path' in request.resource) && resource.state == 'open'; }",
+        }));
+        var simulate = await Json(await console.PostAsJsonAsync("/console/v1/projects/clinic/rules/realtime/simulate", new
+        {
+            rulesJson = simulated.GetProperty("rulesJson").GetString(), operation = "Create", documentPath = "sessions/s1", structured = true,
+            auth = new { uid = "ann", claims = new Dictionary<string, object>() },
+            existing = new Dictionary<string, object> { ["state"] = "open" },
+            incoming = new Dictionary<string, object> { ["device"] = "ann" },
+        }));
+        Assert.True(simulate.GetProperty("allowed").GetBoolean(), simulate.GetRawText());
+        var fields = await Json(await console.GetAsync("/console/v1/projects/clinic/rules/realtime/fields?pattern=sessions/{s}"));
+        Assert.Equal(["bytes", "count", "device", "devices", "keys", "state"], fields.GetProperty("fields").EnumerateArray().Select(f => f.GetProperty("path").GetString()).Order());
+
+        // The project's overview has a Realtime card: on, with its open lists and rules.
+        var overview = await Json(await console.GetAsync("/console/v1/projects/clinic/overview"));
+        var card = overview.GetProperty("products").EnumerateArray().Single(p => p.GetProperty("id").GetString() == "realtime");
+        Assert.True(card.GetProperty("on").GetBoolean());
+        Assert.Contains("rules", card.GetProperty("stats").GetRawText());
 
         // Apps find it in the project's setup (winche configure).
         Assert.Contains("/realtime/v1/ws", await server.CreateClient().GetStringAsync("/projects/clinic/.well-known/winche"));
@@ -119,6 +147,36 @@ public class RealtimeTests(PostgresFixture pg)
         // Integrity can be enforced on it like the other products.
         var integrity = await Json(await console.GetAsync("/console/v1/projects/clinic/integrity"));
         Assert.Contains("realtime", integrity.GetRawText());
+    }
+
+    [Fact]
+    public async Task Realtime_starts_with_the_Integrity_mode_the_projects_other_products_share()
+    {
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), Directory.CreateTempSubdirectory("winche-server-files-").FullName, ("Winche:RequireTwoFactorForSettings", "false"));
+        var console = server.CreateClient();
+        await console.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" });
+        await console.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" });
+        await TestProjects.CreateAsync(console, "clinic", "Clinic", "authentication");
+        await TestProjects.CreateAsync(console, "lab", "Lab", "authentication");
+        foreach (var id in new[] { "clinic", "lab" })
+        {
+            var integrity = server.ProjectServices(id).GetRequiredService<Winche.Integrity.WincheIntegrity>();
+            if (id == "clinic")
+                await integrity.SaveAsync(integrity.Current with
+                {
+                    Apps = [new Winche.Integrity.IntegrityApp { Id = "app-clinic", Name = "Clinic", AppleBundleId = "com.example.clinic", AppleTeamId = "ABCDE12345" }],
+                    Enforcement = new Dictionary<string, string> { ["authentication"] = "enforce" },
+                }, "admin@example.com", "All in");
+            await TestProjects.StartAsync(console, id, "realtime");
+        }
+        await Eventually(() => server.ProjectServices("clinic").GetRequiredService<Winche.Integrity.WincheIntegrity>().Current.ModeOf("realtime") == "enforce");
+        Assert.Equal("monitor", server.ProjectServices("lab").GetRequiredService<Winche.Integrity.WincheIntegrity>().Current.ModeOf("realtime"));   // nothing set: as it was
+    }
+
+    private static async Task Eventually(Func<bool> done)
+    {
+        for (var i = 0; i < 100 && !done(); i++) await Task.Delay(100);
+        Assert.True(done(), "not within 10 s");
     }
 
     private static async Task<WebSocket> ConnectAsync(ServerFactory server, string token) =>

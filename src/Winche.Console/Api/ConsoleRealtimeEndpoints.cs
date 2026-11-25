@@ -56,14 +56,17 @@ public static class ConsoleRealtimeEndpoints
             return Results.Json(new { members = (await presence.MembersAsync(path, ct)).Select(m => new { uid = m.Uid, data = m.Data, joinedAt = m.JoinedAt }) });
         });
 
-        group.MapPost("/lists/close", async (PathRequest body, RealtimeLists lists, CancellationToken ct) =>
+        // Closing and deleting change what apps see: with two-step sign-in, where settings need it.
+        group.MapPost("/lists/close", async (PathRequest body, HttpContext http, RealtimeLists lists, CancellationToken ct) =>
         {
+            if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } twoStep) return twoStep;
             try { return Results.Json(new { list = List(await lists.ServerCloseAsync(body.Path ?? "", ct)) }); }
             catch (RealtimeException e) { return Refused(e); }
         }).RequireAuthorization(ConsoleRoles.AdminPolicy);
 
-        group.MapDelete("/lists", async (string? path, RealtimeStore store, CancellationToken ct) =>
+        group.MapDelete("/lists", async (string? path, HttpContext http, RealtimeStore store, CancellationToken ct) =>
         {
+            if (await ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } twoStep) return twoStep;
             try
             {
                 return await store.DeleteClosedAsync(path ?? "", ct) ? Results.NoContent()

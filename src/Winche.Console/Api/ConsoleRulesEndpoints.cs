@@ -315,6 +315,7 @@ public static class ConsoleRulesEndpoints
             var reg = FindRegistration(registrations, sys);
             if (reg is null) return Results.NotFound();
             if (sys == "storage") return Results.Json(new { fields = StorageFields });
+            if (sys == "realtime") return Results.Json(new { fields = RealtimeFields });
             if (string.IsNullOrWhiteSpace(pattern)) return Results.Json(new { fields = Array.Empty<SampledField>() });
             var db = sp.GetService<Winche.Database.Runtime.DocumentDatabase>();
             if (db is null) return Results.Json(new { fields = Array.Empty<SampledField>() });
@@ -443,6 +444,13 @@ public static class ConsoleRulesEndpoints
         new("version", ["integer"]),
     ];
 
+    /// <summary>What Realtime's rules see: a list's <c>resource</c> (state, count, bytes) and an append's <c>request.resource</c>.</summary>
+    private static readonly SampledField[] RealtimeFields =
+    [
+        new("bytes", ["integer"]), new("count", ["integer"]), new("device", ["string"]), new("devices", ["list"]),
+        new("keys", ["list"]), new("state", ["string"]),
+    ];
+
     private static RuleSubsystemRegistration? FindRegistration(IEnumerable<RuleSubsystemRegistration> registrations, string sys) =>
         registrations.FirstOrDefault(r => string.Equals(r.Subsystem, sys, StringComparison.Ordinal));
 
@@ -468,6 +476,7 @@ public static class ConsoleRulesEndpoints
         var values = fields.ToDictionary(f => f.Key, f => JsonSerializer.Deserialize<Value>(f.Value.GetRawText(), RuleJson.Options)!, StringComparer.Ordinal);
         var segments = path.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         var map = new Dictionary<string, Value>(values, StringComparer.Ordinal);
+        if (subsystem is "realtime") return new MapValue(map);   // a list or an append: only what Realtime gives (state, count, device…)
         if (subsystem is "storage" or "assets")
         {
             map.TryAdd("id", new StringValue(segments.LastOrDefault() ?? ""));
