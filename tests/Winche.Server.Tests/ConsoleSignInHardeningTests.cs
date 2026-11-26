@@ -96,6 +96,28 @@ public class ConsoleSignInHardeningTests(PostgresFixture pg)
     }
 
     [Theory]
+    [InlineData("/console/projects/p/#settings", "signInError=x", "/console/projects/p/?signInError=x#settings")]
+    [InlineData("/console/?tab=a#top", "secondStep=1", "/console/?tab=a&secondStep=1#top")]
+    [InlineData("/console/", "secondStep=1", "/console/?secondStep=1")]
+    [InlineData("/console/?a=1", "signInError=x", "/console/?a=1&signInError=x")]
+    public void What_the_console_adds_on_the_way_back_goes_before_any_fragment(string returnUrl, string added, string expected) =>
+        Assert.Equal(expected, Winche.Console.Identity.ConsoleOidc.WithQuery(returnUrl, added));
+
+    [Fact]
+    public async Task A_failed_sign_in_back_to_a_page_with_a_fragment_still_says_why()
+    {
+        await using var idp = new FakeOidcProvider();
+        var (server, _) = await StartAsync(idp);
+        await using var _s = server;
+        idp.Next = new() { ["sub"] = "x-1", ["email"] = "admin@example.com", ["email_verified"] = true };   // the admin's address: refused
+        var client = server.CreateClient(new() { AllowAutoRedirect = false });
+        var landed = await FollowAsync(client, idp, "/console/v1/session/oidc/start?provider=staff&returnUrl=" + Uri.EscapeDataString("/console/projects/p/#settings"));
+        var location = landed.Headers.Location!.OriginalString;
+        Assert.StartsWith("/console/projects/p/?signInError=", location);
+        Assert.EndsWith("#settings", location);
+    }
+
+    [Theory]
     [InlineData("https://accounts.google.com", "select_account")]   // Google has no prompt=login
     [InlineData("https://accounts.google.com/", "select_account")]
     [InlineData("https://keycloak.example.com/realms/staff", "login")]

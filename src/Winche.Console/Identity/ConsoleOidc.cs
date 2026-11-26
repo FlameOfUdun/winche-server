@@ -176,6 +176,14 @@ internal static class ConsoleOidc
     internal static string LinkPrompt(string issuer) =>
         Uri.TryCreate(issuer, UriKind.Absolute, out var u) && u.Host.Equals("accounts.google.com", StringComparison.OrdinalIgnoreCase) ? "select_account" : "login";
 
+    /// <summary><paramref name="url"/> with <paramref name="added"/> in its query: before any <c>#</c>, where the page can read it.</summary>
+    internal static string WithQuery(string url, string added)
+    {
+        var hash = url.IndexOf('#');
+        var (path, fragment) = hash < 0 ? (url, "") : (url[..hash], url[hash..]);
+        return $"{path}{(path.Contains('?') ? "&" : "?")}{added}{fragment}";
+    }
+
     internal static bool LocalPath(string? url) =>
         url is { Length: > 0 } && url[0] == '/' && !url.StartsWith("//") && !url.Contains('\\')
         && url.All(c => c > 0x20 && c != 0x7f)
@@ -632,8 +640,8 @@ internal static class ConsoleOidc
     private static IResult Finish(HttpContext http, bool test, string returnUrl, Outcome outcome)
     {
         if (!test)
-            return Results.Redirect(!outcome.Ok ? $"{returnUrl}{(returnUrl.Contains('?') ? "&" : "?")}signInError={Uri.EscapeDataString(outcome.Error!)}"
-                : outcome.SecondStep ? $"{returnUrl}{(returnUrl.Contains('?') ? "&" : "?")}secondStep=1" : returnUrl);
+            return Results.Redirect(!outcome.Ok ? WithQuery(returnUrl, $"signInError={Uri.EscapeDataString(outcome.Error!)}")
+                : outcome.SecondStep ? WithQuery(returnUrl, "secondStep=1") : returnUrl);
         var json = JsonSerializer.Serialize(new
         {
             type = "winche-oidc-test", ok = outcome.Ok, error = outcome.Error, email = outcome.Email, name = outcome.Name, subject = outcome.Subject,
