@@ -256,15 +256,17 @@ public static class AuthEndpoints
 
         // A "sign-in method added" email's link: removes that provider from the account and signs every device out. Only
         // those links (a reset's or any other code is refused, and left as it was). Anonymous.
-        auth.MapPost("/remove-sign-in-method", async (RemoveSignInMethodBody body, ConsoleAccounts accounts, CancellationToken ct) =>
+        auth.MapPost("/remove-sign-in-method", async (RemoveSignInMethodBody body, ConsoleAccounts accounts, IServiceProvider sp, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(body.Code)) return Results.BadRequest(new { error = "Invalid or expired link." });
             try
             {
                 var info = await accounts.UseAsync(a => a.CheckActionCodeAsync(body.Code, ct));
                 if (info.Mode != "unlinkProvider") return Results.BadRequest(new { error = "Invalid or expired link." });
-                await accounts.UseAsync(a => a.ApplyActionCodeAsync(body.Code, ct));
-                return Results.Ok();
+                var done = await accounts.UseAsync(a => a.ApplyActionCodeAsync(body.Code, ct));
+                // It was the last way in: a reset link is on its way, or with no email server a server admin sets a password.
+                var next = done.Next == "resetPassword" && ConsoleEmail.Sender(sp) is null ? "admin" : done.Next;
+                return Results.Json(new { next });
             }
             catch (Winche.Auth.AuthException) { return Results.BadRequest(new { error = "Invalid or expired link." }); }
         });
