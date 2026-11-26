@@ -49,9 +49,9 @@ public static class ConsoleAccountsApp
             o.Issuer = issuer;
             o.EmailPassword(p => p.MinLength = 8);   // as console accounts always had (changeable in its settings)
             o.Mfa(m => m.Issuer = "Winche console");
-            // With the host's own email, its emails go out with nothing to set up; otherwise links are only logged until
-            // an SMTP server is chosen.
-            o.Email(e => { e.AppName = "Winche console"; e.ActionUrl = actionUrl; e.SendVerificationOnSignUp = false; if (email is null) e.LogLinks(); });
+            // With the host's own email, its emails go out with nothing to set up; otherwise none goes out until an SMTP
+            // server is chosen, and the log says so without the link (anyone reading the log could use it).
+            o.Email(e => { e.AppName = "Winche console"; e.ActionUrl = actionUrl; e.SendVerificationOnSignUp = false; e.LogWithLinks = false; if (email is null) e.LogLinks(withLinks: false); });
             o.UseSettings();
         });
         if (email is not null) builder.Services.AddSingleton(email);
