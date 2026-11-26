@@ -34,6 +34,21 @@ public static class ConsoleAuthSettingsEndpoints
     public sealed record TestEmailRequest(JsonElement? Settings, string? SmtpPassword, string? To);
 
     /// <summary>Null when the console admin may change sensitive settings; otherwise the refusal.</summary>
+    /// <summary>Integrity apps going: their web check's secret (AWS refusing stops it: nothing else has changed yet).</summary>
+    private static async Task RemoveAppSecretsAsync(IServiceProvider sp, IReadOnlyList<string> apps, HttpContext http, CancellationToken ct)
+    {
+        if (apps.Count == 0 || sp.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets) return;
+        foreach (var id in apps)
+            await secrets.DeleteAsync(Winche.Integrity.WincheIntegrity.TurnstileSecret(id), keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct);
+    }
+
+    /// <summary>Integrity apps gone: their devices' attestation keys.</summary>
+    private static async Task RemoveAppKeysAsync(IServiceProvider sp, IReadOnlyList<string> apps, CancellationToken ct)
+    {
+        if (sp.GetService<Winche.Integrity.IntegrityStore>() is not { } store) return;
+        foreach (var id in apps) await store.RemoveKeysAsync(id, ct);
+    }
+
     internal static async Task<IResult?> RequireTwoFactorAsync(HttpContext http)
     {
         var options = http.RequestServices.GetRequiredService<ConsoleOptions>();
@@ -273,8 +288,13 @@ public static class ConsoleAuthSettingsEndpoints
                 var restored = old.Deserialize<Winche.Integrity.IntegritySettings>(SettingsArea.Json) ?? new();
                 var kept = restored with { DebugTokens = [.. integrity.Current.DebugTokens.Where(t => restored.Apps.Any(a => a.Id == t.App))] };
                 if (kept.Problems().FirstOrDefault() is { } problem) return Problem($"That version no longer fits: {problem}");
+                // Apps the old version doesn't have go as a removed app does: their web check's secret first (refused:
+                // nothing changes), then the settings, then their devices' keys (a re-added app's devices attest again).
+                var gone = integrity.Current.Apps.Where(a => restored.Apps.All(r => r.Id != a.Id)).Select(a => a.Id).ToList();
+                await RemoveAppSecretsAsync(sp, gone, http, ct);
                 // Saved as a new version (the store's restore can't leave tokens out); the reason says which version it came from.
                 var saved = await integrity.SaveAsync(kept, Who(http.User), $"{body.Reason.Trim()} (restored version {version.Number}; today's debug tokens kept)", ct);
+                await RemoveAppKeysAsync(sp, gone, ct);
                 return Results.Json(Version(saved, store));
             }
             try { return Results.Json(Version(await store.RestoreAsync(id, Who(http.User), body.Reason, ct), store)); }
@@ -287,7 +307,16 @@ public static class ConsoleAuthSettingsEndpoints
             if (await RequireTwoFactorAsync(http) is { } refused) return refused;
             if (sp.GetService<SettingsStore>() is not { } store) return Problem("Settings aren't saved in this app.");
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're resetting: it goes in the history.");
-            try { return Results.Json(Version(await store.ResetAsync(area, Who(http.User), body.Reason, ct), store)); }
+            // Integrity back to its defaults: its apps go as removed apps do (their secrets, then the settings, then keys).
+            var integrity = area == Winche.Integrity.IntegritySettings.Area ? sp.GetService<Winche.Integrity.WincheIntegrity>() : null;
+            var before = integrity?.Current.Apps.Select(a => a.Id).ToList() ?? [];
+            await RemoveAppSecretsAsync(sp, before, http, ct);
+            try
+            {
+                var version = await store.ResetAsync(area, Who(http.User), body.Reason, ct);
+                await RemoveAppKeysAsync(sp, [.. before.Where(id => integrity?.Find(id) is null)], ct);
+                return Results.Json(Version(version, store));
+            }
             catch (KeyNotFoundException) { return Results.NotFound(); }
         });
 
