@@ -95,6 +95,14 @@ public class ConsoleSignInHardeningTests(PostgresFixture pg)
         Assert.Contains("signInError=", nobody.Headers.Location!.OriginalString);
     }
 
+    [Theory]
+    [InlineData("https://accounts.google.com", "select_account")]   // Google has no prompt=login
+    [InlineData("https://accounts.google.com/", "select_account")]
+    [InlineData("https://keycloak.example.com/realms/staff", "login")]
+    [InlineData("https://login.microsoftonline.com/tenant/v2.0", "login")]
+    public void Adding_a_provider_asks_it_to_show_who_is_signing_in_in_a_way_it_understands(string issuer, string prompt) =>
+        Assert.Equal(prompt, Winche.Console.Identity.ConsoleOidc.LinkPrompt(issuer));
+
     [Fact]
     public async Task A_provider_is_added_only_to_the_account_still_signed_in_when_it_comes_back()
     {

@@ -169,6 +169,13 @@ internal static class ConsoleOidc
     /// A path on this server only: starting with one '/', with no '\\', no whitespace or control character (a browser
     /// drops tabs and line breaks, turning "/&lt;tab&gt;/x" into "//x", another site), and no scheme or host.
     /// </summary>
+    /// <summary>
+    /// How adding a sign-in method asks the provider to show who's signing in: <c>login</c> (sign in again), or for
+    /// Google, which has no <c>login</c>, <c>select_account</c> (choose the account).
+    /// </summary>
+    internal static string LinkPrompt(string issuer) =>
+        Uri.TryCreate(issuer, UriKind.Absolute, out var u) && u.Host.Equals("accounts.google.com", StringComparison.OrdinalIgnoreCase) ? "select_account" : "login";
+
     internal static bool LocalPath(string? url) =>
         url is { Length: > 0 } && url[0] == '/' && !url.StartsWith("//") && !url.Contains('\\')
         && url.All(c => c > 0x20 && c != 0x7f)
@@ -234,7 +241,7 @@ internal static class ConsoleOidc
                 ["code_challenge"] = B64Url(SHA256.HashData(Encoding.ASCII.GetBytes(flow.Verifier))), ["code_challenge_method"] = "S256",
             };
             // Adding a sign-in method: the provider asks who's there, so a session already open there can't finish it unseen.
-            if (linkTo is not null) query["prompt"] = "login";
+            if (linkTo is not null) query["prompt"] = LinkPrompt(settings.Issuer!);
             var url = config.AuthorizationEndpoint + (config.AuthorizationEndpoint.Contains('?') ? "&" : "?")
                 + string.Join("&", query.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
             return Results.Redirect(url);
