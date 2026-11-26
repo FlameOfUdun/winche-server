@@ -56,4 +56,18 @@ public class IntegrityRestoreTests(PostgresFixture pg)
         Assert.False(await LeftBehindAsync(project, "web-two"));
         Directory.Delete(files, recursive: true);
     }
+
+    [Fact]
+    public async Task Apps_a_restore_takes_away_lose_their_keys_and_secrets_and_a_refused_secret_is_named_not_fatal()
+    {
+        var keysRemoved = new List<string>();
+        var secretsDeleted = new List<string>();
+        var left = await Winche.Console.Api.ConsoleAuthSettingsEndpoints.RemoveAppLeftoversAsync(["web-one", "web-two", "web-three"],
+            id => { keysRemoved.Add(id); return Task.CompletedTask; },
+            id => id == "web-two" ? throw new InvalidOperationException("AWS refused") : Task.Run(() => secretsDeleted.Add(id)),
+            null, default);
+        Assert.Equal(["web-one", "web-two", "web-three"], keysRemoved);   // every app's devices' keys
+        Assert.Equal(["web-one", "web-three"], secretsDeleted);           // the others' secrets, past the refusal
+        Assert.Equal(["web-two"], left);                                  // and the one left is named
+    }
 }

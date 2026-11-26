@@ -33,19 +33,37 @@ public static class ConsoleAuthSettingsEndpoints
         string? SmtpPasswordReference = null, Dictionary<string, string>? SyncSecretReferences = null);
     public sealed record TestEmailRequest(JsonElement? Settings, string? SmtpPassword, string? To);
 
-    /// <summary>Integrity apps going: their web check's secret (AWS refusing stops it: nothing else has changed yet).</summary>
-    private static async Task RemoveAppSecretsAsync(IServiceProvider sp, IReadOnlyList<string> apps, HttpContext http, CancellationToken ct)
+    /// <summary>
+    /// After a restore or reset took Integrity apps away (saved first, so the settings change in one step): their devices'
+    /// keys, then their web check secrets, as far as they go. A secret that can't be deleted (AWS refusing) is left,
+    /// logged and named: nothing uses it any more.
+    /// </summary>
+    private static Task<List<string>> LeftoversAsync(IServiceProvider sp, IReadOnlyList<string> apps, HttpContext http, CancellationToken ct)
     {
-        if (apps.Count == 0 || sp.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets) return;
-        foreach (var id in apps)
-            await secrets.DeleteAsync(Winche.Integrity.WincheIntegrity.TurnstileSecret(id), keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct);
+        var keys = sp.GetService<Winche.Integrity.IntegrityStore>();
+        var secrets = sp.GetService<Winche.Secrets.SecretStore>() is { Available: true } s ? s : null;
+        return RemoveAppLeftoversAsync(apps,
+            id => keys?.RemoveKeysAsync(id, ct) ?? Task.CompletedTask,
+            id => secrets?.DeleteAsync(Winche.Integrity.WincheIntegrity.TurnstileSecret(id), keepInSource: false, ConsoleSecretsEndpoints.MayUseAppCredentials(http), ct) ?? Task.CompletedTask,
+            sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger("Winche.Console.Integrity"), ct);
     }
 
-    /// <summary>Integrity apps gone: their devices' attestation keys.</summary>
-    private static async Task RemoveAppKeysAsync(IServiceProvider sp, IReadOnlyList<string> apps, CancellationToken ct)
+    /// <summary>Each app's keys removed, then its secret deleted; the apps whose secret couldn't be.</summary>
+    internal static async Task<List<string>> RemoveAppLeftoversAsync(IReadOnlyList<string> apps, Func<string, Task> removeKeys, Func<string, Task> deleteSecret,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
     {
-        if (sp.GetService<Winche.Integrity.IntegrityStore>() is not { } store) return;
-        foreach (var id in apps) await store.RemoveKeysAsync(id, ct);
+        foreach (var id in apps) await removeKeys(id);
+        var left = new List<string>();
+        foreach (var id in apps)
+        {
+            try { await deleteSecret(id); }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                left.Add(id);
+                if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(log, e, "Integrity's app {App} was taken away, but its web check secret couldn't be deleted: delete it where it's kept.", id);
+            }
+        }
+        return left;
     }
 
     /// <summary>Null when the console admin may change sensitive settings; otherwise the refusal.</summary>
@@ -72,10 +90,11 @@ public static class ConsoleAuthSettingsEndpoints
     private static string? Who(ClaimsPrincipal user) =>
         user.FindFirstValue(ClaimTypes.Email) ?? user.FindFirstValue("email") ?? user.Identity?.Name;
 
-    private static object Version(SettingsVersion v, SettingsStore? store) => new
+    /// <param name="secretsLeft">Integrity apps a restore or reset took away whose web check secret couldn't be deleted (in AWS).</param>
+    private static object Version(SettingsVersion v, SettingsStore? store, IReadOnlyList<string>? secretsLeft = null) => new
     {
         id = v.Id, area = v.Area, areaTitle = store?.Area(v.Area)?.Title ?? v.Area, number = v.Number, at = v.At, by = v.By, reason = v.Reason,
-        restoredFrom = v.RestoredFrom, reset = v.Document is null,
+        restoredFrom = v.RestoredFrom, reset = v.Document is null, secretsLeft = secretsLeft ?? [],
     };
 
     private static IResult Problem(string message, IReadOnlyList<string>? errors = null) =>
@@ -291,11 +310,9 @@ public static class ConsoleAuthSettingsEndpoints
                 // Apps the old version doesn't have go as a removed app does: their web check's secret first (refused:
                 // nothing changes), then the settings, then their devices' keys (a re-added app's devices attest again).
                 var gone = integrity.Current.Apps.Where(a => restored.Apps.All(r => r.Id != a.Id)).Select(a => a.Id).ToList();
-                await RemoveAppSecretsAsync(sp, gone, http, ct);
                 // Saved as a new version (the store's restore can't leave tokens out); the reason says which version it came from.
                 var saved = await integrity.SaveAsync(kept, Who(http.User), $"{body.Reason.Trim()} (restored version {version.Number}; today's debug tokens kept)", ct);
-                await RemoveAppKeysAsync(sp, gone, ct);
-                return Results.Json(Version(saved, store));
+                return Results.Json(Version(saved, store, await LeftoversAsync(sp, gone, http, ct)));
             }
             try { return Results.Json(Version(await store.RestoreAsync(id, Who(http.User), body.Reason, ct), store)); }
             catch (KeyNotFoundException) { return Results.NotFound(); }
@@ -310,12 +327,10 @@ public static class ConsoleAuthSettingsEndpoints
             // Integrity back to its defaults: its apps go as removed apps do (their secrets, then the settings, then keys).
             var integrity = area == Winche.Integrity.IntegritySettings.Area ? sp.GetService<Winche.Integrity.WincheIntegrity>() : null;
             var before = integrity?.Current.Apps.Select(a => a.Id).ToList() ?? [];
-            await RemoveAppSecretsAsync(sp, before, http, ct);
             try
             {
                 var version = await store.ResetAsync(area, Who(http.User), body.Reason, ct);
-                await RemoveAppKeysAsync(sp, [.. before.Where(id => integrity?.Find(id) is null)], ct);
-                return Results.Json(Version(version, store));
+                return Results.Json(Version(version, store, await LeftoversAsync(sp, [.. before.Where(id => integrity?.Find(id) is null)], http, ct)));
             }
             catch (KeyNotFoundException) { return Results.NotFound(); }
         });
