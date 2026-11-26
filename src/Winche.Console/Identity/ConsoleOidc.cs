@@ -165,7 +165,14 @@ internal static class ConsoleOidc
 
     private static string B64Url(byte[] bytes) => Base64UrlEncoder.Encode(bytes);
 
-    private static bool LocalPath(string? url) => url is { Length: > 0 } && url[0] == '/' && !url.StartsWith("//") && !url.Contains('\\');
+    /// <summary>
+    /// A path on this server only: starting with one '/', with no '\\', no whitespace or control character (a browser
+    /// drops tabs and line breaks, turning "/&lt;tab&gt;/x" into "//x", another site), and no scheme or host.
+    /// </summary>
+    internal static bool LocalPath(string? url) =>
+        url is { Length: > 0 } && url[0] == '/' && !url.StartsWith("//") && !url.Contains('\\')
+        && url.All(c => c > 0x20 && c != 0x7f)
+        && Uri.TryCreate(url, UriKind.Relative, out var relative) && !relative.OriginalString.Contains("://");
 
     public static IEndpointRouteBuilder MapConsoleOidcEndpoints(this IEndpointRouteBuilder app, ConsoleOptions options)
     {
@@ -180,11 +187,17 @@ internal static class ConsoleOidc
             string? linkTo = null;
             if (link == true)
             {
+                var home = LocalPath(returnUrl) ? returnUrl! : options.ServerSettings?.ConsoleSignInReturnPath ?? "/";
+                IResult Back(string why) => Finish(http, false, home, Fail(why));
+                // Only from this console's own pages: another site can't start it in a signed-in browser.
+                if (http.Request.Headers["Sec-Fetch-Site"].ToString() is { Length: > 0 } site && site is not ("same-origin" or "none"))
+                    return Back("Add a sign-in method from your account menu here.");
                 // /start is anonymous: the session is read here (no default scheme fills http.User).
                 if ((await http.AuthenticateAsync(ConsoleSession.Scheme)).Principal is not { } principal
-                    || principal.FindFirstValue(ClaimTypes.NameIdentifier) is not { Length: > 0 } me) return Results.Unauthorized();
+                    || principal.FindFirstValue(ClaimTypes.NameIdentifier) is not { Length: > 0 } me) return Back("Sign in first, then add it from your account menu.");
                 http.User = principal;
-                if (await Api.ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } twoStep) return twoStep;
+                if (await Api.ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is not null)
+                    return Back("Turn on two-step sign-in for your console account first: adding a sign-in method needs it.");
                 linkTo = me;
             }
             if (test is { Length: > 0 })
@@ -220,6 +233,8 @@ internal static class ConsoleOidc
                 ["scope"] = settings.Scopes, ["state"] = flow.State, ["nonce"] = flow.Nonce,
                 ["code_challenge"] = B64Url(SHA256.HashData(Encoding.ASCII.GetBytes(flow.Verifier))), ["code_challenge_method"] = "S256",
             };
+            // Adding a sign-in method: the provider asks who's there, so a session already open there can't finish it unseen.
+            if (linkTo is not null) query["prompt"] = "login";
             var url = config.AuthorizationEndpoint + (config.AuthorizationEndpoint.Contains('?') ? "&" : "?")
                 + string.Join("&", query.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
             return Results.Redirect(url);
@@ -371,6 +386,9 @@ internal static class ConsoleOidc
         var linked = await accounts.UseAsync(a => a.FindByProviderAsync(s.Id, subject, ct));
         if (flow.LinkTo is { } owner)
         {
+            // Still the account that asked: someone else signed in here meanwhile gets nothing linked.
+            if ((await http.AuthenticateAsync(ConsoleSession.Scheme)).Principal?.FindFirstValue(ClaimTypes.NameIdentifier) != owner)
+                throw new OidcException("You're signed in as someone else now: add the sign-in method again from your account menu.");
             // From the account menu: the signed-in owner adds it, whatever the address. Their session stays as it is.
             if (linked is not null && linked.Uid != owner) throw new OidcException("That account at the provider already signs in to another console account.");
             if (linked is null)
@@ -392,10 +410,10 @@ internal static class ConsoleOidc
             byEmail = await accounts.FindByEmailAsync(email, ct);
             if (byEmail is not null && !verified)
                 throw new OidcException($"There's already a console account for {email}, and the provider doesn't say the address is verified.");
-            // By the address only into an account nobody has signed in to yet (an admin made it for them): one in use is
-            // its owner's to link, signed in, from their account menu. Otherwise whoever had that address at the provider
-            // would be let in (and a sign-in method the owner removed would come straight back).
-            if (byEmail is { LastSignInAt: not null })
+            // Never by the address into an account someone has a password for or has signed in to (invites make theirs with a
+            // password, so in practice never): its owner links it, signed in, from their account menu. Otherwise whoever had
+            // that address at the provider would be let in (and a sign-in method the owner removed would come straight back).
+            if (byEmail is { LastSignInAt: not null } or { HasPassword: true })
                 throw new OidcException($"There's already a console account for {email}: sign in the usual way, then add {s.Label} from your account menu (Sign-in methods).");
             if (byEmail is null && !s.CreateAccounts) throw new OidcException($"There's no console account for {email}: ask an admin to add you.");
         }

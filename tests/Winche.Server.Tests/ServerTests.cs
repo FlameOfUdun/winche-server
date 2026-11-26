@@ -897,7 +897,7 @@ public class ServerTests(PostgresFixture pg)
     }
 
     [Fact]
-    public async Task An_identity_provider_links_by_email_only_to_an_account_nobody_has_used_and_the_owner_adds_or_removes_it_themselves()
+    public async Task An_identity_provider_never_links_by_email_to_an_account_in_use_and_the_owner_adds_or_removes_it_themselves()
     {
         await using var idp = new FakeOidcProvider();
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
@@ -925,9 +925,8 @@ public class ServerTests(PostgresFixture pg)
         // The admin's account is in use: a provider account with the same (verified) address doesn't get in.
         Assert.False(await SignsInAs("intruder", "admin@example.com"));
 
-        // An account made for Carol that nobody has signed in to yet: her first sign-in through the provider links it.
-        await Json(await admin.PostAsJsonAsync("/console/v1/accounts", new { email = "carol@example.com", role = "none", password = "Passw0rd!long" }));
-        Assert.True(await SignsInAs("carol-1", "carol@example.com"));
+        // Someone with no console account yet: the provider makes one for them (it may: createAccounts).
+        Assert.True(await SignsInAs("dora-1", "dora@example.com"));
 
         // The admin adds the provider themselves, signed in: from then on it signs them in.
         var methods = await Json(await admin.GetAsync("/console/v1/session/sign-in-methods"));
@@ -945,7 +944,7 @@ public class ServerTests(PostgresFixture pg)
 
         // Adding needs a signed-in account.
         var nobody = server.CreateClient(new() { AllowAutoRedirect = false });
-        Assert.Equal(HttpStatusCode.Unauthorized, (await nobody.GetAsync("/console/v1/session/oidc/start?provider=staff&link=true")).StatusCode);
+        Assert.Contains("signInError=", (await nobody.GetAsync("/console/v1/session/oidc/start?provider=staff&link=true")).Headers.Location!.OriginalString);
         Directory.Delete(files, recursive: true);
     }
 

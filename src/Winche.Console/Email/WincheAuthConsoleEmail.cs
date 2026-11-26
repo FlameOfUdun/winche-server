@@ -39,18 +39,21 @@ public sealed class WincheAuthConsoleEmail(Func<AuthEmailOptions?> sending, ISer
         var text = $"{hello}\n\n{intro}\n\n{link}\n\n{outro}";
         var html = $"<p>{WebUtility.HtmlEncode(hello)}</p><p>{WebUtility.HtmlEncode(intro)}</p>" +
                    $"<p><a href=\"{WebUtility.HtmlEncode(link)}\">{WebUtility.HtmlEncode(button)}</a></p><p>{WebUtility.HtmlEncode(outro)}</p>";
-        IAuthEmailSender sender = email.LogLinksOnly ? new LogOnly(services)
+        IAuthEmailSender sender = email.LogLinksOnly ? new LogOnly(services, email.LogWithLinks)
             : email.Smtp is not null ? new SmtpEmailSender(email, services)
             : services.GetService(typeof(IAuthEmailSender)) as IAuthEmailSender ?? throw new InvalidOperationException(WhyNotReady);
         await sender.SendAsync(new AuthEmailMessage(user.Email, kind, subject, text, html, link), ct);
     }
 
-    private sealed class LogOnly(IServiceProvider services) : IAuthEmailSender
+    /// <summary>Only logged: with the link where the host asked for it (local development), else only that it wasn't sent.</summary>
+    private sealed class LogOnly(IServiceProvider services, bool withLinks) : IAuthEmailSender
     {
         public Task SendAsync(AuthEmailMessage m, CancellationToken ct)
         {
             var logger = (Microsoft.Extensions.Logging.ILogger?)services.GetService(typeof(Microsoft.Extensions.Logging.ILogger<WincheAuthConsoleEmail>));
-            if (logger is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(logger, "Console email to {To}: \"{Subject}\" {Link}", m.To, m.Subject, m.Link);
+            if (logger is null) return Task.CompletedTask;
+            if (withLinks) Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(logger, "Console email to {To}: \"{Subject}\" {Link}", m.To, m.Subject, m.Link);
+            else Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(logger, "Console email to {To} ({Kind}) not sent: no email server is set up.", m.To, m.Kind);
             return Task.CompletedTask;
         }
     }

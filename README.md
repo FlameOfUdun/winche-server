@@ -240,7 +240,14 @@ refused, so two admins can't undo each other's changes.
 
 Console emails (invites, password resets) go through the SMTP server set in **Server settings → Authentication →
 Settings → Emails to users**, else the server's own email (`Winche__Email__*`). Until there is one, invites are shared as links, and a server admin sets a new password
-for someone who forgot theirs (Server settings → Authentication → Users).
+for someone who forgot theirs (Server settings → Authentication → Users). Console emails are never written to the log
+with their links (even with "log links only" chosen): the log only says one wasn't sent.
+
+Signing in to the console through an identity provider makes an account for someone who has none (where the provider
+may), and signs in whoever is linked to it. It never claims an existing account by its email address: a person with a
+console account adds the provider themselves, signed in, from their account menu (**Sign-in methods**, which asks the
+provider to sign in again, and only from the console's own pages), and removes it there. A removed one comes back only
+that way.
 
 ## Products
 
@@ -309,6 +316,10 @@ PostgreSQL server is backed up there.
 
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
+
+**4.1.2:** signing in through an identity provider no longer claims an existing console account by its email
+address: people who already have an account add the provider from their account menu (**Sign-in methods**) once.
+Console emails are never logged with their links. Coming back from a provider goes only to a page of this console.
 
 **4.1.1:** closing and deleting Realtime lists in the console need two-step sign-in where settings do; a product a
 project starts takes the Integrity mode its other started products share (else monitor); Realtime's archives are
