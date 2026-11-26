@@ -33,7 +33,6 @@ public static class ConsoleAuthSettingsEndpoints
         string? SmtpPasswordReference = null, Dictionary<string, string>? SyncSecretReferences = null);
     public sealed record TestEmailRequest(JsonElement? Settings, string? SmtpPassword, string? To);
 
-    /// <summary>Null when the console admin may change sensitive settings; otherwise the refusal.</summary>
     /// <summary>Integrity apps going: their web check's secret (AWS refusing stops it: nothing else has changed yet).</summary>
     private static async Task RemoveAppSecretsAsync(IServiceProvider sp, IReadOnlyList<string> apps, HttpContext http, CancellationToken ct)
     {
@@ -49,6 +48,7 @@ public static class ConsoleAuthSettingsEndpoints
         foreach (var id in apps) await store.RemoveKeysAsync(id, ct);
     }
 
+    /// <summary>Null when the console admin may change sensitive settings; otherwise the refusal.</summary>
     internal static async Task<IResult?> RequireTwoFactorAsync(HttpContext http)
     {
         var options = http.RequestServices.GetRequiredService<ConsoleOptions>();
