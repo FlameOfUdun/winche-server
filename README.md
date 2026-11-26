@@ -317,6 +317,10 @@ PostgreSQL server is backed up there.
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
 
+**4.1.5:** an Integrity restore or reset that takes several apps away saves first and names any web check secret it
+couldn't delete in AWS (instead of stopping half-done); what the console adds on the way back from a provider goes
+before a `#`; Simulate builds Realtime appends as the server does; Winche.Realtime 1.0.3.
+
 **4.1.4:** removing a sign-in method from its email still removes it when it was the last way in, and says how to get
 back (a reset link is sent, or a server admin sets a password where there's no email server; Winche.Auth 2.1.2); an
 open Realtime list's dialog reads only what's new.
