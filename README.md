@@ -317,6 +317,10 @@ PostgreSQL server is backed up there.
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
 
+**4.1.4:** removing a sign-in method from its email still removes it when it was the last way in, and says how to get
+back (a reset link is sent, or a server admin sets a password where there's no email server; Winche.Auth 2.1.2); an
+open Realtime list's dialog reads only what's new.
+
 **4.1.3:** restoring or resetting Integrity's settings removes what an app it takes away left (its web check's secret,
 its devices' keys), as removing the app does; a Realtime list's "closed" event that couldn't be published goes out
 with the next sweep (Winche.Realtime 1.0.2), and a presence member whose connection's clean-up failed is cleared at
