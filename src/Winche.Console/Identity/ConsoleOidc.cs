@@ -131,7 +131,8 @@ internal static class ConsoleOidc
     public const string ProviderSubjectClaim = "winche:provider-sub";
 
     /// <summary>What a sign-in carries from start to callback (and a test, its unsaved settings).</summary>
-    internal sealed record Flow(string State, string Nonce, string Verifier, string ReturnUrl, bool Test, ConsoleOidcSettings Settings, string? Secret);
+    /// <param name="LinkTo">Adding the provider to this (signed-in) console account, from its account menu: not a sign-in.</param>
+    internal sealed record Flow(string State, string Nonce, string Verifier, string ReturnUrl, bool Test, ConsoleOidcSettings Settings, string? Secret, string? LinkTo = null);
 
     /// <summary>A provider's client secret's name with the server's secrets (Server settings → Authentication → Sign-in method).</summary>
     public static string SecretFor(string providerId) => ConsoleOidcSettings.SecretFor(providerId);
@@ -171,10 +172,21 @@ internal static class ConsoleOidc
         var group = app.MapGroup("/session/oidc");
 
         // Off to the provider. A test (from Server settings) carries unsaved settings; otherwise those in force.
-        group.MapGet("/start", async (HttpContext http, string? provider, string? returnUrl, string? test, CancellationToken ct) =>
+        group.MapGet("/start", async (HttpContext http, string? provider, string? returnUrl, string? test, bool? link, CancellationToken ct) =>
         {
             ConsoleOidcSettings? settings;
             string? secret;
+            // Adding a sign-in method: only to the account signed in here (two-step where settings need it).
+            string? linkTo = null;
+            if (link == true)
+            {
+                // /start is anonymous: the session is read here (no default scheme fills http.User).
+                if ((await http.AuthenticateAsync(ConsoleSession.Scheme)).Principal is not { } principal
+                    || principal.FindFirstValue(ClaimTypes.NameIdentifier) is not { Length: > 0 } me) return Results.Unauthorized();
+                http.User = principal;
+                if (await Api.ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } twoStep) return twoStep;
+                linkTo = me;
+            }
             if (test is { Length: > 0 })
             {
                 TestTicket? ticket;
@@ -199,7 +211,7 @@ internal static class ConsoleOidc
             }
 
             var flow = new Flow(B64Url(RandomNumberGenerator.GetBytes(24)), B64Url(RandomNumberGenerator.GetBytes(24)),
-                B64Url(RandomNumberGenerator.GetBytes(32)), back, test is not null, settings, secret);
+                B64Url(RandomNumberGenerator.GetBytes(32)), back, test is not null, settings, secret, linkTo);
             http.Response.Cookies.Append(FlowCookie, Protector(http.RequestServices).ToTimeLimitedDataProtector().Protect(JsonSerializer.Serialize(flow), TimeSpan.FromMinutes(10)),
                 new CookieOptions { Path = CookiePath(http), HttpOnly = true, SameSite = SameSiteMode.Lax, Secure = http.Request.IsHttps, MaxAge = TimeSpan.FromMinutes(10) });
             var query = new Dictionary<string, string>
@@ -235,6 +247,30 @@ internal static class ConsoleOidc
             }
             return Finish(http, flow.Test, flow.ReturnUrl, outcome);
         });
+        // The signed-in account's sign-in methods (its account menu): its password, and each provider on, linked or not.
+        var methods = app.MapGroup("/session/sign-in-methods").RequireAuthorization(ConsoleRoles.SignedInPolicy);
+        methods.MapGet("", async (HttpContext http, ConsoleAccounts accounts, CancellationToken ct) =>
+        {
+            if (await accounts.CurrentAsync(http.User, ct) is not { } me) return Results.Unauthorized();
+            var on = options.ServerSettings?.ConsoleProviders.Where(p => p.Enabled).ToList() ?? [];
+            return Results.Json(new
+            {
+                password = me.HasPassword,
+                providers = on.Select(p => new { id = p.Id, label = p.Label, linked = me.Providers.Contains(p.Id) }),
+            });
+        });
+        methods.MapDelete("/{provider}", async (string provider, HttpContext http, ConsoleAccounts accounts, CancellationToken ct) =>
+        {
+            if (await accounts.CurrentAsync(http.User, ct) is not { } me) return Results.Unauthorized();
+            if (await Api.ConsoleAuthSettingsEndpoints.RequireTwoFactorAsync(http) is { } twoStep) return twoStep;
+            try
+            {
+                await accounts.UseAsync(a => a.UnlinkProviderAsync(me.Id, provider, ct));
+                return Results.Ok();
+            }
+            catch (Winche.Auth.AuthException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        });
+
         // Back-channel logout: the provider says someone signed out there (their session, or all of theirs), and the
         // console's sessions from it end at their next request. Register it with the provider beside the redirect URI.
         group.MapPost("/backchannel-logout", async (HttpContext http, CancellationToken ct) =>
@@ -333,6 +369,22 @@ internal static class ConsoleOidc
         await accounts.MirrorProvidersAsync(server.ConsoleProviders, (id, c) => server.Secrets.GetAsync(ConsoleOidcSettings.KeycloakSyncSecretFor(id), c), s.Id, ct,
             async (id, c) => (await server.Secrets.InfoAsync(ConsoleOidcSettings.KeycloakSyncSecretFor(id), c))?.Reference);
         var linked = await accounts.UseAsync(a => a.FindByProviderAsync(s.Id, subject, ct));
+        if (flow.LinkTo is { } owner)
+        {
+            // From the account menu: the signed-in owner adds it, whatever the address. Their session stays as it is.
+            if (linked is not null && linked.Uid != owner) throw new OidcException("That account at the provider already signs in to another console account.");
+            if (linked is null)
+            {
+                try
+                {
+                    var made = await accounts.UseAsync(a => a.LinkProviderAsync(owner, s.Id, idToken, flow.Nonce, Api.AuthEndpoints.Info(http), ct));
+                    await accounts.UseAsync(a => a.SignOutAsync(made.RefreshToken, ct));   // only the link was wanted, not another session
+                }
+                catch (Winche.Auth.AuthException ex) when (ex.Code == Winche.Auth.AuthErrorCodes.MfaRequired) { }   // linked; its sign-in would ask for their second step
+                catch (Winche.Auth.AuthException ex) { throw new OidcException(ex.Message); }
+            }
+            return outcome;
+        }
         ConsoleAccount? byEmail = null;
         if (linked is null)
         {
@@ -340,6 +392,11 @@ internal static class ConsoleOidc
             byEmail = await accounts.FindByEmailAsync(email, ct);
             if (byEmail is not null && !verified)
                 throw new OidcException($"There's already a console account for {email}, and the provider doesn't say the address is verified.");
+            // By the address only into an account nobody has signed in to yet (an admin made it for them): one in use is
+            // its owner's to link, signed in, from their account menu. Otherwise whoever had that address at the provider
+            // would be let in (and a sign-in method the owner removed would come straight back).
+            if (byEmail is { LastSignInAt: not null })
+                throw new OidcException($"There's already a console account for {email}: sign in the usual way, then add {s.Label} from your account menu (Sign-in methods).");
             if (byEmail is null && !s.CreateAccounts) throw new OidcException($"There's no console account for {email}: ask an admin to add you.");
         }
         Winche.Auth.AuthTokens session;

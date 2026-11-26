@@ -896,6 +896,59 @@ public class ServerTests(PostgresFixture pg)
         Directory.Delete(files, recursive: true);
     }
 
+    [Fact]
+    public async Task An_identity_provider_links_by_email_only_to_an_account_nobody_has_used_and_the_owner_adds_or_removes_it_themselves()
+    {
+        await using var idp = new FakeOidcProvider();
+        var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
+        var admin = server.CreateClient(new() { AllowAutoRedirect = false });
+        await Json(await admin.PostAsJsonAsync("/console/v1/session/setup", new { setupCode = ServerFactory.SetupCode, email = "admin@example.com", firstName = "Root", lastName = "Admin", password = "Passw0rd!long" }));
+        await Json(await admin.PostAsJsonAsync("/console/v1/session/login", new { email = "admin@example.com", password = "Passw0rd!long" }));
+        var page = System.Text.Json.Nodes.JsonNode.Parse((await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("settings").GetRawText())!.AsObject();
+        page["consoleProviders"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
+        {
+            ["enabled"] = true, ["issuer"] = idp.Issuer, ["clientId"] = idp.ClientId, ["scopes"] = "openid profile email", ["buttonLabel"] = "Staff ID",
+            ["createAccounts"] = true, ["id"] = "staff",
+        });
+        await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "Staff ID" }));
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/console/v1/server/secrets/server.consoleSignIn.staff.clientSecret", new { value = idp.ClientSecret })).StatusCode);
+        async Task<bool> SignsInAs(string sub, string email)
+        {
+            idp.Next = new() { ["sub"] = sub, ["email"] = email, ["email_verified"] = true };
+            var client = server.CreateClient(new() { AllowAutoRedirect = false });
+            var landed = await FollowAsync(client, idp, "/console/v1/session/oidc/start?provider=staff");
+            var user = (await Json(await client.GetAsync("/console/v1/session/state"))).GetProperty("user");
+            return !landed.Headers.Location!.OriginalString.Contains("signInError=") && user.ValueKind != JsonValueKind.Null && user.GetProperty("email").GetString() == email;
+        }
+
+        // The admin's account is in use: a provider account with the same (verified) address doesn't get in.
+        Assert.False(await SignsInAs("intruder", "admin@example.com"));
+
+        // An account made for Carol that nobody has signed in to yet: her first sign-in through the provider links it.
+        await Json(await admin.PostAsJsonAsync("/console/v1/accounts", new { email = "carol@example.com", role = "none", password = "Passw0rd!long" }));
+        Assert.True(await SignsInAs("carol-1", "carol@example.com"));
+
+        // The admin adds the provider themselves, signed in: from then on it signs them in.
+        var methods = await Json(await admin.GetAsync("/console/v1/session/sign-in-methods"));
+        Assert.False(methods.GetProperty("providers").EnumerateArray().Single().GetProperty("linked").GetBoolean());
+        idp.Next = new() { ["sub"] = "admin-1", ["email"] = "admin@example.com", ["email_verified"] = true };
+        var linked = await FollowAsync(admin, idp, "/console/v1/session/oidc/start?provider=staff&link=true&returnUrl=/console/");
+        Assert.DoesNotContain("signInError=", linked.Headers.Location!.OriginalString);
+        Assert.True((await Json(await admin.GetAsync("/console/v1/session/sign-in-methods"))).GetProperty("providers").EnumerateArray().Single().GetProperty("linked").GetBoolean());
+        Assert.Equal("admin@example.com", (await Json(await admin.GetAsync("/console/v1/session/state"))).GetProperty("user").GetProperty("email").GetString());   // still their session
+        Assert.True(await SignsInAs("admin-1", "admin@example.com"));
+
+        // …and removes it: it's gone for good, not linked again by its address.
+        Assert.Equal(HttpStatusCode.OK, (await admin.DeleteAsync("/console/v1/session/sign-in-methods/staff")).StatusCode);
+        Assert.False(await SignsInAs("admin-1", "admin@example.com"));
+
+        // Adding needs a signed-in account.
+        var nobody = server.CreateClient(new() { AllowAutoRedirect = false });
+        Assert.Equal(HttpStatusCode.Unauthorized, (await nobody.GetAsync("/console/v1/session/oidc/start?provider=staff&link=true")).StatusCode);
+        Directory.Delete(files, recursive: true);
+    }
+
     /// <summary>Starts a product in a project's console and waits for its setup to finish.</summary>
     internal static async Task StartProductAsync(HttpClient console, string prefix, string product)
     {
@@ -963,7 +1016,7 @@ public class ServerTests(PostgresFixture pg)
         (await Json(await client.GetAsync("/console/v1/session/state"))).GetProperty("user") is { ValueKind: JsonValueKind.Object } u ? u.GetProperty("email").GetString() : null;
 
     [Fact]
-    public async Task The_console_offers_several_identity_providers_and_one_person_is_the_same_account_through_each()
+    public async Task The_console_offers_several_identity_providers_and_one_person_adds_each_to_the_same_account()
     {
         await using var staff = new FakeOidcProvider();
         await using var partner = new FakeOidcProvider();
@@ -982,6 +1035,13 @@ public class ServerTests(PostgresFixture pg)
         partner.Next = new() { ["sub"] = "p-9", ["email"] = "bob@example.com", ["email_verified"] = true };
         var viaStaff = server.CreateClient(new() { AllowAutoRedirect = false });
         await FollowAsync(viaStaff, staff, "/console/v1/session/oidc/start?provider=staff");
+        // His account is in use now: Partner ID with the same address isn't linked to it by itself…
+        var early = server.CreateClient(new() { AllowAutoRedirect = false });
+        Assert.Contains("signInError=", (await FollowAsync(early, partner, "/console/v1/session/oidc/start?provider=partner")).Headers.Location!.OriginalString);
+        // …he adds it, signed in, from his account menu; then it signs him in to the same account.
+        partner.Next = new() { ["sub"] = "p-9", ["email"] = "bob@example.com", ["email_verified"] = true };
+        await FollowAsync(viaStaff, partner, "/console/v1/session/oidc/start?provider=partner&link=true&returnUrl=/console/");
+        partner.Next = new() { ["sub"] = "p-9", ["email"] = "bob@example.com", ["email_verified"] = true };
         var viaPartner = server.CreateClient(new() { AllowAutoRedirect = false });
         await FollowAsync(viaPartner, partner, "/console/v1/session/oidc/start?provider=partner");
         var a = (await Json(await viaStaff.GetAsync("/console/v1/session/state"))).GetProperty("user").GetProperty("id").GetString();
