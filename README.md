@@ -317,6 +317,11 @@ PostgreSQL server is backed up there.
 Pull or build the new image and restart: the databases are brought up to date when the server starts. Take a backup
 first. Several servers can be replaced one at a time.
 
+**4.1.6:** saving Server settings from an old version is checked against the latest saved before any provider's
+secret goes; a secret this server's master key can't read is reported as a setup problem (Integrity: "not set up
+right", with why in the log) instead of failing; Winche.Secrets 2.1.1; the image builds from the packages its tests
+used.
+
 **4.1.5:** an Integrity restore or reset that takes several apps away saves first and names any web check secret it
 couldn't delete in AWS (instead of stopping half-done); what the console adds on the way back from a provider goes
 before a `#`; Simulate builds Realtime appends as the server does; Winche.Realtime 1.0.3.
