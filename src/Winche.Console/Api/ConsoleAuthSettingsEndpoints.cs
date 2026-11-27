@@ -48,18 +48,26 @@ public static class ConsoleAuthSettingsEndpoints
             sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger("Winche.Console.Integrity"), ct);
     }
 
-    /// <summary>Each app's keys removed, then its secret deleted; the apps whose secret couldn't be.</summary>
+    /// <summary>Each app's keys removed, then its secret deleted, each as far as it goes; the apps something was left of.</summary>
     internal static async Task<List<string>> RemoveAppLeftoversAsync(IReadOnlyList<string> apps, Func<string, Task> removeKeys, Func<string, Task> deleteSecret,
         Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
     {
-        foreach (var id in apps) await removeKeys(id);
         var left = new List<string>();
+        foreach (var id in apps)
+        {
+            try { await removeKeys(id); }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                left.Add(id);
+                if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(log, e, "Integrity's app {App} was taken away, but its devices' keys couldn't be removed.", id);
+            }
+        }
         foreach (var id in apps)
         {
             try { await deleteSecret(id); }
             catch (Exception e) when (e is not OperationCanceledException)
             {
-                left.Add(id);
+                if (!left.Contains(id)) left.Add(id);
                 if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(log, e, "Integrity's app {App} was taken away, but its web check secret couldn't be deleted: delete it where it's kept.", id);
             }
         }
@@ -307,8 +315,8 @@ public static class ConsoleAuthSettingsEndpoints
                 var restored = old.Deserialize<Winche.Integrity.IntegritySettings>(SettingsArea.Json) ?? new();
                 var kept = restored with { DebugTokens = [.. integrity.Current.DebugTokens.Where(t => restored.Apps.Any(a => a.Id == t.App))] };
                 if (kept.Problems().FirstOrDefault() is { } problem) return Problem($"That version no longer fits: {problem}");
-                // Apps the old version doesn't have go as a removed app does: their web check's secret first (refused:
-                // nothing changes), then the settings, then their devices' keys (a re-added app's devices attest again).
+                // Apps the old version doesn't have go: the settings saved first (all at once), then their devices' keys and
+                // web check secrets as far as they go (LeftoversAsync; a re-added app's devices attest again).
                 var gone = integrity.Current.Apps.Where(a => restored.Apps.All(r => r.Id != a.Id)).Select(a => a.Id).ToList();
                 // Saved as a new version (the store's restore can't leave tokens out); the reason says which version it came from.
                 var saved = await integrity.SaveAsync(kept, Who(http.User), $"{body.Reason.Trim()} (restored version {version.Number}; today's debug tokens kept)", ct);
@@ -324,7 +332,7 @@ public static class ConsoleAuthSettingsEndpoints
             if (await RequireTwoFactorAsync(http) is { } refused) return refused;
             if (sp.GetService<SettingsStore>() is not { } store) return Problem("Settings aren't saved in this app.");
             if (string.IsNullOrWhiteSpace(body.Reason)) return Problem("Say why you're resetting: it goes in the history.");
-            // Integrity back to its defaults: its apps go as removed apps do (their secrets, then the settings, then keys).
+            // Integrity back to its defaults: saved first, then its apps' keys and secrets as far as they go.
             var integrity = area == Winche.Integrity.IntegritySettings.Area ? sp.GetService<Winche.Integrity.WincheIntegrity>() : null;
             var before = integrity?.Current.Apps.Select(a => a.Id).ToList() ?? [];
             try

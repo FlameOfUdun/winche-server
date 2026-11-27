@@ -70,4 +70,16 @@ public class IntegrityRestoreTests(PostgresFixture pg)
         Assert.Equal(["web-one", "web-three"], secretsDeleted);           // the others' secrets, past the refusal
         Assert.Equal(["web-two"], left);                                  // and the one left is named
     }
+
+    [Fact]
+    public async Task A_key_removal_that_fails_doesnt_stop_the_rest_and_names_the_app()
+    {
+        var secretsDeleted = new List<string>();
+        var left = await Winche.Console.Api.ConsoleAuthSettingsEndpoints.RemoveAppLeftoversAsync(["web-one", "web-two"],
+            id => id == "web-one" ? throw new InvalidOperationException("The database is away") : Task.CompletedTask,
+            id => Task.Run(() => secretsDeleted.Add(id)),
+            null, default);
+        Assert.Equal(["web-one", "web-two"], secretsDeleted);   // every secret tried all the same
+        Assert.Equal(["web-one"], left);                         // the app whose keys stayed is named
+    }
 }
