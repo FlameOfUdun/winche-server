@@ -1165,6 +1165,32 @@ public class ServerTests(PostgresFixture pg)
         }
         Assert.Equal("sync-secret", copied);
 
+        // A save the server reads as keeping the sync keeps its secret, however the document spells it (the same key
+        // twice, in two cases: read as the save reads it, the last one).
+        async Task<bool> SyncSecretKept() => (await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("secrets").EnumerateArray()
+            .Any(x => x.GetProperty("name").GetString() == "server.consoleSignIn.staff.keycloakSync.clientSecret" && x.GetProperty("setAt").ValueKind != JsonValueKind.Null);
+        Assert.True(await SyncSecretKept());
+        foreach (var objectFirst in new[] { true, false })
+        {
+            // Back to a provider with a sync, and its secret.
+            var plain = page["consoleProviders"]![0]!.AsObject();
+            plain.Remove("KeycloakSync");
+            plain["keycloakSync"] = new System.Text.Json.Nodes.JsonObject { ["clientId"] = "winche-sync" };
+            await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "Sync" }));
+            Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/console/v1/server/secrets/server.consoleSignIn.staff.keycloakSync.clientSecret", new { value = "sync-secret" })).StatusCode);
+
+            var twice = page["consoleProviders"]![0]!.AsObject();
+            twice.Remove("keycloakSync");
+            var sync = new System.Text.Json.Nodes.JsonObject { ["clientId"] = "winche-sync" };
+            if (objectFirst) { twice["keycloakSync"] = sync; twice["KeycloakSync"] = null; }
+            else { twice["keycloakSync"] = null; twice["KeycloakSync"] = sync; }
+            await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "Spelt twice" }));
+            var saved = (await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("settings").GetProperty("consoleProviders")[0];
+            var synced = saved.TryGetProperty("keycloakSync", out var k) && k.ValueKind == JsonValueKind.Object;
+            Assert.Equal(synced, await SyncSecretKept());   // the secret goes exactly when the saved settings drop the sync
+            twice.Remove("KeycloakSync");
+        }
+
         // Taken off Server settings: off the accounts' providers too (its sync stops).
         page["consoleProviders"] = new System.Text.Json.Nodes.JsonArray();
         await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "No more staff" }));
