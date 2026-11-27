@@ -36,6 +36,16 @@ jobs:
         # WINCHE_DENO (Deno's full path) makes the functions tests run, not skip.
         run: WINCHE_DENO="$(command -v deno)" dotnet test Winche.Server.slnx -c Release
 
+      # The image's restore runs in Docker, which has seen NuGet's listing out of date for minutes after a release (a
+      # package "not found" that the tests above had just restored). The Winche packages the tests restored go in
+      # packages/, the image's local source, so its restore never depends on that listing.
+      - name: The Winche packages the tests restored, for the image
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p packages
+          for f in ~/.nuget/packages/winche.*/*/*.nupkg; do cp "$f" packages/; done
+          ls packages | grep -c nupkg
+
       - name: Set up QEMU (to build the arm64 image)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: docker/setup-qemu-action@v3
