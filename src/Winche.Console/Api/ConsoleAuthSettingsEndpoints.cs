@@ -31,7 +31,7 @@ public static class ConsoleAuthSettingsEndpoints
     /// <param name="SyncSecretReferences">Or where sync client secrets are read from, by provider name.</param>
     public sealed record SaveSignInRequest(JsonElement? Settings, string? SmtpPassword, string? Reason, Dictionary<string, string>? SyncSecrets = null, int? BasedOn = null,
         string? SmtpPasswordReference = null, Dictionary<string, string>? SyncSecretReferences = null);
-    public sealed record TestEmailRequest(JsonElement? Settings, string? SmtpPassword, string? To);
+    public sealed record TestEmailRequest(JsonElement? Settings, string? SmtpPassword, string? To, string? SmtpPasswordReference = null);
 
     /// <summary>
     /// After a restore or reset took Integrity apps away (saved first, so the settings change in one step): their devices'
@@ -203,9 +203,12 @@ public static class ConsoleAuthSettingsEndpoints
             if (draft?.Email.Smtp is not { } smtp) return Problem("Fill in the SMTP server.");
             var to = string.IsNullOrWhiteSpace(body.To) ? Who(http.User) : body.To.Trim();
             if (to is null || !to.Contains('@')) return Problem("Give an address to send the test to.");
-            var password = string.IsNullOrEmpty(body.SmtpPassword)
+            // Typed (a value or a reference): that one is tried; nothing typed: the saved one.
+            var (typed, unreadable) = await ConsoleSecretsEndpoints.KeyFromAsync(sp, body.SmtpPassword, body.SmtpPasswordReference, http, ct);
+            if (unreadable is not null) return unreadable;
+            var password = typed ?? (string.IsNullOrWhiteSpace(body.SmtpPasswordReference) || ConsoleSecretsEndpoints.KeepIn(body.SmtpPasswordReference) is not null
                 ? sp.GetService<SecretStore>() is { Available: true } secrets ? await secrets.GetAsync(Winche.Auth.Email.SmtpEmailSender.SecretName, ct) : null
-                : body.SmtpPassword;
+                : null);
             try
             {
                 await Winche.Auth.Email.SmtpEmailSender.SendTestAsync(new Winche.Auth.Email.SmtpOptions

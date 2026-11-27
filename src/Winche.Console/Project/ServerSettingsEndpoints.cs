@@ -55,7 +55,7 @@ public static class ServerSettingsEndpoints
     public sealed record SaveRequest(JsonElement? Settings, string? Reason, int? BasedOn = null);
     public sealed record SecretRequest(string? Value, string? Reference = null);
     public sealed record TestEmailRequest(string? To);
-    public sealed record SignInTestRequest(Identity.ConsoleOidcSettings? Settings, string? ClientSecret);
+    public sealed record SignInTestRequest(Identity.ConsoleOidcSettings? Settings, string? ClientSecret, string? ClientSecretReference = null);
 
     /// <summary>
     /// The console sign-in providers a posted settings document keeps, by id → whether each keeps a Keycloak sync. Names
@@ -168,9 +168,11 @@ public static class ServerSettingsEndpoints
             if (Refuse(http, options) is { } refused) return refused;
             if (body.Settings is not { } s) return ConsoleErrors.Problem("invalid-settings", "Send the sign-in settings to try.", null);
             if ((s with { Enabled = true }).Problems() is { Count: > 0 } problems) return ConsoleErrors.Problem("invalid-settings", "These settings can't be tried yet.", problems);
-            // No secret typed: the provider's saved one (a provider being edited).
-            var secret = string.IsNullOrEmpty(body.ClientSecret) && s.Id is { Length: > 0 }
-                ? await options.ServerSettings!.ConsoleProviderSecretAsync(s.Id, ct) : body.ClientSecret;
+            // Typed (a value or a reference): that one is tried; nothing typed: the provider's saved one (a provider being edited).
+            var (typed, unreadable) = await Api.ConsoleSecretsEndpoints.KeyFromAsync(http.RequestServices, body.ClientSecret, body.ClientSecretReference, http, ct);
+            if (unreadable is not null) return unreadable;
+            var nothingTyped = typed is null && (string.IsNullOrWhiteSpace(body.ClientSecretReference) || Api.ConsoleSecretsEndpoints.KeepIn(body.ClientSecretReference) is not null);
+            var secret = nothingTyped && s.Id is { Length: > 0 } ? await options.ServerSettings!.ConsoleProviderSecretAsync(s.Id, ct) : typed;
             return Results.Json(new
             {
                 url = "v1/session/oidc/start?test=" + Uri.EscapeDataString(Identity.ConsoleOidc.ProtectTest(http.RequestServices, s, secret)),

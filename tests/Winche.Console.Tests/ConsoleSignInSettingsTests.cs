@@ -90,4 +90,22 @@ public class ConsoleSignInSettingsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
         Assert.Contains("didn't take the message", await resp.Content.ReadAsStringAsync());
     }
+
+    [Fact]
+    public async Task Test_email_uses_a_typed_reference_not_the_saved_password()
+    {
+        using var app = new ConsoleAppFactory(fx);
+        using var client = app.CreateClient();
+        await client.SetupAdminAsync();
+        await client.LoginAsync();
+        var settings = JsonNode.Parse((await Json(await client.GetAsync("/console/v1/auth/settings/signin"))).GetProperty("settings").GetRawText())!;
+        settings["email"]!["smtp"] = new JsonObject { ["host"] = "127.0.0.1", ["port"] = 1, ["security"] = "none", ["fromAddress"] = "no-reply@example.com" };
+        // A reference to a store this server can't read from: said so, rather than trying the saved password instead.
+        var resp = await client.PostAsJsonAsync("/console/v1/auth/settings/signin/testEmail",
+            new { settings, smtpPasswordReference = "nowhere:/smtp/password", to = "me@example.com" });
+        var text = await resp.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.DoesNotContain("didn't take the message", text);
+        Assert.Contains("nowhere", text);
+    }
 }
