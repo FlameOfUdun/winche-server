@@ -1135,6 +1135,45 @@ public class ServerTests(PostgresFixture pg)
     }
 
     [Fact]
+    public async Task Settings_that_cant_be_saved_take_no_secret_and_turning_a_sync_off_takes_only_its_own()
+    {
+        var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
+        await using var server = new ServerFactory(await pg.NewDatabaseAsync(), files, ("Winche:RequireTwoFactorForSettings", "false"));
+        var admin = await AdminAsync(server);
+        var page = System.Text.Json.Nodes.JsonNode.Parse((await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("settings").GetRawText())!.AsObject();
+        System.Text.Json.Nodes.JsonObject Staff(bool sync) => new()
+        {
+            ["id"] = "staff", ["enabled"] = true, ["issuer"] = "https://id.example.com/realms/staff", ["clientId"] = "winche-console",
+            ["buttonLabel"] = "Sign in with Staff ID",
+            ["keycloakSync"] = sync ? new System.Text.Json.Nodes.JsonObject { ["clientId"] = "winche-sync" } : null,
+        };
+        page["consoleProviders"] = new System.Text.Json.Nodes.JsonArray(Staff(sync: true));
+        await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "Staff" }));
+        const string client = "server.consoleSignIn.staff.clientSecret", syncSecret = "server.consoleSignIn.staff.keycloakSync.clientSecret";
+        foreach (var name in new[] { client, syncSecret })
+            Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync($"/console/v1/server/secrets/{name}", new { value = "secret" })).StatusCode);
+        async Task<HashSet<string>> SetSecrets() => (await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("secrets").EnumerateArray()
+            .Where(x => x.GetProperty("setAt").ValueKind != JsonValueKind.Null).Select(x => x.GetProperty("name").GetString()!).ToHashSet();
+
+        // Taking the provider off in settings that can't be saved (another provider is invalid): nothing goes.
+        var invalid = Staff(sync: false);
+        invalid["id"] = "other";
+        invalid["issuer"] = "not a url";
+        page["consoleProviders"] = new System.Text.Json.Nodes.JsonArray(invalid);
+        var refused = await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "Bad" });
+        Assert.False(refused.IsSuccessStatusCode, await refused.Content.ReadAsStringAsync());
+        Assert.Superset(new HashSet<string> { client, syncSecret }, await SetSecrets());
+
+        // The sync turned off: its secret goes, the provider's own stays.
+        page["consoleProviders"] = new System.Text.Json.Nodes.JsonArray(Staff(sync: false));
+        await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "No sync" }));
+        var left = await SetSecrets();
+        Assert.Contains(client, left);
+        Assert.DoesNotContain(syncSecret, left);
+        Directory.Delete(files, recursive: true);
+    }
+
+    [Fact]
     public async Task A_save_based_on_an_old_version_takes_no_secret_even_when_this_server_hasnt_seen_the_new_one()
     {
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
