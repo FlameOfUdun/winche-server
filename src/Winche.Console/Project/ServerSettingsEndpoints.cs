@@ -120,7 +120,8 @@ public static class ServerSettingsEndpoints
                 var s = options.ServerSettings!;
                 // Only settings that will be saved remove anything: checked first, and against the version they were based on.
                 if (s.Area.Validate(node) is { Count: > 0 } problems) return ConsoleErrors.Problem("invalid-settings", "These settings can't be saved.", problems);
-                if (body.BasedOn is { } based && s.Area.Version is { } now && now.Number != based)
+                // The latest saved, not this server's copy (another server's save shows here only at its next look; none: 0).
+                if (body.BasedOn is { } based && ((await s.Store.HistoryAsync(s.Area.Name, 1, ct)).FirstOrDefault()?.Number ?? 0) != based)
                     return new WincheError(WincheErrorCode.Aborted, "Someone saved these settings since you opened them: reload and try again.", "settings-conflict").ToResult();
                 // A provider taken off the list takes its client and sync secrets with it, and one no longer synced its
                 // sync secret, first (AWS may refuse: then nothing changes).

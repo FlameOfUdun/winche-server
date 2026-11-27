@@ -1135,6 +1135,45 @@ public class ServerTests(PostgresFixture pg)
     }
 
     [Fact]
+    public async Task A_save_based_on_an_old_version_takes_no_secret_even_when_this_server_hasnt_seen_the_new_one()
+    {
+        var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
+        var db = await pg.NewDatabaseAsync();
+        await using var server = new ServerFactory(db, files, ("Winche:RequireTwoFactorForSettings", "false"));
+        var admin = await AdminAsync(server);
+        var page = System.Text.Json.Nodes.JsonNode.Parse((await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("settings").GetRawText())!.AsObject();
+        page["consoleProviders"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
+        {
+            ["id"] = "staff", ["enabled"] = true, ["issuer"] = "https://id.example.com/realms/staff", ["clientId"] = "winche-console",
+            ["buttonLabel"] = "Sign in with Staff ID",
+        });
+        var first = await Json(await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "Staff", basedOn = 0 }));
+        var opened = first.GetProperty("number").GetInt32();
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/console/v1/server/secrets/server.consoleSignIn.staff.clientSecret", new { value = "client-secret" })).StatusCode);
+
+        // Another server saves a version this one hasn't looked at yet.
+        await using (var conn = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(db) { SearchPath = "server" }.ConnectionString))
+        {
+            await conn.OpenAsync();
+            await using var cmd = new NpgsqlCommand("""
+                INSERT INTO winche_settings (area, number, document, at, changed_by, reason)
+                SELECT area, number + 1, document, now(), 'someone', 'Elsewhere' FROM winche_settings WHERE area = 'server' ORDER BY number DESC LIMIT 1
+                """, conn);
+            Assert.Equal(1, await cmd.ExecuteNonQueryAsync());
+        }
+
+        // A save made from the version opened before, taking the provider off: refused, and its secret kept.
+        page["consoleProviders"] = new System.Text.Json.Nodes.JsonArray();
+        var stale = await admin.PutAsJsonAsync("/console/v1/server/settings", new { settings = page, reason = "No more staff", basedOn = opened });
+        var staleText = await stale.Content.ReadAsStringAsync();
+        Assert.False(stale.IsSuccessStatusCode, staleText);
+        Assert.Contains("settings-conflict", staleText);
+        var secrets = (await Json(await admin.GetAsync("/console/v1/server/settings"))).GetProperty("secrets").EnumerateArray();
+        Assert.Contains(secrets, x => x.GetProperty("name").GetString() == "server.consoleSignIn.staff.clientSecret" && x.GetProperty("setAt").ValueKind != JsonValueKind.Null);
+        Directory.Delete(files, recursive: true);
+    }
+
+    [Fact]
     public async Task The_consoles_identity_providers_are_the_console_accounts_sign_in_providers_with_their_keycloak_sync()
     {
         var files = Directory.CreateTempSubdirectory("winche-server-files-").FullName;
