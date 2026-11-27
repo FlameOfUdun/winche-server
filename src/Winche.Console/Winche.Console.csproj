@@ -25,7 +25,7 @@
     <!-- 3.1.0: rule functions and the text syntax the rules editor uses (RuleText). -->
     <PackageReference Include="Winche.Rules" Version="5.0.0" />
     <PackageReference Include="Winche.Storage" Version="11.2.0" />
-    <PackageReference Include="Winche.Auth.AspNetCore" Version="2.1.2" />
+    <PackageReference Include="Winche.Auth.AspNetCore" Version="2.1.3" />
     <PackageReference Include="Winche.Integrity.AspNetCore" Version="1.1.0" />
     <PackageReference Include="Winche.Core" Version="2.0.0" />
     <PackageReference Include="Winche.Secrets" Version="2.2.0" />

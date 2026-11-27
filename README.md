@@ -319,7 +319,7 @@ first. Several servers can be replaced one at a time.
 
 **4.1.6:** saving Server settings from an old version is checked against the latest saved before any provider's
 secret goes; a secret this server's master key can't read is reported as a setup problem (Integrity: "not set up
-right", with why in the log) instead of failing; Winche.Secrets 2.2.0 (copies AWS refused to delete are remembered and tried again); the image builds from the packages its tests
+right", with why in the log) instead of failing; the "sign-in method added" email goes only to a verified address (Winche.Auth 2.1.3); Winche.Secrets 2.2.0 (copies AWS refused to delete are remembered and tried again); the image builds from the packages its tests
 used.
 
 **4.1.5:** an Integrity restore or reset that takes several apps away saves first and names any web check secret it
