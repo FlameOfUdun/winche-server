@@ -133,6 +133,7 @@ public static class ConsoleIntegrityEndpoints
 
         admin.MapPut("/apps/{id}", async (string id, AppRequest body, HttpContext http, WincheIntegrity integrity, IntegrityStore store, CancellationToken ct) =>
         {
+            if (!integrity.Available) return Problem(NotAvailable);
             var current = integrity.Current;
             if (integrity.Find(id) is not { } old) return Results.NotFound();
             var changed = From(body, old);
@@ -145,6 +146,7 @@ public static class ConsoleIntegrityEndpoints
 
         admin.MapDelete("/apps/{id}", async (string id, HttpContext http, WincheIntegrity integrity, IntegrityStore store, CancellationToken ct) =>
         {
+            if (!integrity.Available) return Problem(NotAvailable);
             var current = integrity.Current;
             if (integrity.Find(id) is not { } gone) return Results.NotFound();
             var rest = current.Apps.Where(a => a.Id != id).ToList();
@@ -190,6 +192,7 @@ public static class ConsoleIntegrityEndpoints
         // An app's Turnstile secret key (the browser check): the widget's secret key, or a reference to where it's kept.
         admin.MapPut("/apps/{id}/turnstile-secret", async (string id, ServiceAccountRequest body, HttpContext http, WincheIntegrity integrity, CancellationToken ct) =>
         {
+            if (!integrity.Available) return Problem(NotAvailable);
             if (integrity.Find(id) is not { } app) return Results.NotFound();
             if (http.RequestServices.GetService<Winche.Secrets.SecretStore>() is not { Available: true } secrets)
                 return Problem("Secrets need the server's master key.");
@@ -226,6 +229,7 @@ public static class ConsoleIntegrityEndpoints
 
         admin.MapDelete("/debug-tokens/{id}", async (string id, HttpContext http, WincheIntegrity integrity, CancellationToken ct) =>
         {
+            if (!integrity.Available) return Problem(NotAvailable);
             var current = integrity.Current;
             if (current.DebugTokens.FirstOrDefault(t => t.Id == id) is not { } gone) return Results.NotFound();
             await integrity.SaveAsync(current with { DebugTokens = [.. current.DebugTokens.Where(t => t.Id != id)] }, Who(http.User), $"Removed the debug token {gone.Name}", ct);

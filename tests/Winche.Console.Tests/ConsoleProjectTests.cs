@@ -94,6 +94,28 @@ public class ConsoleProjectTests(PostgresFixture fx) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Without_integrity_every_change_says_its_not_available()
+    {
+        using var app = new ConsoleAppFactory(fx);   // no project setup: Integrity has no settings here
+        using var client = app.CreateClient();
+        await client.SetupAdminAsync();
+        await client.LoginAsync();
+        Assert.False((await Json(await client.GetAsync("/console/v1/integrity"))).GetProperty("available").GetBoolean());
+        foreach (var answer in new[]
+        {
+            await client.PutAsJsonAsync("/console/v1/integrity/apps/clinic", new { name = "Clinic" }),
+            await client.DeleteAsync("/console/v1/integrity/apps/clinic"),
+            await client.PutAsJsonAsync("/console/v1/integrity/apps/clinic/turnstile-secret", new { value = "0x4AAAAAAAsecretkey" }),
+            await client.DeleteAsync("/console/v1/integrity/debug-tokens/t1"),
+        })
+        {
+            var text = await answer.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.BadRequest, answer.StatusCode);
+            Assert.Contains("isn't available", text);
+        }
+    }
+
+    [Fact]
     public async Task Integrity_apps_are_named_in_their_options_debug_tokens_get_tokens_counted_per_product_and_enforced()
     {
         using var app = new ConsoleAppFactory(fx, ("Sample:ProjectSetup", "true"));
